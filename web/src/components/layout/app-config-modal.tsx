@@ -1,5 +1,5 @@
 import { App, Button, Form, Input, Modal, Progress, Select, Tabs } from "antd";
-import { Cloud, Download, Pencil, Plus, RefreshCw, Trash2, Upload, Wifi } from "lucide-react";
+import { Cloud, Download, FolderOpen, Pencil, Plus, RefreshCw, RotateCcw, Trash2, Upload, Wifi } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -59,6 +59,8 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const [syncingWebdav, setSyncingWebdav] = useState(false);
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
     const [webdavDomainProgress, setWebdavDomainProgress] = useState(createWebdavDomainProgress);
+    const [storageSettings, setStorageSettings] = useState<StorageSettings | null>(null);
+    const [savingStorage, setSavingStorage] = useState(false);
     const config = useConfigStore((state) => state.config);
     const webdav = useConfigStore((state) => state.webdav);
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -69,6 +71,47 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const webdavReady = Boolean(webdav.url.trim());
     const editingChannel = config.channels.find((channel) => channel.id === editingChannelId) || null;
     useEffect(() => setActiveTab(initialTab), [initialTab]);
+    useEffect(() => {
+        if (!window.lySpaceDesktop) return;
+        void window.lySpaceDesktop.getStorageSettings().then((settings) => {
+            setStorageSettings(settings);
+            if (settings.lastError) message.warning(settings.lastError);
+        }).catch(() => message.warning("无法读取桌面存储设置"));
+    }, [message]);
+
+    const chooseStorageDirectory = async (kind: "result" | "cache") => {
+        if (!window.lySpaceDesktop) return;
+        const directory = await window.lySpaceDesktop.chooseStorageDirectory(kind);
+        if (!directory) return;
+        setSavingStorage(true);
+        try {
+            const next = kind === "result" ? await window.lySpaceDesktop.updateResultDirectory(directory) : await window.lySpaceDesktop.stageCacheDirectory(directory);
+            setStorageSettings(next);
+            if (kind === "cache") {
+                message.success("缓存目录已准备好，正在重启并迁移数据");
+                await window.lySpaceDesktop.relaunchAfterFlush();
+            } else message.success("结果保存目录已更新，历史文件已复制到新目录");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "存储目录更新失败");
+        } finally {
+            setSavingStorage(false);
+        }
+    };
+
+    const resetStorageDirectory = async (kind: "result" | "cache") => {
+        if (!window.lySpaceDesktop) return;
+        setSavingStorage(true);
+        try {
+            const next = await window.lySpaceDesktop.resetStorageDirectory(kind);
+            setStorageSettings(next);
+            if (kind === "cache") await window.lySpaceDesktop.relaunchAfterFlush();
+            else message.success("已恢复默认结果目录");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "恢复默认目录失败");
+        } finally {
+            setSavingStorage(false);
+        }
+    };
 
     const saveConfig = (nextConfig: AiConfig) => {
         (Object.keys(nextConfig) as Array<keyof AiConfig>).forEach((key) => updateConfig(key, nextConfig[key]));
@@ -267,6 +310,20 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                         ),
                     },
                     {
+                        key: "storage",
+                        label: "存储设置",
+                        children: window.lySpaceDesktop ? (
+                            <div className="space-y-4">
+                                <div className="text-xs text-stone-500">生成结果会自动分为 Picture、Video、Audio、text 四个目录保存；缓存目录变更会复制数据并重启软件。</div>
+                                {storageSettings?.lastError ? <div className="rounded-lg border border-amber-400/60 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">{storageSettings.lastError}</div> : null}
+                                <StorageDirectoryCard label="结果保存目录" path={storageSettings?.resultRoot || "正在读取…"} disabled={savingStorage || !storageSettings} onChoose={() => void chooseStorageDirectory("result")} onReset={() => void resetStorageDirectory("result")} onOpen={() => storageSettings && void window.lySpaceDesktop?.openStorageDirectory(storageSettings.resultRoot)} />
+                                <StorageDirectoryCard label="缓存目录" path={storageSettings?.cacheRoot || "正在读取…"} disabled={savingStorage || !storageSettings} onChoose={() => void chooseStorageDirectory("cache")} onReset={() => void resetStorageDirectory("cache")} onOpen={() => storageSettings && void window.lySpaceDesktop?.openStorageDirectory(storageSettings.cacheRoot)} />
+                            </div>
+                        ) : (
+                            <div className="rounded-lg border border-dashed border-stone-300 p-5 text-sm text-stone-500 dark:border-stone-700">存储设置仅在 LY Space 桌面版中可用。</div>
+                        ),
+                    },
+                    {
                         key: "prompt-sources",
                         label: "提示词来源",
                         children: <ConfigPromptSources />,
@@ -381,9 +438,24 @@ function normalizeImageCount(value: string) {
     return String(Math.max(1, Math.min(15, Math.floor(Math.abs(Number(value)) || 3))));
 }
 
+function StorageDirectoryCard({ label, path, disabled, onChoose, onReset, onOpen }: { label: string; path: string; disabled: boolean; onChoose: () => void; onReset: () => void; onOpen: () => void }) {
+    return (
+        <section className="rounded-lg border border-stone-200 p-4 dark:border-stone-800">
+            <div className="mb-2 text-sm font-semibold">{label}</div>
+            <div className="break-all rounded-md bg-stone-100 px-3 py-2 font-mono text-xs text-stone-600 dark:bg-stone-900 dark:text-stone-300">{path}</div>
+            <div className="mt-3 flex flex-wrap gap-2">
+                <Button icon={<FolderOpen className="size-4" />} disabled={disabled} onClick={onChoose}>选择目录</Button>
+                <Button icon={<RotateCcw className="size-4" />} disabled={disabled} onClick={onReset}>恢复默认</Button>
+                <Button type="text" disabled={disabled} onClick={onOpen}>打开目录</Button>
+            </div>
+        </section>
+    );
+}
+
 function apiFormatLabel(apiFormat: ApiCallFormat) {
     if (apiFormat === "gemini") return "Gemini";
     if (apiFormat === "ark") return "火山方舟";
+    if (apiFormat === "grsai") return "GRS AI";
     return "OpenAI";
 }
 

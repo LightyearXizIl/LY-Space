@@ -1,11 +1,12 @@
 import axios from "axios";
 
-import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildApiUrl, AGNES_DEFAULT_MODELS, GRSAI_DEFAULT_MODELS, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
-import { imageToDataUrl } from "@/services/image-storage";
+import { imageToDataUrl, imageToFile } from "@/services/image-storage";
+import { saveGeneratedBlob, saveGeneratedText } from "@/services/desktop-storage";
 import type { ReferenceImage } from "@/types/image";
 
 export type AiTextMessage = {
@@ -73,6 +74,17 @@ type ImageApiResponse = {
     code?: number;
     msg?: string;
 };
+type GrsaiTaskResponse = ImageApiResponse & {
+    id?: string;
+    status?: "running" | "violation" | "succeeded" | "failed" | string;
+    progress?: number;
+    error?: string | { message?: string };
+};
+type OpenAiChatPayload = {
+    choices?: Array<{ delta?: { content?: string | Array<{ text?: string }> }; message?: { content?: string | Array<{ text?: string }> } }>;
+    error?: { message?: string };
+    message?: string;
+};
 type GeminiPart = {
     text?: string;
     inlineData?: { mimeType?: string; data?: string };
@@ -93,33 +105,27 @@ type GeminiPayload = {
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
 type RequestOptions = { signal?: AbortSignal };
 
-const QUALITY_BASE: Record<string, number> = {
-    low: 1024,
-    medium: 2048,
-    high: 2880,
-    standard: 1024,
-    hd: 2048,
-};
-const QUALITY_ALIASES: Record<string, string> = {
-    "1k": "low",
-    "2k": "medium",
-    "4k": "high",
-};
 const DEFAULT_IMAGE_SHORT_SIDE = 1024;
 const IMAGE_SIZE_STEP = 16;
-const IMAGE_MIN_PIXELS = 655360;
-const IMAGE_MAX_PIXELS = 8294400;
-const IMAGE_MAX_EDGE = 3840;
+const IMAGE_MIN_PIXELS = 262144;
+const IMAGE_MAX_PIXELS = 7680 * 7680;
+const IMAGE_MAX_EDGE = 7680;
 const IMAGE_MAX_RATIO = 3;
 const IMAGE_OUTPUT_FORMAT = "png";
 
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
-const GEMINI_IMAGE_SIZE_BY_QUALITY: Record<string, string> = { low: "1K", medium: "2K", high: "4K", standard: "1K", hd: "2K" };
 
 function normalizeQuality(quality: string) {
     const value = quality.trim().toLowerCase();
-    const normalized = QUALITY_ALIASES[value] || value;
-    return QUALITY_BASE[normalized] ? normalized : undefined;
+    return ["auto", "low", "medium", "high"].includes(value) ? value : undefined;
+}
+
+function normalizeImageResolution(value: string | undefined) {
+    return value === "2k" || value === "4k" || value === "8k" ? value : "1k";
+}
+
+function resolutionEdge(value: string | undefined) {
+    return ({ "1k": 1024, "2k": 2048, "4k": 3840, "8k": 7680 } as Record<string, number>)[normalizeImageResolution(value)];
 }
 
 /** Only "transparent" is forwarded; any other value (incl. empty) means keep the default opaque background. */
@@ -127,24 +133,13 @@ function normalizeBackground(background: string | undefined) {
     return background?.trim().toLowerCase() === "transparent" ? "transparent" : undefined;
 }
 
-/** Map "quality + ratio" to an explicit pixel dimension like "3840x2160". */
-function resolveSize(quality: string | undefined, ratio: string): string {
+/** Map "resolution + ratio" to an explicit pixel dimension like "3840x2160". */
+function resolveSize(resolution: string | undefined, ratio: string): string {
     const parsedRatio = parseImageRatio(ratio);
-    const basePixels = quality ? QUALITY_BASE[quality] : undefined;
     const isLandscape = parsedRatio.width >= parsedRatio.height;
     const longRatio = isLandscape ? parsedRatio.width / parsedRatio.height : parsedRatio.height / parsedRatio.width;
-    let longSide: number;
-    let shortSide: number;
-
-    if (basePixels) {
-        const targetPixels = basePixels * basePixels;
-        const longSideRaw = Math.sqrt(targetPixels * longRatio);
-        longSide = Math.floor(longSideRaw / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
-        shortSide = Math.round(longSide / longRatio / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
-    } else {
-        shortSide = DEFAULT_IMAGE_SHORT_SIDE;
-        longSide = Math.round((shortSide * longRatio) / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
-    }
+    const longSide = resolution ? resolutionEdge(resolution) : DEFAULT_IMAGE_SHORT_SIDE;
+    const shortSide = Math.max(IMAGE_SIZE_STEP, Math.round(longSide / longRatio / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP);
 
     const width = isLandscape ? longSide : shortSide;
     const height = isLandscape ? shortSide : longSide;
@@ -182,7 +177,7 @@ function validateImageSize(width: number, height: number) {
     if (pixels < IMAGE_MIN_PIXELS || pixels > IMAGE_MAX_PIXELS) throw new Error("图像总像素需在 655360 到 8294400 之间，请调整尺寸");
 }
 
-function resolveRequestSize(quality: string | undefined, size: string) {
+function resolveRequestSize(resolution: string | undefined, size: string) {
     const value = size.trim();
     if (!value || value.toLowerCase() === "auto") return undefined;
     const dimensions = parseImageDimensions(value);
@@ -190,7 +185,7 @@ function resolveRequestSize(quality: string | undefined, size: string) {
         validateImageSize(dimensions.width, dimensions.height);
         return `${dimensions.width}x${dimensions.height}`;
     }
-    if (value.includes(":")) return resolveSize(quality, value);
+    if (value.includes(":")) return resolveSize(resolution, value);
     throw new Error("图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
 }
 
@@ -199,7 +194,7 @@ function resolveGeminiImageConfig(config: AiConfig) {
     const dimensions = parseImageDimensions(value);
     const ratio = dimensions ? `${dimensions.width}:${dimensions.height}` : value;
     const aspectRatio = value && value.toLowerCase() !== "auto" ? closestGeminiAspectRatio(ratio) : undefined;
-    const imageSize = supportsGeminiImageSize(config.model) ? resolveGeminiImageSize(config.quality, dimensions) : undefined;
+    const imageSize = supportsGeminiImageSize(config.model) ? resolveGeminiImageSize(config.imageResolution, dimensions) : undefined;
     const image = { ...(aspectRatio ? { aspectRatio } : {}), ...(imageSize ? { imageSize } : {}) };
     return Object.keys(image).length ? { responseFormat: { image } } : {};
 }
@@ -214,9 +209,10 @@ function closestGeminiAspectRatio(value: string) {
     });
 }
 
-function resolveGeminiImageSize(quality: string, dimensions: { width: number; height: number } | null) {
-    const normalizedQuality = normalizeQuality(quality);
-    if (normalizedQuality) return GEMINI_IMAGE_SIZE_BY_QUALITY[normalizedQuality];
+function resolveGeminiImageSize(resolution: string, dimensions: { width: number; height: number } | null) {
+    const normalizedResolution = normalizeImageResolution(resolution);
+    if (normalizedResolution === "8k") throw new Error("当前 Gemini 图片模型最高支持 4K，请选择 4K 或更低分辨率");
+    if (normalizedResolution) return ({ "1k": "1K", "2k": "2K", "4k": "4K" } as Record<string, string>)[normalizedResolution];
     if (!dimensions) return undefined;
     const edge = Math.max(dimensions.width, dimensions.height);
     if (edge <= 768) return "512";
@@ -264,6 +260,83 @@ function parseImagePayload(payload: ImageApiResponse) {
     }
 
     return images;
+}
+
+function grsaiImageSize(resolution: string) {
+    return normalizeImageResolution(resolution).toUpperCase();
+}
+
+function grsaiAspectRatio(config: AiConfig) {
+    const value = config.size.trim();
+    if (!value || value.toLowerCase() === "auto") return "auto";
+    const dimensions = parseImageDimensions(value);
+    return dimensions ? closestGeminiAspectRatio(`${dimensions.width}:${dimensions.height}`) : closestGeminiAspectRatio(value);
+}
+
+function grsaiRequestBody(config: AiConfig, prompt: string, images: string[]) {
+    const model = config.model.trim();
+    const lowerModel = model.toLowerCase();
+    const isGptImage = lowerModel === "gpt-image-2" || lowerModel === "gpt-image-2-vip";
+    const isVip = lowerModel === "gpt-image-2-vip";
+    const requestSize = resolveRequestSize(config.imageResolution, config.size);
+    const aspectRatio = isVip
+        ? requestSize || "auto"
+        : isGptImage
+            ? (config.size.trim().includes(":") ? config.size.trim() : requestSize || "auto")
+            : grsaiAspectRatio(config);
+    return {
+        model,
+        prompt: withSystemPrompt(config, prompt),
+        images,
+        aspectRatio,
+        ...(isGptImage ? {} : { imageSize: grsaiImageSize(config.imageResolution) }),
+        replyType: "json",
+    };
+}
+
+async function requestGrsaiImageOnce(config: AiConfig, prompt: string, images: string[], options?: RequestOptions) {
+    try {
+        let payload = (await axios.post<GrsaiTaskResponse>(aiApiUrl(config, "/api/generate"), grsaiRequestBody(config, prompt, images), {
+            headers: aiHeaders(config, "application/json"),
+            signal: options?.signal,
+        })).data;
+        for (let attempt = 0; payload.status === "running" && payload.id && attempt < 150; attempt += 1) {
+            await delay(2000, options?.signal);
+            payload = (await axios.get<GrsaiTaskResponse>(aiApiUrl(config, "/api/result"), {
+                headers: aiHeaders(config),
+                params: { id: payload.id },
+                signal: options?.signal,
+            })).data;
+        }
+        if (payload.status === "running") throw new Error("GRS AI 图片生成超时，请稍后在生成记录中重试");
+        if (payload.status === "failed" || payload.status === "violation") throw new Error(readApiErrorMessage(payload.error) || payload.msg || (payload.status === "violation" ? "提示词未通过安全审核" : "GRS AI 图片生成失败"));
+        return parseImagePayload(payload);
+    } catch (error) {
+        throw new Error(readAxiosError(error, "GRS AI 图片生成失败"));
+    }
+}
+
+async function requestGrsaiImages(config: AiConfig, prompt: string, images: string[], count: number, options?: RequestOptions) {
+    const requests = Array.from({ length: count }, () => requestGrsaiImageOnce(config, prompt, images, options));
+    return persistGeneratedImages((await Promise.all(requests)).flat());
+}
+
+async function persistGeneratedImages<T extends { dataUrl: string }>(images: T[]) {
+    await Promise.all(
+        images.map(async (image) => {
+            try {
+                await saveGeneratedBlob("image", await (await fetch(image.dataUrl)).blob());
+            } catch {
+                // 结果仍会被工作台缓存；桌面目录写入失败通过全局提示告知用户。
+            }
+        }),
+    );
+    return images;
+}
+
+async function persistGeneratedText(text: string) {
+    await saveGeneratedText(text);
+    return text;
 }
 
 function readApiErrorMessage(value: unknown): string {
@@ -519,6 +592,61 @@ async function requestStreamingResponse(config: AiConfig, body: Record<string, u
     return { ...result, content: state.text || result.content };
 }
 
+function chatText(content: string | Array<{ text?: string }> | undefined) {
+    if (typeof content === "string") return content;
+    return (content || []).map((item) => item.text || "").join("");
+}
+
+function consumeGrsaiChatBlock(block: string, onDelta: (text: string) => void) {
+    const line = block.split(/\r?\n/).find((item) => item.startsWith("data:"));
+    if (!line) return "";
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") return "";
+    try {
+        const payload = JSON.parse(data) as OpenAiChatPayload;
+        if (payload.error?.message || payload.message) throw new Error(payload.error?.message || payload.message);
+        const delta = chatText(payload.choices?.[0]?.delta?.content);
+        if (delta) onDelta(delta);
+        return delta;
+    } catch (error) {
+        if (error instanceof SyntaxError) return "";
+        throw error;
+    }
+}
+
+async function requestGrsaiChat(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
+    const body = { model: config.model, stream: true, messages: withSystemMessage(config, messages) };
+    const response = await fetch(aiApiUrl(config, "/chat/completions"), {
+        method: "POST",
+        headers: { ...aiHeaders(config, "application/json"), Accept: "text/event-stream" },
+        body: JSON.stringify(body),
+        signal: options?.signal,
+    });
+    if (!response.ok) throw new Error(await readFetchError(response, "GRS AI 文本请求失败"));
+    if (!response.body) {
+        const payload = (await response.json()) as OpenAiChatPayload;
+        if (payload.error?.message || payload.message) throw new Error(payload.error?.message || payload.message);
+        const text = chatText(payload.choices?.[0]?.message?.content) || "没有返回内容";
+        onDelta(text);
+        return text;
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let text = "";
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split(/\r?\n\r?\n/);
+        buffer = blocks.pop() || "";
+        for (const block of blocks) text += consumeGrsaiChatBlock(block, onDelta);
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) text += consumeGrsaiChatBlock(buffer, onDelta);
+    return text || "没有返回内容";
+}
+
 function toGeminiBody(config: AiConfig, messages: ResponseInputMessage[], extra?: Record<string, unknown>) {
     const systemText = [
         config.systemPrompt.trim(),
@@ -675,7 +803,7 @@ function parseGeminiToolResponse(payload: GeminiPayload): ToolResponseResult {
 
 async function requestGeminiImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
     const requests = Array.from({ length: count }, () => requestGeminiImagesOnce(config, prompt, references, options));
-    return (await Promise.all(requests)).flat();
+    return persistGeneratedImages((await Promise.all(requests)).flat());
 }
 
 async function requestGeminiImagesOnce(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
@@ -710,13 +838,38 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
     return images;
 }
 
+function agnesImageSize(config: AiConfig) {
+    const resolution = normalizeImageResolution(config.imageResolution);
+    if (resolution === "8k") throw new Error("Agnes Image 2.1 官方最高支持 4K，请选择 4K 或更低分辨率");
+    return ({ "1k": "1K", "2k": "2K", "4k": "4K" } as Record<string, string>)[resolution];
+}
+
+async function requestAgnesImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
+    const ratio = config.size.includes(":") ? config.size : undefined;
+    const images = await Promise.all(references.map(imageToDataUrl));
+    const makeRequest = async () => {
+        const response = await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/generations"), {
+            model: config.model,
+            prompt: withSystemPrompt(config, prompt),
+            size: agnesImageSize(config),
+            ...(ratio ? { ratio } : {}),
+            extra_body: {
+                response_format: "b64_json",
+                ...(images.length ? { image: images } : {}),
+            },
+        }, { headers: aiHeaders(config, "application/json"), signal: options?.signal });
+        return parseImagePayload(response.data);
+    };
+    return persistGeneratedImages((await Promise.all(Array.from({ length: count }, makeRequest))).flat());
+}
+
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const script = resolveModelScript(config, config.model || config.imageModel);
     if (script) {
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size);
+        const requestSize = resolveRequestSize(config.imageResolution, config.size);
         const background = normalizeBackground(config.background);
         try {
             const result = await runModelPlugin({
@@ -725,13 +878,16 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 config: requestConfig,
                 prompt: withSystemPrompt(requestConfig, prompt),
                 images: [],
-                params: { size: requestSize, quality, count: n, ...(background ? { background } : {}) },
+                params: { size: requestSize, quality, resolution: normalizeImageResolution(config.imageResolution), count: n, ...(background ? { background } : {}) },
                 signal: options?.signal,
             });
-            return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
+            return persistGeneratedImages(normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl })));
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
         }
+    }
+    if (requestConfig.apiFormat === "grsai") {
+        return await requestGrsaiImages(requestConfig, prompt, [], n, options);
     }
     if (requestConfig.apiFormat === "gemini") {
         try {
@@ -740,8 +896,9 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             throw new Error(readAxiosError(error, "请求失败"));
         }
     }
+    if (requestConfig.apiFormat === "agnes") return requestAgnesImages(requestConfig, prompt, [], n, options);
     const quality = normalizeQuality(config.quality);
-    const requestSize = resolveRequestSize(quality, config.size);
+    const requestSize = resolveRequestSize(config.imageResolution, config.size);
     const background = normalizeBackground(config.background);
     try {
         const response = await axios.post<ImageApiResponse>(
@@ -761,8 +918,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 signal: options?.signal,
             },
         );
-        const images = parseImagePayload(response.data);
-        return images;
+        return persistGeneratedImages(parseImagePayload(response.data));
     } catch (error) {
         throw new Error(readAxiosError(error, "请求失败"));
     }
@@ -775,7 +931,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const script = resolveModelScript(config, config.model || config.imageModel);
     if (script) {
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size);
+        const requestSize = resolveRequestSize(config.imageResolution, config.size);
         const background = normalizeBackground(config.background);
         const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
         try {
@@ -785,13 +941,18 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 config: requestConfig,
                 prompt: withSystemPrompt(requestConfig, requestPrompt),
                 images: refs,
-                params: { size: requestSize, quality, count: n, ...(background ? { background } : {}) },
+                params: { size: requestSize, quality, resolution: normalizeImageResolution(config.imageResolution), count: n, ...(background ? { background } : {}) },
                 signal: options?.signal,
             });
-            return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
+            return persistGeneratedImages(normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl })));
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
         }
+    }
+    if (requestConfig.apiFormat === "grsai") {
+        if (mask) throw new Error("GRS AI 当前接口不支持蒙版编辑，请移除蒙版后使用参考图编辑");
+        const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
+        return await requestGrsaiImages(requestConfig, requestPrompt, refs, n, options);
     }
     if (requestConfig.apiFormat === "gemini") {
         if (mask) throw new Error("Gemini 调用格式暂不支持蒙版编辑");
@@ -801,11 +962,15 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             throw new Error(readAxiosError(error, "请求失败"));
         }
     }
+    if (requestConfig.apiFormat === "agnes") {
+        if (mask) throw new Error("Agnes 图片接口不支持蒙版参数；请使用全图修复或生成式高清");
+        return requestAgnesImages(requestConfig, requestPrompt, references, n, options);
+    }
 
     if (requestConfig.apiFormat === "ark") {
         if (mask) throw new Error("蒙版编辑暂不支持该模型，请使用其他渠道");
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size);
+        const requestSize = resolveRequestSize(config.imageResolution, config.size);
         const background = normalizeBackground(config.background);
         const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
         try {
@@ -827,14 +992,14 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                     signal: options?.signal,
                 },
             );
-            return parseImagePayload(response.data);
+            return persistGeneratedImages(parseImagePayload(response.data));
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
         }
     }
 
     const quality = normalizeQuality(config.quality);
-    const requestSize = resolveRequestSize(quality, config.size);
+    const requestSize = resolveRequestSize(config.imageResolution, config.size);
     const background = normalizeBackground(config.background);
     const formData = new FormData();
     formData.set("model", requestConfig.model);
@@ -851,14 +1016,13 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (background) {
         formData.set("background", background);
     }
-    const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+    const files = await Promise.all(references.map(imageToFile));
     files.forEach((file) => formData.append("image", file));
     if (mask) formData.set("mask", dataUrlToFile(mask));
 
     try {
         const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal });
-        const images = parseImagePayload(response.data);
-        return images;
+        return persistGeneratedImages(parseImagePayload(response.data));
     } catch (error) {
         throw new Error(readAxiosError(error, "请求失败"));
     }
@@ -879,16 +1043,31 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
             });
             const text = String(answer ?? "").trim() || "没有返回内容";
             if (text === "没有返回内容") onDelta(text);
-            return text;
+            return persistGeneratedText(text);
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
         }
     }
     try {
+        if (requestConfig.apiFormat === "grsai") {
+            const answer = await requestGrsaiChat(requestConfig, messages, onDelta, options);
+            return persistGeneratedText(answer || "没有返回内容");
+        }
         if (requestConfig.apiFormat === "gemini") {
             const answer = (await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages), onDelta, options)).content || "没有返回内容";
             if (answer === "没有返回内容") onDelta(answer);
-            return answer;
+            return persistGeneratedText(answer);
+        }
+        if (requestConfig.apiFormat === "agnes") {
+            const response = await axios.post<OpenAiChatPayload>(aiApiUrl(requestConfig, "/chat/completions"), {
+                model: requestConfig.model,
+                messages: withSystemMessage(requestConfig, messages),
+                stream: false,
+                ...(requestConfig.reasoningEffort === "auto" ? {} : { chat_template_kwargs: { enable_thinking: true } }),
+            }, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal });
+            const answer = chatText(response.data.choices?.[0]?.message?.content) || "没有返回内容";
+            onDelta(answer);
+            return persistGeneratedText(answer);
         }
         const answer = (await requestStreamingResponse(requestConfig, {
             model: requestConfig.model,
@@ -896,7 +1075,7 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
             ...(requestConfig.reasoningEffort === "auto" ? {} : { reasoning: { effort: requestConfig.reasoningEffort } }),
         }, onDelta, options)).content || "没有返回内容";
         if (answer === "没有返回内容") onDelta(answer);
-        return answer;
+        return persistGeneratedText(answer);
     } catch (error) {
         throw new Error(readAxiosError(error, "请求失败"));
     }
@@ -904,6 +1083,7 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
 
 export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
     try {
+        if (config.apiFormat === "grsai") return GRSAI_DEFAULT_MODELS.map((model) => model.name);
         if (config.apiFormat === "gemini") {
             const response = await axios.get<GeminiPayload>(geminiApiUrl({ ...defaultGeminiConfig, ...config }), { headers: geminiHeaders({ ...defaultGeminiConfig, ...config }) });
             validateGeminiPayload(response.data);
@@ -917,11 +1097,13 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
                 Authorization: `Bearer ${config.apiKey}`,
             },
         });
-        return (response.data.data || [])
+        const models = (response.data.data || [])
             .map((model) => model.id)
             .filter((id): id is string => Boolean(id))
             .sort((a, b) => a.localeCompare(b));
+        return models.length || config.apiFormat !== "agnes" ? models : AGNES_DEFAULT_MODELS.map((model) => model.name);
     } catch (error) {
+        if (config.apiFormat === "agnes") return AGNES_DEFAULT_MODELS.map((model) => model.name);
         throw new Error(readAxiosError(error, "读取模型失败"));
     }
 }
@@ -937,3 +1119,14 @@ const defaultGeminiConfig: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat" | "
     model: "",
     systemPrompt: "",
 };
+
+function delay(ms: number, signal?: AbortSignal) {
+    return new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) return reject(new DOMException("Aborted", "AbortError"));
+        const timer = setTimeout(resolve, ms);
+        signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(new DOMException("Aborted", "AbortError"));
+        }, { once: true });
+    });
+}

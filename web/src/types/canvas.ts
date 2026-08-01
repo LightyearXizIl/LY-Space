@@ -38,6 +38,7 @@ export type CanvasNodeMetadata = {
     reasoningEffort?: "auto" | "low" | "medium" | "high" | "xhigh";
     size?: string;
     quality?: string;
+    imageResolution?: "1k" | "2k" | "4k" | "8k";
     background?: string;
     count?: number;
     seconds?: string;

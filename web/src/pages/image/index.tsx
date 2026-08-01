@@ -1,5 +1,5 @@
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
 import localforage from "localforage";
 import { saveAs } from "file-saver";
@@ -18,6 +18,9 @@ import { requestEdit, requestGeneration } from "@/services/api/image";
 import { deleteStoredImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
+import { loadWorkbenchSession, saveWorkbenchSession } from "@/services/workbench-session";
+import { trackWrite } from "@/services/desktop-storage";
+import { acknowledgeReferenceHandoff, getReferenceHandoffs } from "@/services/reference-handoff";
 import type { ReferenceImage } from "@/types/image";
 
 type GeneratedImage = {
@@ -58,11 +61,12 @@ type GenerationLog = {
     thumbnails: string[];
 };
 
-type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "count">;
+type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "imageResolution" | "size" | "count" | "background">;
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
 const LOG_STORE_KEY = "infinite-canvas:image_generation_logs";
+const SESSION_STORE_KEY = "image-workbench:current-session";
 const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
 const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
 
@@ -92,6 +96,7 @@ export default function ImagePage() {
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [isReferenceDragActive, setIsReferenceDragActive] = useState(false);
     const [autoRunToken, setAutoRunToken] = useState(0);
+    const [sessionHydrated, setSessionHydrated] = useState(false);
     const imageCommand = useWorkbenchAgentStore((state) => state.imageCommand);
     const clearImageCommand = useWorkbenchAgentStore((state) => state.clearImageCommand);
     const updateAgentTask = useWorkbenchAgentStore((state) => state.updateTask);
@@ -111,6 +116,45 @@ export default function ImagePage() {
     useEffect(() => {
         void refreshLogs();
     }, []);
+
+    useEffect(() => {
+        let active = true;
+        void loadWorkbenchSession<{ prompt: string; references: ReferenceImage[]; results: GenerationResult[]; elapsedMs: number; previewLogId?: string }>(SESSION_STORE_KEY).then((session) => {
+            if (!active || !session) return;
+            setPrompt(session.prompt || "");
+            setReferences(session.references || []);
+            setResults((session.results || []).map((result) => (result.status === "pending" ? { ...result, status: "failed", error: "上次生成已中断，可重试" } : result)));
+            setElapsedMs(session.elapsedMs || 0);
+        }).finally(() => active && setSessionHydrated(true));
+        return () => {
+            active = false;
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!sessionHydrated) return;
+        void saveWorkbenchSession(SESSION_STORE_KEY, { prompt, references, results, elapsedMs, previewLogId: previewLog?.id });
+    }, [elapsedMs, previewLog?.id, prompt, references, results, sessionHydrated]);
+
+    useEffect(() => {
+        if (!sessionHydrated) return;
+        void (async () => {
+            let nextReferences = references;
+            for (const handoff of await getReferenceHandoffs("image")) {
+                const dataUrl = await resolveImageUrl(handoff.storageKey);
+                if (!dataUrl) continue;
+                nextReferences = [...nextReferences, { id: nanoid(), name: handoff.name, type: handoff.type, dataUrl, storageKey: handoff.storageKey }];
+                await saveWorkbenchSession(SESSION_STORE_KEY, { prompt, references: nextReferences, results, elapsedMs, previewLogId: previewLog?.id });
+                await acknowledgeReferenceHandoff(handoff.id);
+            }
+            if (nextReferences !== references) {
+                setReferences(nextReferences);
+                message.success("精修图片已加入参考图");
+            }
+        })();
+        // 交接仅在当前会话恢复完成后消费一次。
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sessionHydrated]);
 
     const addReferences = async (files?: FileList | null) => {
         const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
@@ -290,7 +334,7 @@ export default function ImagePage() {
     };
 
     const saveLog = (log: GenerationLog) => {
-        void logStore.setItem(log.id, serializeLog(log)).then(refreshLogs);
+        void trackWrite(logStore.setItem(log.id, serializeLog(log))).then(refreshLogs);
     };
 
     const refreshLogs = async () => setLogs(await readStoredLogs());
@@ -302,6 +346,7 @@ export default function ImagePage() {
         setReferences(log.references || []);
         if (log.config.imageModel || log.model) updateConfig("imageModel", log.config.imageModel || log.model);
         if (log.config.quality) updateConfig("quality", log.config.quality);
+        if (log.config.imageResolution) updateConfig("imageResolution", log.config.imageResolution);
         if (log.config.size) updateConfig("size", log.config.size);
         if (log.config.count) updateConfig("count", log.config.count);
         setResults(log.images.map((image) => ({ id: image.id, status: "success", image })));
@@ -413,7 +458,7 @@ export default function ImagePage() {
                                         </Button>
                                     </div>
                                 </div>
-                                <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述画面主体、风格、构图、光线和用途" />
+                                <Input.TextArea value={prompt} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setPrompt(event.target.value)} rows={7} placeholder="描述画面主体、风格、构图、光线和用途" />
                             </div>
 
                             <div className="min-w-0">
@@ -830,8 +875,10 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
         model: log.config?.model || log.model || "",
         imageModel: log.config?.imageModel || log.model || "",
         quality: log.config?.quality || log.quality || "",
+        imageResolution: log.config?.imageResolution || "1k",
         size: log.config?.size || log.size || "",
         count: log.config?.count || String(log.imageCount || log.successCount || 1),
+        background: log.config?.background || "",
     };
 }
 
@@ -878,8 +925,10 @@ function buildLog({
         model: config.model,
         imageModel: config.imageModel,
         quality: config.quality,
+        imageResolution: config.imageResolution,
         size: config.size,
         count: config.count,
+        background: config.background,
     };
     return {
         id: nanoid(),

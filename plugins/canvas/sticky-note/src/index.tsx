@@ -142,7 +142,7 @@ function StickyNoteContent({ ctx }: CanvasNodeContentProps) {
 export default definePlugin({
     id: "sticky-note",
     name: "便利贴节点",
-    version: "1.1.0",
+    version: "0.0.1",
     description: "可自选颜色、双击编辑、拖动即可移动的便利贴",
     nodes: [
         {

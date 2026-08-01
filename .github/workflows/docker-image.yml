@@ -10,7 +10,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/basketikun/infinite-canvas
+  IMAGE_NAME: ghcr.io/lightyearxizil/ly-space
 
 jobs:
   meta:
@@ -24,6 +24,7 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
+            type=raw,value=latest
             type=ref,event=tag
             type=sha,prefix=
 

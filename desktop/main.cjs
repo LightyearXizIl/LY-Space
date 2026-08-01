@@ -1,0 +1,387 @@
+const { app, BrowserWindow, dialog, ipcMain, Menu, net: electronNet, protocol, shell } = require("electron");
+const childProcess = require("node:child_process");
+const fs = require("node:fs");
+const http = require("node:http");
+const nodeNet = require("node:net");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
+
+protocol.registerSchemesAsPrivileged([
+    { scheme: "lyspace", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
+]);
+
+let mainWindow = null;
+let agentChild = null;
+let agentState = { url: "", token: "", status: "error", error: "内置 Canvas Agent 尚未启动" };
+let storageSettings = null;
+let allowWindowClose = false;
+let closingTimer = null;
+
+const RESULT_FOLDERS = { image: "Picture", video: "Video", audio: "Audio", text: "text" };
+
+function storageConfigFile() {
+    return path.join(app.getPath("userData"), "app-data", "storage-settings.json");
+}
+
+function storageBaseDirectory() {
+    return app.isPackaged ? path.dirname(process.execPath) : path.resolve(__dirname, "..");
+}
+
+function defaultStorageSettings() {
+    const base = storageBaseDirectory();
+    return { resultRoot: path.join(base, "Result"), cacheRoot: path.join(base, "Data cache"), defaultResultRoot: path.join(base, "Result"), defaultCacheRoot: path.join(base, "Data cache") };
+}
+
+function readStorageSettings() {
+    const defaults = defaultStorageSettings();
+    try {
+        const saved = JSON.parse(fs.readFileSync(storageConfigFile(), "utf8"));
+        return { ...defaults, resultRoot: saved.resultRoot || defaults.resultRoot, cacheRoot: saved.cacheRoot || defaults.cacheRoot, pendingCacheRoot: saved.pendingCacheRoot || "", lastError: saved.lastError || "" };
+    } catch {
+        return { ...defaults, pendingCacheRoot: "", lastError: "" };
+    }
+}
+
+function writeStorageSettings() {
+    fs.mkdirSync(path.dirname(storageConfigFile()), { recursive: true });
+    fs.writeFileSync(storageConfigFile(), JSON.stringify({ resultRoot: storageSettings.resultRoot, cacheRoot: storageSettings.cacheRoot, pendingCacheRoot: storageSettings.pendingCacheRoot || "", lastError: storageSettings.lastError || "" }, null, 2), "utf8");
+}
+
+function ensureStorageDirectories(settings = storageSettings) {
+    fs.mkdirSync(settings.resultRoot, { recursive: true });
+    Object.values(RESULT_FOLDERS).forEach((folder) => fs.mkdirSync(path.join(settings.resultRoot, folder), { recursive: true }));
+    fs.mkdirSync(settings.cacheRoot, { recursive: true });
+    fs.mkdirSync(path.join(settings.cacheRoot, "Cache"), { recursive: true });
+}
+
+function isNestedPath(left, right) {
+    const relative = path.relative(left, right);
+    return !relative || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function assertStoragePath(value, label) {
+    if (!value || !path.isAbsolute(value)) throw new Error(`${label}必须是绝对路径`);
+    const resolved = path.resolve(value);
+    fs.mkdirSync(resolved, { recursive: true });
+    fs.accessSync(resolved, fs.constants.W_OK);
+    return resolved;
+}
+
+function collisionFreePath(target) {
+    if (!fs.existsSync(target)) return target;
+    const extension = path.extname(target);
+    const name = path.basename(target, extension);
+    const parent = path.dirname(target);
+    let index = 1;
+    let candidate = target;
+    while (fs.existsSync(candidate)) candidate = path.join(parent, `${name}-${index++}${extension}`);
+    return candidate;
+}
+
+function copyDirectory(source, target) {
+    if (!fs.existsSync(source) || path.resolve(source) === path.resolve(target)) return;
+    fs.mkdirSync(target, { recursive: true });
+    for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+        const sourcePath = path.join(source, entry.name);
+        const targetPath = path.join(target, entry.name);
+        if (entry.isDirectory()) {
+            copyDirectory(sourcePath, targetPath);
+        } else if (entry.isFile()) {
+            fs.copyFileSync(sourcePath, collisionFreePath(targetPath));
+        }
+    }
+}
+
+function configureStorageBeforeReady() {
+    const legacySessionData = app.getPath("sessionData");
+    storageSettings = readStorageSettings();
+    if (storageSettings.pendingCacheRoot) {
+        try {
+            const nextCacheRoot = assertStoragePath(storageSettings.pendingCacheRoot, "缓存目录");
+            copyDirectory(storageSettings.cacheRoot, nextCacheRoot);
+            storageSettings.cacheRoot = nextCacheRoot;
+            storageSettings.pendingCacheRoot = "";
+            storageSettings.lastError = "";
+            writeStorageSettings();
+        } catch (error) {
+            storageSettings.pendingCacheRoot = "";
+            storageSettings.lastError = `缓存目录迁移失败，已继续使用原目录：${error.message || error}`;
+            writeStorageSettings();
+        }
+    }
+    try {
+        ensureStorageDirectories();
+    } catch {
+        const fallbackBase = path.join(app.getPath("documents"), "LY Space");
+        storageSettings.resultRoot = path.join(fallbackBase, "Result");
+        storageSettings.cacheRoot = path.join(app.getPath("userData"), "app-data", "Data cache");
+        storageSettings.pendingCacheRoot = "";
+        ensureStorageDirectories();
+        writeStorageSettings();
+    }
+    if (path.resolve(legacySessionData) !== path.resolve(storageSettings.cacheRoot) && !fs.existsSync(path.join(storageSettings.cacheRoot, ".ly-space-session-migrated"))) {
+        try {
+            copyDirectory(legacySessionData, storageSettings.cacheRoot);
+            fs.writeFileSync(path.join(storageSettings.cacheRoot, ".ly-space-session-migrated"), "1", "utf8");
+        } catch {
+            storageSettings.cacheRoot = legacySessionData;
+            ensureStorageDirectories();
+        }
+    }
+    app.setPath("sessionData", storageSettings.cacheRoot);
+    app.setPath("cache", path.join(storageSettings.cacheRoot, "Cache"));
+}
+
+function storageInfo() {
+    return { ...storageSettings, folders: Object.fromEntries(Object.entries(RESULT_FOLDERS).map(([kind, folder]) => [kind, path.join(storageSettings.resultRoot, folder)])) };
+}
+
+async function writeGeneratedOutput(payload) {
+    const kind = payload?.kind;
+    const folder = RESULT_FOLDERS[kind];
+    if (!folder) throw new Error("不支持的生成文件类型");
+    const directory = path.join(storageSettings.resultRoot, folder);
+    await fs.promises.mkdir(directory, { recursive: true });
+    const extension = String(payload.extension || (kind === "text" ? "txt" : "bin")).replace(/[^a-z0-9]/gi, "").toLowerCase() || "bin";
+    const name = `${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
+    const target = path.join(directory, name);
+    const temporary = `${target}.part`;
+    const content = kind === "text" ? String(payload.text || "") : Buffer.from(payload.bytes || []);
+    await fs.promises.writeFile(temporary, content);
+    await fs.promises.rename(temporary, target);
+    return { path: target, name };
+}
+
+function installApplicationMenu() {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+        { label: "文件", submenu: [{ label: "退出", role: "quit" }] },
+        {
+            label: "编辑",
+            submenu: [
+                { label: "撤销", role: "undo" },
+                { label: "重做", role: "redo" },
+                { type: "separator" },
+                { label: "剪切", role: "cut" },
+                { label: "复制", role: "copy" },
+                { label: "粘贴", role: "paste" },
+                { label: "粘贴并匹配样式", role: "pasteAndMatchStyle" },
+                { label: "删除", role: "delete" },
+                { type: "separator" },
+                { label: "全选", role: "selectAll" },
+            ],
+        },
+        {
+            label: "视图",
+            submenu: [
+                { label: "重新加载", role: "reload" },
+                { label: "强制重新加载", role: "forceReload" },
+                { label: "切换开发者工具", role: "toggleDevTools" },
+                { type: "separator" },
+                { label: "实际大小", role: "resetZoom" },
+                { label: "放大", role: "zoomIn" },
+                { label: "缩小", role: "zoomOut" },
+                { type: "separator" },
+                { label: "切换全屏", role: "togglefullscreen" },
+            ],
+        },
+        { label: "窗口", submenu: [{ label: "最小化", role: "minimize" }, { label: "缩放", role: "zoom" }, { label: "关闭", role: "close" }] },
+    ]));
+}
+
+function webDirectory() {
+    return app.isPackaged ? path.join(__dirname, "web") : path.resolve(__dirname, "..", "web", "dist");
+}
+
+function agentEntry() {
+    return app.isPackaged
+        ? path.join(process.resourcesPath, "canvas-agent", "dist", "index.js")
+        : path.resolve(__dirname, "..", "canvas-agent", "dist", "index.js");
+}
+
+function availablePort() {
+    return new Promise((resolve, reject) => {
+        const server = nodeNet.createServer();
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => {
+            const address = server.address();
+            server.close((error) => (error ? reject(error) : resolve(address.port)));
+        });
+    });
+}
+
+function readAgentConfig(configFile) {
+    try {
+        return JSON.parse(fs.readFileSync(configFile, "utf8"));
+    } catch {
+        return null;
+    }
+}
+
+function checkAgentHealth(url) {
+    return new Promise((resolve) => {
+        const request = http.get(`${url}/health`, { timeout: 1000 }, (response) => {
+            response.resume();
+            resolve(response.statusCode === 200);
+        });
+        request.once("timeout", () => request.destroy());
+        request.once("error", () => resolve(false));
+    });
+}
+
+async function startAgent() {
+    const configDir = path.join(app.getPath("userData"), "canvas-agent");
+    const configFile = path.join(configDir, "canvas-agent.json");
+    const port = await availablePort();
+    fs.mkdirSync(configDir, { recursive: true });
+    agentChild = childProcess.spawn(process.execPath, [agentEntry()], {
+        windowsHide: true,
+        stdio: ["ignore", "ignore", "ignore"],
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", CANVAS_AGENT_CONFIG_DIR: configDir, PORT: String(port) },
+    });
+    agentChild.once("error", (error) => {
+        agentState = { url: "", token: "", status: "error", error: `内置 Canvas Agent 无法启动：${error.message}` };
+    });
+    agentChild.once("exit", (code) => {
+        if (!app.isQuitting) agentState = { url: "", token: "", status: "error", error: `内置 Canvas Agent 已退出（${code ?? 0}）` };
+    });
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const config = readAgentConfig(configFile);
+        if (config?.url && config?.token && await checkAgentHealth(config.url)) {
+            agentState = { url: config.url, token: config.token, status: "ready" };
+            return;
+        }
+    }
+    agentState = { url: "", token: "", status: "error", error: "内置 Canvas Agent 启动超时，请在 Agent 面板重试" };
+}
+
+function stopAgent() {
+    if (!agentChild || agentChild.killed || !agentChild.pid) return;
+    const child = agentChild;
+    const pid = child.pid;
+    agentChild = null;
+    if (process.platform === "win32") childProcess.spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+    else child.kill("SIGTERM");
+}
+
+function registerAppProtocol() {
+    protocol.handle("lyspace", (request) => {
+        const root = webDirectory();
+        const pathname = decodeURIComponent(new URL(request.url).pathname || "/");
+        const candidate = path.resolve(root, `.${pathname}`);
+        const isSafeFile = candidate.startsWith(root) && fs.existsSync(candidate) && fs.statSync(candidate).isFile();
+        const file = isSafeFile ? candidate : path.join(root, "index.html");
+        return electronNet.fetch(pathToFileURL(file).toString());
+    });
+}
+
+function createWindow() {
+    mainWindow = new BrowserWindow({
+        width: 1360,
+        height: 900,
+        minWidth: 1000,
+        minHeight: 700,
+        backgroundColor: "#090909",
+        title: "LY Space",
+        icon: path.join(__dirname, "build", "icon.png"),
+        webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, preload: path.join(__dirname, "preload.cjs") },
+    });
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+        if (/^https?:/i.test(url)) void shell.openExternal(url);
+        return { action: "deny" };
+    });
+    mainWindow.webContents.on("will-navigate", (event, url) => {
+        if (!url.startsWith("lyspace://")) {
+            event.preventDefault();
+            if (/^https?:/i.test(url)) void shell.openExternal(url);
+        }
+    });
+    mainWindow.on("close", (event) => {
+        if (allowWindowClose) return;
+        event.preventDefault();
+        mainWindow.webContents.send("lyspace:flush-persistence");
+        if (closingTimer) clearTimeout(closingTimer);
+        closingTimer = setTimeout(() => {
+            closingTimer = null;
+            void dialog.showMessageBox(mainWindow, { type: "warning", buttons: ["继续等待"], title: "数据仍在保存", message: "本次关闭已取消，请等待数据保存完成后再退出。" });
+        }, 10000);
+    });
+    void mainWindow.loadURL("lyspace://app/");
+}
+
+app.setName("LY Space");
+app.setAppUserModelId("com.lyspace.desktop");
+if (!app.requestSingleInstanceLock()) app.quit();
+configureStorageBeforeReady();
+app.on("second-instance", () => {
+    if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+    }
+});
+app.whenReady().then(async () => {
+    registerAppProtocol();
+    installApplicationMenu();
+    ipcMain.handle("lyspace:agent-config", () => agentState);
+    ipcMain.handle("lyspace:storage-settings", () => storageInfo());
+    ipcMain.handle("lyspace:choose-storage-directory", async (_event, kind) => {
+        const selected = await dialog.showOpenDialog(mainWindow, { title: kind === "cache" ? "选择缓存目录" : "选择结果保存目录", properties: ["openDirectory", "createDirectory"] });
+        return selected.canceled ? "" : selected.filePaths[0] || "";
+    });
+    ipcMain.handle("lyspace:update-result-directory", async (_event, directory) => {
+        const next = assertStoragePath(directory, "结果目录");
+        if (isNestedPath(next, storageSettings.cacheRoot) || isNestedPath(storageSettings.cacheRoot, next)) throw new Error("结果目录不能与缓存目录相同或互相嵌套");
+        if (path.resolve(next) !== path.resolve(storageSettings.resultRoot)) copyDirectory(storageSettings.resultRoot, next);
+        storageSettings.resultRoot = next;
+        ensureStorageDirectories();
+        writeStorageSettings();
+        return storageInfo();
+    });
+    ipcMain.handle("lyspace:stage-cache-directory", async (_event, directory) => {
+        const next = assertStoragePath(directory, "缓存目录");
+        if (isNestedPath(next, storageSettings.resultRoot) || isNestedPath(storageSettings.resultRoot, next)) throw new Error("缓存目录不能与结果目录相同或互相嵌套");
+        storageSettings.pendingCacheRoot = next;
+        writeStorageSettings();
+        return storageInfo();
+    });
+    ipcMain.handle("lyspace:reset-storage-directory", async (_event, kind) => {
+        const defaults = defaultStorageSettings();
+        if (kind === "cache") {
+            const next = assertStoragePath(defaults.cacheRoot, "缓存目录");
+            if (isNestedPath(next, storageSettings.resultRoot) || isNestedPath(storageSettings.resultRoot, next)) throw new Error("缓存目录不能与结果目录相同或互相嵌套");
+            storageSettings.pendingCacheRoot = next;
+        } else {
+            const next = assertStoragePath(defaults.resultRoot, "结果目录");
+            if (isNestedPath(next, storageSettings.cacheRoot) || isNestedPath(storageSettings.cacheRoot, next)) throw new Error("结果目录不能与缓存目录相同或互相嵌套");
+            copyDirectory(storageSettings.resultRoot, next);
+            storageSettings.resultRoot = next;
+            ensureStorageDirectories();
+        }
+        writeStorageSettings();
+        return storageInfo();
+    });
+    ipcMain.handle("lyspace:open-storage-directory", async (_event, directory) => shell.openPath(directory));
+    ipcMain.handle("lyspace:write-generated-output", (_event, payload) => writeGeneratedOutput(payload));
+    ipcMain.handle("lyspace:persistence-flushed", () => {
+        if (!mainWindow || allowWindowClose) return;
+        if (closingTimer) clearTimeout(closingTimer);
+        closingTimer = null;
+        allowWindowClose = true;
+        mainWindow.close();
+    });
+    ipcMain.handle("lyspace:relaunch-after-flush", () => {
+        app.relaunch();
+        app.quit();
+    });
+    try {
+        await startAgent();
+    } catch (error) {
+        agentState = { url: "", token: "", status: "error", error: error instanceof Error ? error.message : "内置 Canvas Agent 启动失败" };
+    }
+    createWindow();
+});
+app.on("before-quit", () => {
+    app.isQuitting = true;
+    stopAgent();
+});
+app.on("window-all-closed", () => app.quit());

@@ -260,7 +260,7 @@ function PanoramaContent({ ctx }: CanvasNodeContentProps) {
 export default definePlugin({
     id: "panorama",
     name: "3D 全景节点",
-    version: "1.1.0",
+    version: "0.0.1",
     description: "查看 360° 等距柱状全景图,支持上传与 AI 生成,可从上游图片节点取图",
     nodes: [
         {

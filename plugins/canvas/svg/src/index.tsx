@@ -78,7 +78,7 @@ function SvgContent({ ctx }: CanvasNodeContentProps) {
 export default definePlugin({
     id: "svg",
     name: "SVG 节点",
-    version: "1.1.0",
+    version: "0.0.1",
     description: "透明背景渲染 SVG 矢量图,可接收上游文本节点的 SVG 源码",
     nodes: [
         {

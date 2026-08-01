@@ -1,5 +1,6 @@
 import localforage from "localforage";
 import type { StateStorage } from "zustand/middleware";
+import { trackWrite } from "@/services/desktop-storage";
 
 localforage.config({
     name: "infinite-canvas",
@@ -18,7 +19,7 @@ export const localForageStorage: StateStorage = {
     setItem: async (name, value) => {
         if (typeof window === "undefined") return;
         try {
-            await localforage.setItem(name, value);
+            await trackWrite(localforage.setItem(name, value));
         } catch {
             window.localStorage.setItem(name, value);
         }
@@ -26,7 +27,7 @@ export const localForageStorage: StateStorage = {
     removeItem: async (name) => {
         if (typeof window === "undefined") return;
         try {
-            await localforage.removeItem(name);
+            await trackWrite(localforage.removeItem(name));
         } catch {
             window.localStorage.removeItem(name);
         }

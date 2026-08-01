@@ -1,6 +1,6 @@
 {
     "name": "canvas-official-plugins",
-    "version": "1.0.0",
+    "version": "0.0.1",
     "private": true,
     "type": "module",
     "description": "Infinite Canvas 官方插件的集中构建(CI 发布到 plugins-dist 分支)",

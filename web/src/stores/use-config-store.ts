@@ -3,14 +3,16 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
-export type ApiCallFormat = "openai" | "gemini" | "ark";
+export type ApiCallFormat = "openai" | "gemini" | "ark" | "grsai" | "agnes";
 export type ModelCapability = "image" | "video" | "text" | "audio";
+export type ImageModelFeature = "image-edit" | "mask-edit" | "generative-upscale" | "dedicated-super-resolution";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
 export type ChannelModel = {
     name: string;
     capability: ModelCapability;
     script?: string;
+    imageFeatures?: ImageModelFeature[];
 };
 
 export type ModelChannel = {
@@ -45,6 +47,7 @@ export type AiConfig = {
     reasoningEffort: ReasoningEffort;
     models: string[];
     quality: string;
+    imageResolution: "1k" | "2k" | "4k" | "8k";
     size: string;
     background: string;
     count: string;
@@ -58,39 +61,58 @@ export type WebdavSyncConfig = {
     directory: string;
     lastSyncedAt: string;
 };
-export type ConfigTabKey = "channels" | "preferences" | "prompt-sources" | "webdav";
+export type ConfigTabKey = "channels" | "preferences" | "storage" | "prompt-sources" | "webdav";
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 const ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
+export const GRSAI_DOMESTIC_BASE_URL = "https://grsai.dakka.com.cn";
+export const GRSAI_GLOBAL_BASE_URL = "https://grsaiapi.com";
+export const AGNES_BASE_URL = "https://apihub.agnes-ai.com";
+export const AGNES_DEFAULT_MODELS: ChannelModel[] = [
+    { name: "agnes-2.0-flash", capability: "text" },
+    { name: "agnes-2.5-flash", capability: "text" },
+    { name: "agnes-2.5-pro-alpha", capability: "text" },
+    { name: "agnes-image-2.0-flash", capability: "image", imageFeatures: ["image-edit", "generative-upscale"] },
+    { name: "agnes-image-2.1-flash", capability: "image", imageFeatures: ["image-edit", "generative-upscale"] },
+    { name: "agnes-video-v2.0", capability: "video" },
+];
+
+export const GRSAI_DEFAULT_MODELS: ChannelModel[] = [
+    { name: "gpt-image-2", capability: "image" },
+    { name: "gpt-image-2-vip", capability: "image" },
+    { name: "nano-banana-2", capability: "image" },
+    { name: "nano-banana-2-lite", capability: "image" },
+    { name: "nano-banana-fast", capability: "image" },
+    { name: "nano-banana-pro", capability: "image" },
+    { name: "gpt-5.5", capability: "text" },
+    { name: "gpt-5.4", capability: "text" },
+    { name: "gemini-3.1-flash-lite", capability: "text" },
+    { name: "gemini-3.1-pro", capability: "text" },
+];
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
-    baseUrl: OPENAI_BASE_URL,
+    baseUrl: GRSAI_DOMESTIC_BASE_URL,
     apiKey: "",
-    apiFormat: "openai",
+    apiFormat: "grsai",
     channels: [
         {
             id: "default",
-            name: "默认渠道",
-            baseUrl: OPENAI_BASE_URL,
+            name: "GRS AI",
+            baseUrl: GRSAI_DOMESTIC_BASE_URL,
             apiKey: "",
-            apiFormat: "openai",
-            models: [
-                { name: "gpt-image-2", capability: "image" },
-                { name: "grok-imagine-video", capability: "video" },
-                { name: "gpt-5.5", capability: "text" },
-                { name: "gpt-4o-mini-tts", capability: "audio" },
-            ],
+            apiFormat: "grsai",
+            models: GRSAI_DEFAULT_MODELS,
         },
     ],
     model: "default::gpt-image-2",
     imageModel: "default::gpt-image-2",
-    videoModel: "default::grok-imagine-video",
+    videoModel: "",
     textModel: "default::gpt-5.5",
-    audioModel: "default::gpt-4o-mini-tts",
+    audioModel: "",
     audioVoice: "alloy",
     audioFormat: "mp3",
     audioSpeed: "1",
@@ -101,8 +123,9 @@ export const defaultConfig: AiConfig = {
     videoWatermark: "false",
     systemPrompt: "",
     reasoningEffort: "auto",
-    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
+    models: GRSAI_DEFAULT_MODELS.map((model) => `default::${model.name}`),
     quality: "auto",
+    imageResolution: "1k",
     size: "1:1",
     background: "",
     count: "1",
@@ -179,6 +202,22 @@ export function resolveModelScript(config: AiConfig, value: string) {
     return findChannelModel(config, value)?.model.script?.trim() || "";
 }
 
+export function imageModelFeatures(config: AiConfig, value: string): ImageModelFeature[] {
+    const found = findChannelModel(config, value)?.model;
+    if (!found || found.capability !== "image") return [];
+    if (found.imageFeatures?.length) return found.imageFeatures;
+    const request = resolveModelRequestConfig(config, value);
+    return ["image-edit", ...(request.apiFormat === "openai" ? ["mask-edit"] : [])] as ImageModelFeature[];
+}
+
+export function selectableImageModelsByFeature(config: AiConfig, feature: ImageModelFeature) {
+    return config.channels.flatMap((channel) =>
+        channel.models
+            .filter((model) => model.capability === "image" && imageModelFeatures(config, encodeChannelModel(channel.id, model.name)).includes(feature))
+            .map((model) => encodeChannelModel(channel.id, model.name)),
+    );
+}
+
 function isAiConfigReady(config: AiConfig, model: string) {
     const channel = resolveModelChannel(config, model);
     return Boolean(model.trim() && channel.baseUrl.trim() && channel.apiKey.trim());
@@ -245,12 +284,21 @@ export const useConfigStore = create<ConfigStore>()(
                         videoGenerateAudio: config.videoGenerateAudio || "true",
                         videoWatermark: config.videoWatermark || "false",
                         canvasImageCount: config.canvasImageCount || "3",
+                        imageResolution: normalizeImageResolution(config.imageResolution, config.quality, config.size),
                     },
                 };
             },
         },
     ),
 );
+
+function normalizeImageResolution(value: unknown, quality: string, size: string): AiConfig["imageResolution"] {
+    if (value === "1k" || value === "2k" || value === "4k" || value === "8k") return value;
+    const oldPreset = String(size || "").toLowerCase();
+    if (oldPreset === "2048x2048" || oldPreset === "2048x1152" || oldPreset === "1152x2048") return "2k";
+    if (oldPreset === "3840x2160" || oldPreset === "2160x3840") return "4k";
+    return quality === "high" ? "4k" : quality === "medium" ? "2k" : "1k";
+}
 
 export function useEffectiveConfig() {
     const config = useConfigStore((state) => state.config);
@@ -267,7 +315,8 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
         seen.add(name);
         const capability = typeof item === "string" ? guessCapability(name) : item.capability || guessCapability(name);
         const script = typeof item === "string" ? undefined : item.script?.trim() || undefined;
-        result.push({ name, capability, script });
+        const imageFeatures = typeof item === "string" ? undefined : item.imageFeatures?.filter((feature): feature is ImageModelFeature => ["image-edit", "mask-edit", "generative-upscale", "dedicated-super-resolution"].includes(feature));
+        result.push({ name, capability, script, ...(imageFeatures?.length ? { imageFeatures } : {}) });
     }
     return result;
 }
@@ -371,11 +420,13 @@ function normalizeChannels(config: AiConfig) {
 export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
     if (apiFormat === "gemini") return GEMINI_BASE_URL;
     if (apiFormat === "ark") return ARK_BASE_URL;
+    if (apiFormat === "grsai") return GRSAI_DOMESTIC_BASE_URL;
+    if (apiFormat === "agnes") return AGNES_BASE_URL;
     return OPENAI_BASE_URL;
 }
 
 function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
-    return apiFormat === "gemini" || apiFormat === "ark" ? apiFormat : "openai";
+    return apiFormat === "gemini" || apiFormat === "ark" || apiFormat === "grsai" || apiFormat === "agnes" ? apiFormat : "openai";
 }
 
 function uniqueModelOptions(models: string[]) {

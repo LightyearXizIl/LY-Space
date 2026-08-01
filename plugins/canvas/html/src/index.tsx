@@ -103,7 +103,7 @@ function HtmlContent({ ctx }: CanvasNodeContentProps) {
 export default definePlugin({
     id: "html",
     name: "HTML 节点",
-    version: "1.2.0",
+    version: "0.0.1",
     description: "沙箱 iframe 渲染 HTML,支持 {{input}} 注入上游文本",
     nodes: [
         {

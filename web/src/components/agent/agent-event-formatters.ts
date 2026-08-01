@@ -254,7 +254,7 @@ export function formatAgentEventLog(event: AgentEventPayload) {
     if (event.type === "turn.completed") return { title: event.status === "interrupted" ? "处理已停止" : "处理完成", text: turnSummary(event) };
     if (event.type === "turn.failed" || event.type === "error") return { title: "处理失败", text: agentErrorView(event.message || event.error?.message).text };
     if (event.type === "item.started" && isMcpToolItem(item)) return { title: "调用工具", text: toolName(String(item?.tool || "")) };
-    if (event.type === "item.completed" && isMcpToolItem(item)) return { title: item.error ? "工具失败" : "工具完成", text: `${toolName(String(item?.tool || ""))}${item.error?.message ? ` · ${item.error.message}` : ""}` };
+    if (event.type === "item.completed" && isMcpToolItem(item)) return { title: item?.error ? "工具失败" : "工具完成", text: `${toolName(String(item?.tool || ""))}${item?.error?.message ? ` · ${item.error.message}` : ""}` };
     if (event.type === "item.completed" && item?.type === "agent_message") return { title: "收到回复", text: compactText(stringText(item.text)) };
     return null;
 }
@@ -410,6 +410,7 @@ export function routeName(path: string) {
     if (path.startsWith("/canvas/")) return "指定画布";
     if (path.startsWith("/image")) return "生图工作台";
     if (path.startsWith("/video")) return "视频工作台";
+    if (path.startsWith("/refine")) return "精修工作台";
     if (path.startsWith("/prompts")) return "提示词中心";
     if (path.startsWith("/assets")) return "我的素材";
     if (path.startsWith("/config")) return "配置页面";

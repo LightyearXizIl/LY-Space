@@ -1,5 +1,5 @@
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, LoaderCircle, Music2, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Typography } from "antd";
 import localforage from "localforage";
 import { nanoid } from "nanoid";
@@ -21,6 +21,10 @@ import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } f
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+import { loadWorkbenchSession, saveWorkbenchSession } from "@/services/workbench-session";
+import { trackWrite } from "@/services/desktop-storage";
+import { acknowledgeReferenceHandoff, getReferenceHandoffs } from "@/services/reference-handoff";
+import { hostImageOnOss, loadOssHostingConfig, saveOssHostingConfig, type OssHostingConfig } from "@/services/oss-hosting";
 
 type GeneratedVideo = {
     id: string;
@@ -66,6 +70,7 @@ type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vqu
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
 const LOG_STORE_KEY = "infinite-canvas:video_generation_logs";
+const SESSION_STORE_KEY = "video-workbench:current-session";
 const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
 
 export default function VideoPage() {
@@ -97,6 +102,11 @@ export default function VideoPage() {
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [referenceDragTarget, setReferenceDragTarget] = useState<"image" | "video" | "audio" | null>(null);
     const [autoRunToken, setAutoRunToken] = useState(0);
+    const [sessionHydrated, setSessionHydrated] = useState(false);
+    const [publicImageUrl, setPublicImageUrl] = useState("");
+    const [publicImageUrlOpen, setPublicImageUrlOpen] = useState(false);
+    const [ossConfig, setOssConfig] = useState<OssHostingConfig>({ signatureEndpoint: "", publicBaseUrl: "", objectPrefix: "ly-space/references" });
+    const [ossSettingsOpen, setOssSettingsOpen] = useState(false);
     const videoCommand = useWorkbenchAgentStore((state) => state.videoCommand);
     const clearVideoCommand = useWorkbenchAgentStore((state) => state.clearVideoCommand);
     const updateAgentTask = useWorkbenchAgentStore((state) => state.updateTask);
@@ -114,18 +124,60 @@ export default function VideoPage() {
 
     useEffect(() => {
         void refreshLogs();
+        void loadOssHostingConfig().then(setOssConfig);
     }, []);
+
+    useEffect(() => {
+        let active = true;
+        void loadWorkbenchSession<{ prompt: string; references: ReferenceImage[]; videoReferences: ReferenceVideo[]; audioReferences: ReferenceAudio[]; results: GenerationResult[]; elapsedMs: number }>(SESSION_STORE_KEY).then((session) => {
+            if (!active || !session) return;
+            setPrompt(session.prompt || "");
+            setReferences(session.references || []);
+            setVideoReferences(session.videoReferences || []);
+            setAudioReferences(session.audioReferences || []);
+            setResults(session.results || []);
+            setElapsedMs(session.elapsedMs || 0);
+        }).finally(() => active && setSessionHydrated(true));
+        return () => {
+            active = false;
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!sessionHydrated) return;
+        void saveWorkbenchSession(SESSION_STORE_KEY, { prompt, references, videoReferences, audioReferences, results, elapsedMs });
+    }, [audioReferences, elapsedMs, prompt, references, results, sessionHydrated, videoReferences]);
+
+    useEffect(() => {
+        if (!sessionHydrated) return;
+        void (async () => {
+            let nextReferences = references;
+            for (const handoff of await getReferenceHandoffs("video")) {
+                if (nextReferences.length >= SEEDANCE_REFERENCE_LIMITS.images) {
+                    message.warning("视频创作台最多保留 9 张参考图");
+                    break;
+                }
+                const dataUrl = await resolveImageUrl(handoff.storageKey);
+                if (!dataUrl) continue;
+                nextReferences = [...nextReferences, { id: nanoid(), name: handoff.name, type: handoff.type, dataUrl, storageKey: handoff.storageKey }];
+                await saveWorkbenchSession(SESSION_STORE_KEY, { prompt, references: nextReferences, videoReferences, audioReferences, results, elapsedMs });
+                await acknowledgeReferenceHandoff(handoff.id);
+            }
+            if (nextReferences !== references) {
+                setReferences(nextReferences);
+                message.success("精修图片已加入参考图");
+            }
+        })();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sessionHydrated]);
 
     const addReferences = async (files?: FileList | null) => {
         const selectedFiles = Array.from(files || []);
         const unsupported = selectedFiles.filter((file) => !file.type.startsWith("image/") && !SEEDANCE_VIDEO_MIME_TYPES.includes(file.type) && !isSupportedAudioFile(file));
         if (unsupported.length) message.warning("已忽略不支持的参考资产，请使用图片、mp4/mov 视频或 mp3/wav 音频");
-        const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/") && file.size <= SEEDANCE_REFERENCE_LIMITS.imageMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.images - references.length);
-        const videoFiles = selectedFiles.filter((file) => SEEDANCE_VIDEO_MIME_TYPES.includes(file.type) && file.size <= SEEDANCE_REFERENCE_LIMITS.videoMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.videos - videoReferences.length);
-        const audioFiles = selectedFiles.filter((file) => isSupportedAudioFile(file) && file.size <= SEEDANCE_REFERENCE_LIMITS.audioMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.audios - audioReferences.length);
-        if (selectedFiles.some((file) => file.type.startsWith("image/") && file.size > SEEDANCE_REFERENCE_LIMITS.imageMaxBytes)) message.warning("已忽略超过 30MB 的参考图");
-        if (selectedFiles.some((file) => SEEDANCE_VIDEO_MIME_TYPES.includes(file.type) && file.size > SEEDANCE_REFERENCE_LIMITS.videoMaxBytes)) message.warning("已忽略超过 200MB 的参考视频");
-        if (selectedFiles.some((file) => isSupportedAudioFile(file) && file.size > SEEDANCE_REFERENCE_LIMITS.audioMaxBytes)) message.warning("已忽略超过 15MB 的参考音频");
+        const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/")).slice(0, SEEDANCE_REFERENCE_LIMITS.images - references.length);
+        const videoFiles = selectedFiles.filter((file) => SEEDANCE_VIDEO_MIME_TYPES.includes(file.type)).slice(0, SEEDANCE_REFERENCE_LIMITS.videos - videoReferences.length);
+        const audioFiles = selectedFiles.filter((file) => isSupportedAudioFile(file)).slice(0, SEEDANCE_REFERENCE_LIMITS.audios - audioReferences.length);
         const nextReferences = await Promise.all(
             imageFiles.map(async (file) => {
                 const image = await uploadImage(file);
@@ -151,6 +203,35 @@ export default function VideoPage() {
         setReferences((value) => [...value, ...nextReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.images));
         setVideoReferences((value) => [...value, ...nextVideoReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.videos));
         setAudioReferences((value) => [...value, ...nextAudioReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.audios));
+    };
+
+    const addPublicImageUrl = () => {
+        const url = publicImageUrl.trim();
+        if (!/^https:\/\//i.test(url)) return message.error("请输入公网 HTTPS 图片 URL");
+        if (references.length >= SEEDANCE_REFERENCE_LIMITS.images) return message.error("视频创作台最多保留 9 张参考图");
+        setReferences((value) => [...value, { id: nanoid(), name: new URL(url).pathname.split("/").pop() || "public-image", type: "image/*", dataUrl: url, url }]);
+        setPublicImageUrl("");
+        setPublicImageUrlOpen(false);
+        message.success("公网图片已添加；可用于 Agnes 视频模型");
+    };
+
+    const hostReferenceOnOss = async (reference: ReferenceImage) => {
+        try {
+            if (!ossConfig.signatureEndpoint || !ossConfig.publicBaseUrl) {
+                setOssSettingsOpen(true);
+                throw new Error("请先完成 OSS 设置");
+            }
+            const response = await fetch(reference.dataUrl);
+            if (!response.ok) throw new Error("无法读取本地参考图片");
+            const url = await hostImageOnOss(await response.blob(), reference.name, ossConfig);
+            setReferences((value) => value.map((item) => item.id === reference.id ? { ...item, url, dataUrl: url } : item));
+            message.success("已上传到阿里云 OSS，可用于 Agnes 视频");
+        } catch (error) { message.error(error instanceof Error ? error.message : "OSS 上传失败"); }
+    };
+
+    const persistOssConfig = async () => {
+        try { await saveOssHostingConfig(ossConfig); setOssSettingsOpen(false); message.success("OSS 设置已保存"); }
+        catch (error) { message.error(error instanceof Error ? error.message : "OSS 设置保存失败"); }
     };
 
     const handleReferenceDragEnter = (event: DragEvent<HTMLDivElement>, target: "image" | "video" | "audio") => {
@@ -323,7 +404,7 @@ export default function VideoPage() {
     };
 
     const saveLog = async (log: GenerationLog, resumePending = true) => {
-        await logStore.setItem(log.id, serializeLog(log));
+        await trackWrite(logStore.setItem(log.id, serializeLog(log)));
         await refreshLogs(resumePending);
     };
 
@@ -437,13 +518,17 @@ export default function VideoPage() {
                                         </Button>
                                     </div>
                                 </div>
-                                <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder="描述镜头运动、主体动作、场景氛围和画面风格" />
+                                <Input.TextArea value={prompt} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setPrompt(event.target.value)} rows={7} placeholder="描述镜头运动、主体动作、场景氛围和画面风格" />
                             </div>
 
                             <div className="min-w-0">
                                 <div className="mb-2 flex items-center justify-between gap-3">
                                     <span className="text-base font-semibold">参考图</span>
                                     <div className="flex gap-2">
+                                        <Button size="small" onClick={() => setPublicImageUrlOpen((value) => !value)}>
+                                            添加公网 URL
+                                        </Button>
+                                        <Button size="small" onClick={() => setOssSettingsOpen((value) => !value)}>OSS 设置</Button>
                                         <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={() => void addReferencesFromClipboard()}>
                                             剪切板
                                         </Button>
@@ -452,6 +537,22 @@ export default function VideoPage() {
                                         </Button>
                                     </div>
                                 </div>
+                                {publicImageUrlOpen ? (
+                                    <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-sky-200 bg-sky-50 p-2 text-xs dark:border-sky-900 dark:bg-sky-950/30">
+                                        <Input className="min-w-[220px] flex-1" value={publicImageUrl} placeholder="https://example.com/reference.png" onChange={(event) => setPublicImageUrl(event.target.value)} onPressEnter={addPublicImageUrl} />
+                                        <Button size="small" type="primary" onClick={addPublicImageUrl}>加入参考图</Button>
+                                        <span className="text-stone-500">Agnes 图生视频仅可使用服务端可访问的 HTTPS 图片地址。</span>
+                                    </div>
+                                ) : null}
+                                {ossSettingsOpen ? (
+                                    <div className="mb-2 grid gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs dark:border-amber-900 dark:bg-amber-950/30">
+                                        <strong>阿里云 OSS 托管（安全 STS/签名直传）</strong>
+                                        <Input value={ossConfig.signatureEndpoint} placeholder="签名接口：https://api.example.com/oss/signature" onChange={(event) => setOssConfig((value) => ({ ...value, signatureEndpoint: event.target.value }))} />
+                                        <Input value={ossConfig.publicBaseUrl} placeholder="公网域名：https://bucket.oss-cn-hangzhou.aliyuncs.com" onChange={(event) => setOssConfig((value) => ({ ...value, publicBaseUrl: event.target.value }))} />
+                                        <Input value={ossConfig.objectPrefix} placeholder="对象前缀：ly-space/references" onChange={(event) => setOssConfig((value) => ({ ...value, objectPrefix: event.target.value }))} />
+                                        <div className="flex flex-wrap items-center gap-2"><Button size="small" type="primary" onClick={() => void persistOssConfig()}>保存设置</Button><span className="text-stone-500">签名接口应返回 OSS PostObject 的 host、dir、policy 与临时签名字段；请勿填写长期 AccessKey。</span></div>
+                                    </div>
+                                ) : null}
                                 <div
                                     className={`hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors ${referenceDragTarget === "image" ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
                                     onDragEnter={(event) => handleReferenceDragEnter(event, "image")}
@@ -467,6 +568,7 @@ export default function VideoPage() {
                                             <img src={item.dataUrl} alt={item.name} className="size-full object-cover" />
                                             <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{seedanceReferenceLabel("image", index)}</span>
                                             <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
+                                            {!/^https:\/\//i.test(item.url || item.dataUrl) ? <button type="button" className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white" onClick={() => void hostReferenceOnOss(item)}>托管 OSS</button> : null}
                                             <button type="button" className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex" onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))} aria-label="移除参考图">
                                                 <Trash2 className="size-3.5" />
                                             </button>
@@ -538,7 +640,7 @@ export default function VideoPage() {
                                             </button>
                                         </div>
                                     ))}
-                                    {!audioReferences.length ? <div className="flex min-w-full items-center justify-center text-center text-sm text-stone-500">{referenceDragTarget === "audio" ? "松开即可上传参考资产" : "暂无参考音频，可拖入文件，最多 3 个，mp3/wav，单个 15MB 内"}</div> : null}
+                                    {!audioReferences.length ? <div className="flex min-w-full items-center justify-center text-center text-sm text-stone-500">{referenceDragTarget === "audio" ? "松开即可上传参考资产" : "暂无参考音频，可拖入文件，最多 3 个，mp3/wav"}</div> : null}
                                 </div>
                             </div>
 

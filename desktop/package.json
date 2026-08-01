@@ -1,0 +1,60 @@
+{
+  "name": "ly-space-desktop",
+  "version": "0.0.1",
+  "description": "LY Space desktop creative workspace",
+  "author": "LY Space",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "prepare:resources": "node scripts/prepare-resources.cjs",
+    "icon": "node scripts/generate-icon.cjs",
+    "pack:win": "pnpm run prepare:resources && pnpm run icon && node scripts/create-prepackaged.cjs && electron-builder --win nsis --x64 --prepackaged ../release/win-unpacked --publish never"
+  },
+  "build": {
+    "appId": "com.lyspace.desktop",
+    "productName": "LY Space",
+    "directories": {
+      "output": "../release",
+      "buildResources": "build"
+    },
+    "npmRebuild": false,
+    "executableName": "LY Space",
+    "beforeBuild": "./scripts/skip-dependency-rebuild.cjs",
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "build/icon.png",
+      "web/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../canvas-agent",
+        "to": "canvas-agent",
+        "filter": [
+          "dist/**/*",
+          "node_modules/**/*",
+          "agent-instructions.md",
+          "package.json"
+        ]
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "LY Space"
+    },
+    "artifactName": "LY Space Setup ${version}.${ext}"
+  },
+  "devDependencies": {
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "sharp": "^0.35.3"
+  }
+}

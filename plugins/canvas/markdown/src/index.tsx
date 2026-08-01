@@ -88,7 +88,7 @@ function MarkdownContent({ ctx }: CanvasNodeContentProps) {
 export default definePlugin({
     id: "markdown",
     name: "Markdown 节点",
-    version: "1.1.0",
+    version: "0.0.1",
     description: "在画布中编辑与渲染 Markdown",
     css,
     nodes: [

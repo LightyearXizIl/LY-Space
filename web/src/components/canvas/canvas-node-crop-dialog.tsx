@@ -23,12 +23,15 @@ const ratioOptions = [
     { label: "固定", value: "fixed" },
     { label: "原图", value: "original" },
     { label: "1:1", value: "1:1" },
+    { label: "3:2", value: "3:2" },
+    { label: "2:3", value: "2:3" },
     { label: "4:3", value: "4:3" },
+    { label: "3:4", value: "3:4" },
     { label: "16:9", value: "16:9" },
     { label: "9:16", value: "9:16" },
 ];
 
-export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (crop: CanvasImageCropRect) => void }) {
+export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm, initialCrop, initialRatioPreset }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (crop: CanvasImageCropRect) => void; initialCrop?: CanvasImageCropRect; initialRatioPreset?: string }) {
     const [crop, setCrop] = useState<CanvasImageCropRect>(defaultCrop);
     const [ratioPreset, setRatioPreset] = useState("free");
     const [fixedRatio, setFixedRatio] = useState<number | null>(null);
@@ -40,16 +43,23 @@ export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm }: { da
 
     useEffect(() => {
         if (open) {
-            setCrop(defaultCrop);
-            setRatioPreset("free");
+            setCrop(initialCrop || defaultCrop);
+            setRatioPreset(initialRatioPreset || "free");
             setFixedRatio(null);
         }
-    }, [dataUrl, open]);
+    }, [dataUrl, initialCrop, initialRatioPreset, open]);
 
     useEffect(() => {
         if (!open) return;
-        void readImageMeta(dataUrl).then(setImage);
-    }, [dataUrl, open]);
+        void readImageMeta(dataUrl).then((meta) => {
+            setImage(meta);
+            const initial = initialCrop || defaultCrop;
+            const nextFixedRatio = initialRatioPreset === "fixed" ? (initial.width * meta.width) / Math.max(1, initial.height * meta.height) : null;
+            setFixedRatio(nextFixedRatio);
+            const ratio = resolveRatio(initialRatioPreset || "free", meta, nextFixedRatio);
+            if (ratio) setCrop((current) => fitCropToRatio(current, ratio, meta));
+        });
+    }, [dataUrl, initialCrop, initialRatioPreset, open]);
 
     useEffect(() => {
         if (!open) dragAbortRef.current?.abort();
@@ -137,7 +147,7 @@ export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm }: { da
                         size="small"
                         options={ratioOptions}
                         value={ratioPreset}
-                        onChange={(value) => {
+                        onChange={(value: string | number) => {
                             const preset = String(value);
                             setRatioPreset(preset);
                             const currentRatio = image ? (crop.width * image.width) / Math.max(1, crop.height * image.height) : null;

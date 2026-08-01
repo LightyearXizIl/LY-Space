@@ -2,6 +2,7 @@ import axios from "axios";
 
 import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
+import { saveGeneratedBlob } from "@/services/desktop-storage";
 import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 
@@ -80,14 +81,16 @@ async function audioPluginBlob(result: unknown, format: string): Promise<Blob> {
 
 export async function storeGeneratedAudio(blob: Blob, format = "mp3"): Promise<UploadedFile> {
     const audio = blob.type.startsWith("audio/") ? blob : new Blob([blob], { type: audioMimeType(format) });
-    return uploadMediaFile(audio, "audio");
+    const stored = await uploadMediaFile(audio, "audio");
+    await saveGeneratedBlob("audio", audio);
+    return stored;
 }
 
 function assertAudioConfig(config: AiConfig, model: string) {
     if (!model) throw new Error("请先配置音频模型");
     if (!config.baseUrl.trim()) throw new Error("请先配置 Base URL");
     if (!config.apiKey.trim()) throw new Error("请先配置 API Key");
-    if (config.apiFormat === "gemini") throw new Error("Gemini 调用格式暂不支持音频生成，请使用 OpenAI 格式渠道");
+    if (config.apiFormat === "gemini" || config.apiFormat === "grsai") throw new Error("当前渠道暂不支持音频生成，请使用 OpenAI 格式渠道或为模型配置调用脚本");
 }
 
 async function assertAudioBlob(blob: Blob) {

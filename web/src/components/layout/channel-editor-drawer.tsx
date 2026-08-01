@@ -1,14 +1,16 @@
 import { Button, Drawer, Input, Segmented, Select, Space } from "antd";
-import { ListPlus, Trash2 } from "lucide-react";
+import { ExternalLink, ListPlus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { AGNES_BASE_URL, defaultBaseUrlForApiFormat, GRSAI_DOMESTIC_BASE_URL, GRSAI_GLOBAL_BASE_URL, guessCapability, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ImageModelFeature, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
 
 const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
     { label: "OpenAI", value: "openai" },
+    { label: "GRS AI", value: "grsai" },
     { label: "Gemini", value: "gemini" },
+    { label: "Agnes AI", value: "agnes" },
     { label: "火山方舟", value: "ark" },
 ];
 
@@ -17,6 +19,10 @@ const capabilityOptions: Array<{ label: string; value: ModelCapability }> = [
     { label: "视频", value: "video" },
     { label: "文本", value: "text" },
     { label: "音频", value: "audio" },
+];
+const imageFeatureOptions: Array<{ label: string; value: ImageModelFeature }> = [
+    { label: "全图编辑", value: "image-edit" }, { label: "蒙版修复", value: "mask-edit" },
+    { label: "生成式高清", value: "generative-upscale" }, { label: "专用超分", value: "dedicated-super-resolution" },
 ];
 
 type ScriptTarget = { name: string; capability: ModelCapability; value: string };
@@ -47,6 +53,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
 
     const setCapability = (name: string, capability: ModelCapability) => setModels(draft.models.map((model) => (model.name === name ? { ...model, capability } : model)));
     const setScript = (name: string, script: string) => setModels(draft.models.map((model) => (model.name === name ? { ...model, script: script || undefined } : model)));
+    const setImageFeatures = (name: string, imageFeatures: ImageModelFeature[]) => setModels(draft.models.map((model) => (model.name === name ? { ...model, imageFeatures: imageFeatures.length ? imageFeatures : undefined } : model)));
     const removeModel = (name: string) => setModels(draft.models.filter((model) => model.name !== name));
 
     const save = () => {
@@ -82,6 +89,22 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                 <label className="block md:col-span-2">
                     <span className="mb-1 block text-sm font-medium">接口地址</span>
                     <Input value={draft.baseUrl} onChange={(event) => patch({ baseUrl: event.target.value })} placeholder="https://api.example.com" />
+                    {draft.apiFormat === "grsai" ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-500">
+                            <span>节点：</span>
+                            <Button size="small" type={draft.baseUrl === GRSAI_DOMESTIC_BASE_URL ? "primary" : "default"} onClick={() => patch({ baseUrl: GRSAI_DOMESTIC_BASE_URL })}>国内</Button>
+                            <Button size="small" type={draft.baseUrl === GRSAI_GLOBAL_BASE_URL ? "primary" : "default"} onClick={() => patch({ baseUrl: GRSAI_GLOBAL_BASE_URL })}>全球</Button>
+                            <span>支持手动填写其他 GRS 节点。</span>
+                        </div>
+                    ) : null}
+                    {draft.apiFormat === "agnes" ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-500">
+                            <Button size="small" type={draft.baseUrl === AGNES_BASE_URL ? "primary" : "default"} onClick={() => patch({ baseUrl: AGNES_BASE_URL })}>官方 API 网关</Button>
+                            <a href="https://www.agnes-ai.com/" target="_blank" rel="noreferrer">国际站 <ExternalLink className="inline size-3" /></a>
+                            <a href="https://agnes-ai.cn/" target="_blank" rel="noreferrer">中国站 <ExternalLink className="inline size-3" /></a>
+                            <a href="https://agnes-ai.com/en/docs/quickstart" target="_blank" rel="noreferrer">开发文档 <ExternalLink className="inline size-3" /></a>
+                        </div>
+                    ) : null}
                 </label>
                 <label className="block md:col-span-2">
                     <span className="mb-1 block text-sm font-medium">API Key</span>
@@ -113,6 +136,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                                 </Button>
                                 <Button size="small" danger type="text" icon={<Trash2 className="size-3.5" />} onClick={() => removeModel(model.name)} />
                             </div>
+                            {model.capability === "image" ? <Select mode="multiple" size="small" className="w-full" placeholder="图片能力（精修 AI 工具会据此筛选）" value={model.imageFeatures || []} options={imageFeatureOptions} onChange={(value) => setImageFeatures(model.name, value)} /> : null}
                         </div>
                     ))
                 ) : (

@@ -6,16 +6,15 @@
 
 <p align="center">
   <a href="https://linux.do/"><img src="https://img.shields.io/badge/Linux.do-Community-2b6de8?style=flat-square" alt="Linux.do"></a>
-  <a href="https://render.com/deploy?repo=https://github.com/basketikun/infinite-canvas"><img src="https://img.shields.io/badge/Render-Deploy-46e3b7?style=flat-square&logo=render&logoColor=111111" alt="Deploy to Render"></a>
-  <a href="https://github.com/basketikun/infinite-canvas"><img src="https://img.shields.io/github/stars/basketikun/infinite-canvas?style=flat-square&logo=github" alt="GitHub stars"></a>
-  <a href="https://github.com/basketikun/infinite-canvas/tags"><img src="https://img.shields.io/github/v/tag/basketikun/infinite-canvas?style=flat-square&label=version" alt="Version"></a>
+  <a href="https://render.com/deploy?repo=https://github.com/LightyearXizIl/LY-Space"><img src="https://img.shields.io/badge/Render-Deploy-46e3b7?style=flat-square&logo=render&logoColor=111111" alt="Deploy to Render"></a>
+  <a href="https://github.com/LightyearXizIl/LY-Space"><img src="https://img.shields.io/github/stars/LightyearXizIl/LY-Space?style=flat-square&logo=github" alt="GitHub stars"></a>
+  <a href="https://github.com/LightyearXizIl/LY-Space/tags"><img src="https://img.shields.io/github/v/tag/LightyearXizIl/LY-Space?style=flat-square&label=version" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-f97316?style=flat-square" alt="License"></a>
   <a href="https://vite.dev/"><img src="https://img.shields.io/badge/Vite-7-646cff?style=flat-square&logo=vite&logoColor=white" alt="Vite"></a>
   <a href="https://reactrouter.com/"><img src="https://img.shields.io/badge/React_Router-7-ca4245?style=flat-square&logo=reactrouter&logoColor=white" alt="React Router"></a>
 </p>
 
 <p align="center">
-<a href="https://trendshift.io/repositories/50077?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-50077" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/50077" alt="basketikun%2Finfinite-canvas | Trendshift" width="250" height="55"/></a>
 </p>
 
 <p align="center">
@@ -55,6 +54,8 @@
 
 完整功能说明见 [功能介绍](docs/content/docs/overview/features.mdx)。
 
+如果你在为担心没有合适的生图API来发愁，可以查看该免费生图项目：[chatgpt2api](https://github.com/basketikun/chatgpt2api)
+
 ## 快速开始
 
 AI API Key、Base URL、画布、素材和生成记录默认保存在浏览器本地。
@@ -62,8 +63,8 @@ AI API Key、Base URL、画布、素材和生成记录默认保存在浏览器�
 ### 本地开发
 
 ```bash
-git clone git@github.com:basketikun/infinite-canvas.git
-cd infinite-canvas
+git clone git@github.com:LightyearXizIl/LY-Space.git
+cd LY-Space
 cd web
 bun install
 bun run dev
@@ -72,8 +73,8 @@ bun run dev
 ### Docker 运行
 
 ```bash
-git clone git@github.com:basketikun/infinite-canvas.git
-cd infinite-canvas
+git clone git@github.com:LightyearXizIl/LY-Space.git
+cd LY-Space
 docker compose up -d
 ```
 
@@ -108,13 +109,19 @@ docker compose up -d
 
 项目定制二次开发需求 / 生图 API 需求可联系。
 
-邮箱：1605443746@qq.com · 微信：XizllHZ_007
+邮箱：1844025705@qq.com · QQ：1844025705
 
 ## 赞助支持
 
 本项目长期开放广告赞助合作，欢迎品牌 / 产品投放，你的支持是持续更新的动力！
 
 有广告赞助意向请通过上方联系方式沟通。
+
+## 社区支持
+
+学 AI，上 L 站：[LinuxDO](https://linux.do/)
+
+点击链接加入群聊【AI开源交流】：https://qm.qq.com/q/DFnKzZ807u
 
 ## 开源协议
 
@@ -126,10 +133,10 @@ docker compose up -d
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=basketikun%2Finfinite-canvas&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=LightyearXizIl%2FLY-Space&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=basketikun/infinite-canvas&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=basketikun/infinite-canvas&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=basketikun/infinite-canvas&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=LightyearXizIl/LY-Space&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=LightyearXizIl/LY-Space&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=LightyearXizIl/LY-Space&type=date&legend=top-left" />
  </picture>
 </a>

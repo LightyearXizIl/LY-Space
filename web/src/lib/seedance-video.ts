@@ -6,9 +6,6 @@ export const SEEDANCE_REFERENCE_LIMITS = {
     images: 9,
     videos: 3,
     audios: 3,
-    imageMaxBytes: 30 * 1024 * 1024,
-    videoMaxBytes: 200 * 1024 * 1024,
-    audioMaxBytes: 15 * 1024 * 1024,
 };
 export const SEEDANCE_VIDEO_MIME_TYPES = ["video/mp4", "video/quicktime"];
 
@@ -136,7 +133,6 @@ export function seedanceVideoReferenceError(videos: ReferenceVideo[]) {
         const video = videos[index];
         const label = seedanceReferenceLabel("video", index);
         if (!SEEDANCE_VIDEO_MIME_TYPES.includes(video.type)) return `${label} 仅支持 mp4/mov 格式`;
-        if (video.bytes && video.bytes > SEEDANCE_REFERENCE_LIMITS.videoMaxBytes) return `${label} 超过 200MB，请压缩后再上传`;
         if (video.durationMs) {
             if (video.durationMs < 2000 || video.durationMs > 15000) return `${label} 时长需要在 2-15 秒之间`;
             totalDurationMs += video.durationMs;

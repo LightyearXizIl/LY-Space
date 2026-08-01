@@ -1,7 +1,9 @@
 import localforage from "localforage";
 
 import { nanoid } from "nanoid";
-import { readImageMeta } from "@/lib/image-utils";
+import { dataUrlToFile, readImageMeta } from "@/lib/image-utils";
+import type { ReferenceImage } from "@/types/image";
+import { trackWrite } from "@/services/desktop-storage";
 
 export type UploadedImage = {
     url: string;
@@ -18,7 +20,7 @@ const objectUrls = new Map<string, string>();
 export async function uploadImage(input: string | Blob): Promise<UploadedImage> {
     const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
     const storageKey = `image:${nanoid()}`;
-    await store.setItem(storageKey, blob);
+    await trackWrite(store.setItem(storageKey, blob));
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     const meta = await readImageMeta(url);
@@ -41,7 +43,7 @@ export async function getImageBlob(storageKey: string) {
 }
 
 export async function setImageBlob(storageKey: string, blob: Blob) {
-    await store.setItem(storageKey, blob);
+    await trackWrite(store.setItem(storageKey, blob));
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     return url;
@@ -51,6 +53,12 @@ export async function imageToDataUrl(image: { url?: string; dataUrl?: string; st
     const url = image.dataUrl || (await resolveImageUrl(image.storageKey, image.url || ""));
     if (!url || url.startsWith("data:")) return url;
     return blobToDataUrl(await (await fetch(url)).blob());
+}
+
+export async function imageToFile(image: ReferenceImage) {
+    const blob = image.storageKey ? await getImageBlob(image.storageKey) : null;
+    if (blob) return new File([blob], image.name || "reference.png", { type: blob.type || image.type || "image/png" });
+    return dataUrlToFile(image);
 }
 
 export async function deleteStoredImages(keys: Iterable<string>) {

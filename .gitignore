@@ -8,12 +8,12 @@ data/
 *.tsbuildinfo
 .DS_Store
 .idea
-web/dist
+desktop/renderer/dist
+desktop/.runtime
 desktop/web
 release
 
 **/dist
-web/public/plugins
+desktop/renderer/public/plugins
 plugins/canvas/*/dist
 plugins/canvas/*/node_modules
-web/public/plugins

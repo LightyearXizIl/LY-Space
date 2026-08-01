@@ -112,7 +112,7 @@ export async function ensurePluginsLoaded() {
     await loadDevPlugins();
 }
 
-// 自动发现 web/public/plugins 下的本地插件:加入列表但默认关闭,
+// 自动发现 desktop/renderer/public/plugins 下的本地插件:加入列表但默认关闭,
 // 本地开发放好插件文件即可在管理器里看到并一键启用,无需手动填 URL。
 // 已在列表中的:刷新元数据(version/name/description/source)到最新产物,
 // 但保留用户的 enabled 开关 —— 否则改了插件版本后,持久化 store 里的旧 version 永不更新。

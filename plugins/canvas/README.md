@@ -28,7 +28,7 @@ cp -r plugins/canvas/template plugins/canvas/my-plugin
 cd plugins/canvas/my-plugin
 # 改 package.json 的 name;改 src/index.tsx 里的 id / nodes[].type
 npm install
-npm run dev        # watch 构建,产物同步到 web/public/plugins/my-plugin.js
+npm run dev        # watch 构建,产物同步到 desktop/renderer/public/plugins/my-plugin.js
 npm run typecheck  # tsc --noEmit,类型自检
 ```
 
@@ -39,7 +39,7 @@ npm run typecheck  # tsc --noEmit,类型自检
 ```bash
 cd plugins/canvas/<name>
 npm install
-npm run build   # → dist/<name>.js,并同步到 web/public/plugins/<name>.js
+npm run build   # → dist/<name>.js,并同步到 desktop/renderer/public/plugins/<name>.js
 npm run dev     # watch,改动自动构建并同步
 ```
 
@@ -51,11 +51,11 @@ npm run dev     # watch,改动自动构建并同步
 
 ## 本地开发
 
-`npm run dev` 起 watch,产物会同步到 `web/public/plugins/<name>.js`。此后有两种方式在画布里用到它:
+`npm run dev` 起 watch,产物会同步到 `desktop/renderer/public/plugins/<name>.js`。此后有两种方式在画布里用到它:
 
-**方式一(推荐):自动发现。** 画布启动时会扫描 `web/public/plugins/` 下的插件,自动加入「节点插件」管理器列表,**默认关闭**;打开开关即启用。无需手动填 URL,启用时会按文件重新拉取,配合 watch 改完刷新即最新。
+**方式一(推荐):自动发现。** 画布启动时会扫描 `desktop/renderer/public/plugins/` 下的插件,自动加入「节点插件」管理器列表,**默认关闭**;打开开关即启用。无需手动填 URL,启用时会按文件重新拉取,配合 watch 改完刷新即最新。
 
-**方式二:`VITE_DEV_PLUGINS`。** 在 `web/.env.local` 声明(逗号分隔多个),这些插件每次刷新页面都**重新拉取并直接激活**(不缓存、不落库、无开关):
+**方式二:`VITE_DEV_PLUGINS`。** 在 `desktop/renderer/.env.local` 声明(逗号分隔多个),这些插件每次刷新页面都**重新拉取并直接激活**(不缓存、不落库、无开关):
 
 ```env
 VITE_DEV_PLUGINS=/plugins/markdown.js,/plugins/svg.js

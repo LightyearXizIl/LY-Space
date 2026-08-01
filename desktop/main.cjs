@@ -189,7 +189,7 @@ function installApplicationMenu() {
 }
 
 function webDirectory() {
-    return app.isPackaged ? path.join(__dirname, "web") : path.resolve(__dirname, "..", "web", "dist");
+    return path.join(__dirname, "renderer", "dist");
 }
 
 function agentEntry() {

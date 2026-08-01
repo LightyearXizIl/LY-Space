@@ -6,14 +6,14 @@ import { defineConfig, type Plugin } from "vite";
 
 import { parseChangelog } from "./src/lib/release";
 
-const webDir = dirname(fileURLToPath(import.meta.url));
-const localVersion = readFileSync(resolve(webDir, "../VERSION"), "utf8").trim() || "dev";
-const localChangelog = readFileSync(resolve(webDir, "../CHANGELOG.md"), "utf8");
+const rendererDir = dirname(fileURLToPath(import.meta.url));
+const localVersion = readFileSync(resolve(rendererDir, "../../VERSION"), "utf8").trim() || "dev";
+const localChangelog = readFileSync(resolve(rendererDir, "../../CHANGELOG.md"), "utf8");
 
 // 暴露 /plugins/index.json:列出 public/plugins 下的本地插件文件,
 // 供前端自动发现并加入插件列表(默认关闭)。dev 下实时读目录,构建时产出静态清单。
 function localPluginsManifest(): Plugin {
-    const pluginsDir = resolve(webDir, "public/plugins");
+    const pluginsDir = resolve(rendererDir, "public/plugins");
     const listLocalPlugins = () => {
         try {
             return readdirSync(pluginsDir)
@@ -43,7 +43,7 @@ export default defineConfig({
     plugins: [react(), localPluginsManifest()],
     resolve: {
         alias: {
-            "@": resolve(webDir, "src"),
+            "@": resolve(rendererDir, "src"),
         },
     },
     define: {

@@ -3,7 +3,7 @@
 // 这是插件作者面向的「公开接口」子集,自包含、不依赖宿主 `@/` 内部模块,
 // 因此可以被独立构建的插件包直接 import,获得完整的 TS 提示。
 //
-// 真源:宿主 `web/src/types/canvas-plugin.ts` 及其引用的类型。本文件是它的公开镜像,
+// 真源:宿主 `desktop/renderer/src/types/canvas-plugin.ts` 及其引用的类型。本文件是它的公开镜像,
 // 若宿主契约变更,请同步更新此处(两者结构保持一致即可,无需逐字节相同)。
 
 import type { ComponentType, ReactNode } from "react";

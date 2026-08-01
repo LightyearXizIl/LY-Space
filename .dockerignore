@@ -6,9 +6,9 @@ docs/.next
 docs/.source
 docs/node_modules
 docs/out
-web/.next
-web/node_modules
-web/out
+desktop/renderer/.next
+desktop/renderer/node_modules
+desktop/renderer/out
 *.log
 .env*
 !.env.example

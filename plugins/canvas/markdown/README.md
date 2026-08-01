@@ -6,7 +6,7 @@ Infinite Canvas 画布节点插件:在画布里编辑与渲染 Markdown。
 
 ```bash
 npm install
-npm run build      # 产物 dist/markdown.js,并同步到 web/public/plugins/markdown.js
+npm run build      # 产物 dist/markdown.js,并同步到 desktop/renderer/public/plugins/markdown.js
 npm run dev        # watch,改动自动构建
 ```
 
@@ -16,7 +16,7 @@ npm run dev        # watch,改动自动构建
 
 ## 本地开发
 
-`npm run dev` 起 watch,在 `web/.env.local` 加 `VITE_DEV_PLUGINS=/plugins/markdown.js`,起画布后改 `src/index.jsx` 刷新页面即生效,无需反复安装。
+`npm run dev` 起 watch,在 `desktop/renderer/.env.local` 加 `VITE_DEV_PLUGINS=/plugins/markdown.js`,起画布后改 `src/index.jsx` 刷新页面即生效,无需反复安装。
 
 插件契约见 `plugins/canvas/README.md`。
 

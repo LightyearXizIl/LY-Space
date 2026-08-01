@@ -1,6 +1,6 @@
 // 共享构建助手:插件的 build.mjs 只需一行 `buildPlugin(import.meta.url)`。
 // 统一 esbuild 配置(automatic JSX 指向本 SDK、react external、TS/TSX/CSS loader、
-// 产物同步到 web/public/plugins),消除各插件重复的构建脚本。
+// 产物同步到 desktop/renderer/public/plugins),消除各插件重复的构建脚本。
 
 import { build, context } from "esbuild";
 import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -15,8 +15,8 @@ export async function buildPlugin(metaUrl, overrides = {}) {
     const root = dirname(fileURLToPath(metaUrl));
     const name = overrides.name ?? basename(root); // 目录名即产物名,如 markdown → markdown.js
     const distDir = join(root, "dist");
-    // 默认同步到仓库内 web/public/plugins(plugins/canvas/<name> → 上溯三层到仓库根)
-    const publicDir = overrides.publicDir ?? join(root, "..", "..", "..", "web", "public", "plugins");
+    // 默认同步到桌面渲染层的 public/plugins(plugins/canvas/<name> → 上溯三层到仓库根)
+    const publicDir = overrides.publicDir ?? join(root, "..", "..", "..", "desktop", "renderer", "public", "plugins");
     const watch = process.argv.includes("--watch");
     const entry = overrides.entry ?? join(root, "src", "index.tsx");
 
@@ -41,7 +41,7 @@ export async function buildPlugin(metaUrl, overrides = {}) {
                     list.push(entry);
                     await writeFile(indexPath, JSON.stringify(list, null, 2) + "\n");
                 }
-                console.log(`[${name}] synced → web/public/plugins/${name}.js`);
+                console.log(`[${name}] synced → desktop/renderer/public/plugins/${name}.js`);
             });
         },
     };

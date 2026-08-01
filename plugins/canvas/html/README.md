@@ -6,7 +6,7 @@ Infinite Canvas 画布节点插件:用沙箱 iframe 渲染 HTML。源码里的 `
 
 ```bash
 npm install
-npm run build      # 产物 dist/html.js,并同步到 web/public/plugins/html.js
+npm run build      # 产物 dist/html.js,并同步到 desktop/renderer/public/plugins/html.js
 npm run dev        # watch
 ```
 

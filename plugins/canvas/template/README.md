@@ -9,7 +9,7 @@ cp -r plugins/canvas/template plugins/canvas/my-plugin
 cd plugins/canvas/my-plugin
 # 改 package.json 的 name;改 src/index.tsx 里的 id / name / type
 npm install
-npm run dev      # watch 构建,产物同步到 web/public/plugins/my-plugin.js
+npm run dev      # watch 构建,产物同步到 desktop/renderer/public/plugins/my-plugin.js
 npm run typecheck
 ```
 

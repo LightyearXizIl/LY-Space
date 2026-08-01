@@ -1,14 +1,16 @@
 {
   "name": "ly-space-desktop",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "LY Space desktop creative workspace",
   "author": "LY Space",
   "private": true,
   "main": "main.cjs",
   "scripts": {
-    "prepare:resources": "node scripts/prepare-resources.cjs",
     "icon": "node scripts/generate-icon.cjs",
-    "pack:win": "pnpm run prepare:resources && pnpm run icon && node scripts/create-prepackaged.cjs && electron-builder --win nsis --x64 --prepackaged ../release/win-unpacked --publish never"
+    "check": "pnpm --dir renderer run typecheck && pnpm --dir ../canvas-agent run test",
+    "prepare:agent": "node scripts/prepare-agent-runtime.cjs",
+    "verify:package": "node scripts/verify-package.cjs",
+    "pack:win": "pnpm run check && pnpm --dir renderer run build && pnpm --dir ../canvas-agent run build && pnpm run icon && pnpm run prepare:agent && electron-builder --win nsis --x64 --publish never && pnpm run verify:package"
   },
   "build": {
     "appId": "com.lyspace.desktop",
@@ -18,30 +20,37 @@
       "buildResources": "build"
     },
     "npmRebuild": false,
+    "asar": false,
     "executableName": "LY Space",
-    "beforeBuild": "./scripts/skip-dependency-rebuild.cjs",
     "files": [
       "main.cjs",
       "preload.cjs",
       "build/icon.png",
-      "web/**/*"
+      "renderer/dist/**/*"
     ],
     "extraResources": [
       {
-        "from": "../canvas-agent",
+        "from": ".runtime/canvas-agent",
         "to": "canvas-agent",
         "filter": [
           "dist/**/*",
-          "node_modules/**/*",
           "agent-instructions.md",
           "package.json"
         ]
+      },
+      {
+        "from": ".runtime/canvas-agent/production-dependencies",
+        "to": "canvas-agent/node_modules"
       }
     ],
     "win": {
       "target": "nsis",
-      "icon": "build/icon.ico"
+      "icon": "build/icon.ico",
+      "signExecutable": false,
+      "verifyUpdateCodeSignature": false
     },
+    "electronLanguages": ["zh-CN", "en-US"],
+    "compression": "maximum",
     "nsis": {
       "oneClick": false,
       "perMachine": false,

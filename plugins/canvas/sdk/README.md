@@ -50,7 +50,7 @@ import { buildPlugin } from "@infinite-canvas/plugin-sdk/build";
 await buildPlugin(import.meta.url);
 ```
 
-`npm run build` 产出 `dist/<目录名>.js` 并同步到 `web/public/plugins/`。
+`npm run build` 产出 `dist/<目录名>.js` 并同步到 `desktop/renderer/public/plugins/`。
 
 ## 依赖接入
 
@@ -74,4 +74,4 @@ await buildPlugin(import.meta.url);
 
 - **React 单例**:JSX 与 hooks 惰性读取 `globalThis.InfiniteCanvasRuntime.React`(宿主在加载插件前注入),react 全程 external,绝不打包第二份。
 - **重依赖**:three、marked 等在源码里 `await import("https://esm.sh/...")` 动态加载,esbuild 自动 external,不进 bundle。
-- **类型真源**:`src/types.ts` 是宿主 `web/src/types/canvas-plugin.ts` 公开契约的镜像;宿主契约变更时同步此处。
+- **类型真源**:`src/types.ts` 是宿主 `desktop/renderer/src/types/canvas-plugin.ts` 公开契约的镜像;宿主契约变更时同步此处。

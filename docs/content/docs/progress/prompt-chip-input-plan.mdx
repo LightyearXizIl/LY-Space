@@ -15,14 +15,14 @@ description: 将提示词面板输入框从 textarea 改造为 contentEditable�
 
 `CanvasResourceMentionTextarea` 被两处复用：
 
-1. **提示词面板** `web/src/components/canvas/canvas-node-prompt-panel.tsx` —— 本次要改的对象。`highlightLabels` 默认 true，value 是提示词字符串，引用以 label 文本「图片1」嵌在其中，**直接发给 AI**（配合 `web/src/lib/image-reference-prompt.ts` 的「参考图片编号：图片1」前缀）。
-2. **节点内文本编辑** `web/src/components/canvas/canvas-node.tsx`（`isEditingContent` 分支）—— `highlightLabels={false}`，通过 `ref` 调用 `textarea.setSelectionRange(...)` 等 **textarea 专有 API**。若把组件改成 contentEditable，这处会直接崩。
+1. **提示词面板** `desktop/renderer/src/components/canvas/canvas-node-prompt-panel.tsx` —— 本次要改的对象。`highlightLabels` 默认 true，value 是提示词字符串，引用以 label 文本「图片1」嵌在其中，**直接发给 AI**（配合 `desktop/renderer/src/lib/image-reference-prompt.ts` 的「参考图片编号：图片1」前缀）。
+2. **节点内文本编辑** `desktop/renderer/src/components/canvas/canvas-node.tsx`（`isEditingContent` 分支）—— `highlightLabels={false}`，通过 `ref` 调用 `textarea.setSelectionRange(...)` 等 **textarea 专有 API**。若把组件改成 contentEditable，这处会直接崩。
 
 > 结论：**新建一个 contentEditable chip 输入组件，只替换提示词面板那一处**；`CanvasResourceMentionTextarea`（textarea 版）保持不动，继续服务节点内文本编辑。
 
 ## 方案：新增 `CanvasPromptChipInput` 组件
 
-新文件 `web/src/components/canvas/canvas-prompt-chip-input.tsx`，参照 `canvas-config-composer.tsx` 的 contentEditable 模式，但有一处**核心差异**：
+新文件 `desktop/renderer/src/components/canvas/canvas-prompt-chip-input.tsx`，参照 `canvas-config-composer.tsx` 的 contentEditable 模式，但有一处**核心差异**：
 
 - 「组装提示词」把引用序列化成 `@[node:UUID]` 标记；
 - 本组件的 value 必须保持**引用的 label 文本**（如「图片1」），这样发给生成的提示词语义不变。因此 chip ↔ 文本的序列化用 **label 文本**，不是 node 标记。
@@ -52,8 +52,8 @@ Props：`value: string`、`references: CanvasResourceReference[]`、`onChange(va
 
 ## 影响文件
 
-- 新增：`web/src/components/canvas/canvas-prompt-chip-input.tsx`
-- 修改：`web/src/components/canvas/canvas-node-prompt-panel.tsx`（仅替换输入框组件 + 相应 import）
+- 新增：`desktop/renderer/src/components/canvas/canvas-prompt-chip-input.tsx`
+- 修改：`desktop/renderer/src/components/canvas/canvas-node-prompt-panel.tsx`（仅替换输入框组件 + 相应 import）
 
 ## 验证
 

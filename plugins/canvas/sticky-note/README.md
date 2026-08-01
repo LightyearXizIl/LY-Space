@@ -6,7 +6,7 @@ Infinite Canvas 画布节点插件:彩色便利贴,可换色、编辑,并演示�
 
 ```bash
 npm install
-npm run build      # 产物 dist/sticky-note.js,并同步到 web/public/plugins/sticky-note.js
+npm run build      # 产物 dist/sticky-note.js,并同步到 desktop/renderer/public/plugins/sticky-note.js
 npm run dev        # watch
 ```
 

@@ -3,12 +3,12 @@ const path = require("node:path");
 const sharp = require("sharp");
 
 const buildDir = path.resolve(__dirname, "..", "build");
-const source = path.resolve(__dirname, "..", "..", "web", "public", "logo.svg");
+const source = path.join(buildDir, "icon.svg");
 const sizes = [16, 24, 32, 48, 64, 128, 256];
 
 async function main() {
     fs.mkdirSync(buildDir, { recursive: true });
-    const logo = fs.readFileSync(source, "utf8").replace(/currentColor/g, "#ffffff");
+    const logo = fs.readFileSync(source, "utf8");
     const pngs = await Promise.all(sizes.map((size) => renderIcon(logo, size)));
     fs.writeFileSync(path.join(buildDir, "icon.png"), pngs[pngs.length - 1]);
     const header = Buffer.alloc(6);
@@ -33,11 +33,7 @@ async function main() {
 }
 
 async function renderIcon(logo, size) {
-    const radius = Math.round(size * 0.21);
-    const background = Buffer.from(`<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg"><rect width="${size}" height="${size}" rx="${radius}" fill="#000000"/></svg>`);
-    const glyphSize = Math.round(size * 0.66);
-    const glyph = await sharp(Buffer.from(logo)).resize(glyphSize, glyphSize).png().toBuffer();
-    return sharp(background).composite([{ input: glyph, left: Math.round((size - glyphSize) / 2), top: Math.round((size - glyphSize) / 2) }]).png().toBuffer();
+    return sharp(Buffer.from(logo)).resize(size, size).png().toBuffer();
 }
 
 main().catch((error) => {

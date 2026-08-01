@@ -6,7 +6,7 @@ Infinite Canvas 画布节点插件:查看 360° 等距柱状(equirectangular)全
 
 ```bash
 npm install
-npm run build      # 产物 dist/panorama.js,并同步到 web/public/plugins/panorama.js
+npm run build      # 产物 dist/panorama.js,并同步到 desktop/renderer/public/plugins/panorama.js
 npm run dev        # watch
 ```
 

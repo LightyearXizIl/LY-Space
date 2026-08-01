@@ -6,7 +6,7 @@ Infinite Canvas 画布节点插件:编辑与渲染 SVG,无自身内容时自动�
 
 ```bash
 npm install
-npm run build      # 产物 dist/svg.js,并同步到 web/public/plugins/svg.js
+npm run build      # 产物 dist/svg.js,并同步到 desktop/renderer/public/plugins/svg.js
 npm run dev        # watch
 ```
 

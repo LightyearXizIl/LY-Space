@@ -1,90 +1,66 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { App } from "antd";
 import { APP_VERSION } from "@/constant/env";
-import { parseChangelog, type ReleaseInfo } from "@/lib/release";
+import { parseChangelog, sortReleases, type ReleaseInfo } from "@/lib/release";
 
-const latestVersionUrl = "https://raw.githubusercontent.com/LightyearXizIl/LY-Space/main/VERSION";
-const latestChangelogUrl = "https://raw.githubusercontent.com/LightyearXizIl/LY-Space/main/CHANGELOG.md";
+const releaseChangelogUrl = (version: string) => `https://raw.githubusercontent.com/LightyearXizIl/LY-Space/${version.startsWith("v") ? version : `v${version}`}/CHANGELOG.md`;
 
 function readLocalReleases(): ReleaseInfo[] {
-    return __APP_RELEASES__ || [];
+    return sortReleases(__APP_RELEASES__ || []);
 }
 
-function toVersionParts(version: string) {
-    const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)/);
-    return match ? match.slice(1).map(Number) : null;
-}
-
-function isNewerVersion(latestVersion: string, currentVersion: string) {
-    const latest = toVersionParts(latestVersion);
-    const current = toVersionParts(currentVersion);
-    if (!latest || !current) return false;
-    return latest.some((value, index) => value > current[index] && latest.slice(0, index).every((part, prevIndex) => part === current[prevIndex]));
+function initialUpdateState(): AppUpdateState {
+    return { status: "idle", version: APP_VERSION, releaseDate: "", releaseNotes: "", progress: null, error: "", supported: Boolean(window.lySpaceDesktop) };
 }
 
 export function useVersionCheck() {
-    const currentVersion = APP_VERSION;
     const { message } = App.useApp();
     const localReleases = useMemo(readLocalReleases, []);
-    const [latestVersion, setLatestVersion] = useState(currentVersion);
-    const [releases, setReleases] = useState<ReleaseInfo[]>(localReleases);
-    const [checking, setChecking] = useState(false);
     const [open, setOpen] = useState(false);
-    const hasNewVersion = isNewerVersion(latestVersion, currentVersion);
-
-    const checkLatestVersion = useCallback(async () => {
-        try {
-            const response = await fetch(latestVersionUrl);
-            if (!response.ok) return false;
-            const version = await response.text();
-            setLatestVersion(version.trim() || currentVersion);
-            return true;
-        } catch {
-            return false;
-        }
-    }, [currentVersion]);
-
-    const checkLatestRelease = useCallback(
-        async (showMessage = false) => {
-            setChecking(true);
-            try {
-                const [versionResponse, changelogResponse] = await Promise.all([fetch(latestVersionUrl), fetch(latestChangelogUrl)]);
-                if (!versionResponse.ok) throw new Error("版本读取失败");
-                if (!changelogResponse.ok) throw new Error("更新日志读取失败");
-                const [version, changelog] = await Promise.all([versionResponse.text(), changelogResponse.text()]);
-                setLatestVersion(version.trim() || currentVersion);
-                if (changelog.trim()) setReleases(parseChangelog(changelog));
-                if (showMessage) message.success("已获取最新版本信息");
-                return true;
-            } catch {
-                setLatestVersion(currentVersion);
-                setReleases(localReleases);
-                if (showMessage) message.error("获取最新版本信息失败");
-                return false;
-            } finally {
-                setChecking(false);
-            }
-        },
-        [currentVersion, localReleases, message],
-    );
+    const [releases, setReleases] = useState<ReleaseInfo[]>(localReleases);
+    const [updateState, setUpdateState] = useState<AppUpdateState>(initialUpdateState);
+    const hasNewVersion = ["available", "downloading", "downloaded"].includes(updateState.status);
 
     useEffect(() => {
-        void checkLatestVersion();
-    }, [checkLatestVersion]);
+        if (!window.lySpaceDesktop) return;
+        void window.lySpaceDesktop.getUpdateState().then(setUpdateState).catch(() => undefined);
+        return window.lySpaceDesktop.onUpdateStateChanged(setUpdateState);
+    }, []);
 
-    const openReleaseModal = useCallback(() => {
-        setOpen(true);
-        void checkLatestRelease();
-    }, [checkLatestRelease]);
+    useEffect(() => {
+        const version = updateState.version;
+        if (!version || version === APP_VERSION || !/^v?\d+\.\d+\.\d+$/.test(version)) return;
+        let active = true;
+        void fetch(releaseChangelogUrl(version))
+            .then((response) => (response.ok ? response.text() : Promise.reject(new Error("更新日志读取失败"))))
+            .then((content) => {
+                if (active) setReleases(sortReleases(parseChangelog(content)));
+            })
+            .catch(() => {
+                if (active) setReleases(localReleases);
+            });
+        return () => {
+            active = false;
+        };
+    }, [localReleases, updateState.version]);
 
-    return {
-        open,
-        setOpen,
-        openReleaseModal,
-        latestVersion,
-        releases,
-        checking,
-        hasNewVersion,
-        checkLatestRelease,
-    };
+    const checkAndDownloadUpdate = useCallback(async () => {
+        if (!window.lySpaceDesktop) return;
+        try {
+            setUpdateState(await window.lySpaceDesktop.checkAndDownloadUpdate());
+        } catch {
+            message.error("检查更新失败，请稍后重试");
+        }
+    }, [message]);
+
+    const installDownloadedUpdate = useCallback(async () => {
+        if (!window.lySpaceDesktop) return;
+        try {
+            await window.lySpaceDesktop.installDownloadedUpdate();
+        } catch {
+            message.error("无法启动安装程序，请重试");
+        }
+    }, [message]);
+
+    return { open, setOpen, updateState, releases, hasNewVersion, checkAndDownloadUpdate, installDownloadedUpdate };
 }

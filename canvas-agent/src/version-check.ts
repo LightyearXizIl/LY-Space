@@ -11,9 +11,13 @@ const CODEX_VERSION = String((require("@openai/codex/package.json") as { version
 
 /** 输出当前版本，并在后台检查 npm 最新版本。 */
 export function checkVersions() {
-    const localCodexVersion = commandVersion("codex");
     logger.info("Canvas Agent version", { version: VERSION });
     logger.info("Bundled Codex version", { version: CODEX_VERSION });
+    if (process.env.LY_SPACE_DESKTOP_BUNDLED === "1") {
+        logger.info("Desktop bundled mode skips local Codex and npm version checks");
+        return;
+    }
+    const localCodexVersion = commandVersion("codex");
     logger.info("Local Codex version", { version: localCodexVersion || "not found" });
     if (!localCodexVersion) {
         logger.warn("Local Codex was not found. Install the latest version with: npm install -g @openai/codex@latest");
@@ -41,7 +45,7 @@ async function checkLatestVersions(localCodexVersion: string) {
 /** 读取本机命令输出中的语义版本号。 */
 function commandVersion(command: string) {
     try {
-        return execFileSync(command, ["--version"], { encoding: "utf8", timeout: 5_000 }).match(/\d+\.\d+\.\d+/)?.[0] || "";
+        return execFileSync(command, ["--version"], { encoding: "utf8", timeout: 5_000, windowsHide: true }).match(/\d+\.\d+\.\d+/)?.[0] || "";
     } catch {
         return "";
     }
@@ -50,7 +54,7 @@ function commandVersion(command: string) {
 /** 读取 npm 包的最新版本。 */
 async function npmVersion(name: string) {
     const command = process.platform === "win32" ? "npm.cmd" : "npm";
-    const { stdout } = await execFileAsync(command, ["view", name, "version"], { encoding: "utf8", timeout: 10_000 });
+    const { stdout } = await execFileAsync(command, ["view", name, "version"], { encoding: "utf8", timeout: 10_000, windowsHide: true });
     return stdout.trim();
 }
 

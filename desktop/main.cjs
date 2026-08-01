@@ -1,4 +1,5 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, net: electronNet, protocol, shell } = require("electron");
+const { autoUpdater } = require("electron-updater");
 const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -16,8 +17,81 @@ let agentState = { url: "", token: "", status: "error", error: "内置 Canvas Ag
 let storageSettings = null;
 let allowWindowClose = false;
 let closingTimer = null;
+let installDownloadedUpdate = false;
+let downloadRequested = false;
+let updateState = { status: "idle", version: "", releaseDate: "", releaseNotes: "", progress: null, error: "", supported: false };
 
 const RESULT_FOLDERS = { image: "Picture", video: "Video", audio: "Audio", text: "text" };
+
+function displayVersion(version) {
+    const value = String(version || "").trim().replace(/^v/i, "");
+    return value ? `v${value}` : "";
+}
+
+function updateSnapshot(patch) {
+    updateState = { ...updateState, ...patch };
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("lyspace:update-state-changed", updateState);
+    return updateState;
+}
+
+function updateError(error) {
+    downloadRequested = false;
+    updateSnapshot({ status: "error", progress: null, error: error instanceof Error ? error.message : String(error || "更新失败") });
+}
+
+function configureAutoUpdater() {
+    updateState = { status: "idle", version: displayVersion(app.getVersion()), releaseDate: "", releaseNotes: "", progress: null, error: "", supported: app.isPackaged };
+    if (!app.isPackaged) return;
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = false;
+    autoUpdater.autoRunAppAfterInstall = true;
+    autoUpdater.allowPrerelease = false;
+    autoUpdater.on("checking-for-update", () => updateSnapshot({ status: "checking", progress: null, error: "" }));
+    autoUpdater.on("update-available", (info) => {
+        updateSnapshot({ status: "available", version: displayVersion(info.version), releaseDate: info.releaseDate || "", releaseNotes: typeof info.releaseNotes === "string" ? info.releaseNotes : "", progress: null, error: "" });
+        if (downloadRequested) void downloadUpdate();
+    });
+    autoUpdater.on("update-not-available", (info) => {
+        downloadRequested = false;
+        updateSnapshot({ status: "upToDate", version: displayVersion(info.version || app.getVersion()), releaseDate: info.releaseDate || "", progress: null, error: "" });
+    });
+    autoUpdater.on("download-progress", (progress) => updateSnapshot({ status: "downloading", progress: { percent: progress.percent, bytesPerSecond: progress.bytesPerSecond, transferred: progress.transferred, total: progress.total }, error: "" }));
+    autoUpdater.on("update-downloaded", (info) => updateSnapshot({ status: "downloaded", version: displayVersion(info.version), releaseDate: info.releaseDate || "", releaseNotes: typeof info.releaseNotes === "string" ? info.releaseNotes : "", progress: { percent: 100, bytesPerSecond: 0, transferred: 0, total: 0 }, error: "" }));
+    autoUpdater.on("error", updateError);
+}
+
+async function downloadUpdate() {
+    if (!app.isPackaged || updateState.status === "downloading" || updateState.status === "downloaded") return updateState;
+    downloadRequested = false;
+    updateSnapshot({ status: "downloading", progress: { percent: 0, bytesPerSecond: 0, transferred: 0, total: 0 }, error: "" });
+    try {
+        await autoUpdater.downloadUpdate();
+    } catch (error) {
+        updateError(error);
+    }
+    return updateState;
+}
+
+async function checkAndDownloadUpdate() {
+    if (!app.isPackaged) return updateSnapshot({ status: "idle", error: "", supported: false });
+    if (updateState.status === "downloaded" || updateState.status === "downloading") return updateState;
+    if (updateState.status === "available") return downloadUpdate();
+    downloadRequested = true;
+    try {
+        await autoUpdater.checkForUpdates();
+    } catch (error) {
+        downloadRequested = false;
+        updateError(error);
+    }
+    return updateState;
+}
+
+function requestUpdateInstall() {
+    if (!app.isPackaged || updateState.status !== "downloaded") throw new Error("更新尚未下载完成");
+    if (!mainWindow || mainWindow.isDestroyed()) throw new Error("主窗口不可用");
+    installDownloadedUpdate = true;
+    mainWindow.webContents.send("lyspace:flush-persistence");
+}
 
 function storageConfigFile() {
     return path.join(app.getPath("userData"), "app-data", "storage-settings.json");
@@ -236,7 +310,7 @@ async function startAgent() {
     agentChild = childProcess.spawn(process.execPath, [agentEntry()], {
         windowsHide: true,
         stdio: ["ignore", "ignore", "ignore"],
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", CANVAS_AGENT_CONFIG_DIR: configDir, PORT: String(port) },
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", CANVAS_AGENT_CONFIG_DIR: configDir, PORT: String(port), LY_SPACE_DESKTOP_BUNDLED: "1" },
     });
     agentChild.once("error", (error) => {
         agentState = { url: "", token: "", status: "error", error: `内置 Canvas Agent 无法启动：${error.message}` };
@@ -322,7 +396,11 @@ app.on("second-instance", () => {
 app.whenReady().then(async () => {
     registerAppProtocol();
     installApplicationMenu();
+    configureAutoUpdater();
     ipcMain.handle("lyspace:agent-config", () => agentState);
+    ipcMain.handle("lyspace:update-state", () => updateState);
+    ipcMain.handle("lyspace:check-and-download-update", () => checkAndDownloadUpdate());
+    ipcMain.handle("lyspace:install-downloaded-update", () => requestUpdateInstall());
     ipcMain.handle("lyspace:storage-settings", () => storageInfo());
     ipcMain.handle("lyspace:choose-storage-directory", async (_event, kind) => {
         const selected = await dialog.showOpenDialog(mainWindow, { title: kind === "cache" ? "选择缓存目录" : "选择结果保存目录", properties: ["openDirectory", "createDirectory"] });
@@ -366,6 +444,12 @@ app.whenReady().then(async () => {
         if (!mainWindow || allowWindowClose) return;
         if (closingTimer) clearTimeout(closingTimer);
         closingTimer = null;
+        if (installDownloadedUpdate) {
+            installDownloadedUpdate = false;
+            allowWindowClose = true;
+            autoUpdater.quitAndInstall(false, true);
+            return;
+        }
         allowWindowClose = true;
         mainWindow.close();
     });
@@ -379,6 +463,7 @@ app.whenReady().then(async () => {
         agentState = { url: "", token: "", status: "error", error: error instanceof Error ? error.message : "内置 Canvas Agent 启动失败" };
     }
     createWindow();
+    if (app.isPackaged) void autoUpdater.checkForUpdates().catch(updateError);
 });
 app.on("before-quit", () => {
     app.isQuitting = true;

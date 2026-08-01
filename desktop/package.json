@@ -1,6 +1,6 @@
 {
   "name": "ly-space-desktop",
-  "version": "0.0.2",
+    "version": "0.0.3",
   "description": "LY Space desktop creative workspace",
   "author": "LY Space",
   "private": true,
@@ -10,7 +10,9 @@
     "check": "pnpm --dir renderer run typecheck && pnpm --dir ../canvas-agent run test",
     "prepare:agent": "node scripts/prepare-agent-runtime.cjs",
     "verify:package": "node scripts/verify-package.cjs",
-    "pack:win": "pnpm run check && pnpm --dir renderer run build && pnpm --dir ../canvas-agent run build && pnpm run icon && pnpm run prepare:agent && electron-builder --win nsis --x64 --publish never && pnpm run verify:package"
+    "pack:win": "pnpm run check && pnpm --dir renderer run build && pnpm --dir ../canvas-agent run build && pnpm run icon && pnpm run prepare:agent && electron-builder --win nsis --x64 --publish never && pnpm run verify:package",
+    "publish:win": "pnpm run check && pnpm --dir renderer run build && pnpm --dir ../canvas-agent run build && pnpm run icon && pnpm run prepare:agent && electron-builder --win nsis --x64 --publish always && pnpm run verify:package",
+    "verify:release": "node scripts/verify-release-version.cjs"
   },
   "build": {
     "appId": "com.lyspace.desktop",
@@ -59,11 +61,15 @@
       "createStartMenuShortcut": true,
       "shortcutName": "LY Space"
     },
-    "artifactName": "LY Space Setup ${version}.${ext}"
+    "artifactName": "LY Space Setup ${version}.${ext}",
+    "publish": [{ "provider": "github", "owner": "LightyearXizIl", "repo": "LY-Space", "releaseType": "draft" }]
   },
   "devDependencies": {
     "electron": "^43.2.0",
     "electron-builder": "^26.15.3",
     "sharp": "^0.35.3"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9"
   }
 }

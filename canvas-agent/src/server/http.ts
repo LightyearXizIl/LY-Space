@@ -268,7 +268,7 @@ function revealLocalFile(filePath: string, isDirectory: boolean) {
             ? [isDirectory ? filePath : `/select,${filePath}`]
             : [isDirectory ? filePath : path.dirname(filePath)];
     return new Promise<void>((resolve, reject) => {
-        const child = spawn(command, args, { detached: true, stdio: "ignore" });
+        const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true });
         child.once("spawn", () => {
             child.unref();
             resolve();

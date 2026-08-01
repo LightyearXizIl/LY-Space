@@ -1,0 +1,48 @@
+name: Publish LY Space Desktop
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-desktop-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Install dependencies
+        run: |
+          pnpm --dir desktop install --frozen-lockfile
+          pnpm --dir desktop/renderer install --frozen-lockfile
+          pnpm --dir canvas-agent install --frozen-lockfile
+
+      - name: Verify release version
+        working-directory: desktop
+        run: pnpm run verify:release
+
+      - name: Build and upload draft release
+        working-directory: desktop
+        run: pnpm run publish:win
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Publish verified release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit $env:GITHUB_REF_NAME --draft=false --title "LY Space $env:GITHUB_REF_NAME" --generate-notes

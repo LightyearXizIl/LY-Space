@@ -1,11 +1,25 @@
 export {};
 
 declare global {
+    type AppUpdateStatus = "idle" | "checking" | "available" | "downloading" | "downloaded" | "upToDate" | "error";
+    type AppUpdateState = {
+        status: AppUpdateStatus;
+        version: string;
+        releaseDate: string;
+        releaseNotes: string;
+        progress: { percent: number; bytesPerSecond: number; transferred: number; total: number } | null;
+        error: string;
+        supported: boolean;
+    };
     type StorageKind = "image" | "video" | "audio" | "text";
     type StorageSettings = { resultRoot: string; cacheRoot: string; defaultResultRoot: string; defaultCacheRoot: string; pendingCacheRoot?: string; lastError?: string; folders: Record<StorageKind, string> };
     interface Window {
         lySpaceDesktop?: {
             getAgentConfig: () => Promise<{ url: string; token: string; status: "ready" | "error"; error?: string }>;
+            getUpdateState: () => Promise<AppUpdateState>;
+            checkAndDownloadUpdate: () => Promise<AppUpdateState>;
+            installDownloadedUpdate: () => Promise<void>;
+            onUpdateStateChanged: (listener: (state: AppUpdateState) => void) => () => void;
             getStorageSettings: () => Promise<StorageSettings>;
             chooseStorageDirectory: (kind: "result" | "cache") => Promise<string>;
             updateResultDirectory: (directory: string) => Promise<StorageSettings>;

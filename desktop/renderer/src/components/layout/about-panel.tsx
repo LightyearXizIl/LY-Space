@@ -1,5 +1,5 @@
-import { Alert, Progress, Tag, Timeline } from "antd";
-import { ExternalLink, Globe, Info, User } from "lucide-react";
+import { Alert, Button, Progress, Tag, Timeline } from "antd";
+import { ExternalLink, Globe, Info, RefreshCw, User } from "lucide-react";
 import { useVersionCheck } from "@/hooks/use-version-check";
 import { APP_VERSION } from "@/constant/env";
 
@@ -98,23 +98,10 @@ export function AboutPanel() {
                 <div className="mb-3 flex items-center justify-between gap-3">
                     <div className="text-sm font-semibold">版本更新</div>
                     <div className="flex items-center gap-2">
-                        <button
-                            type="button"
-                            className="cursor-pointer rounded-md bg-stone-900 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-stone-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-stone-300"
-                            disabled={!updateState.supported || checking || downloading || downloaded}
-                            onClick={() => void checkAndDownloadUpdate()}
-                        >
+                        <Button icon={<RefreshCw className="size-4" />} disabled={!updateState.supported || checking || downloading || downloaded} onClick={() => void checkAndDownloadUpdate()}>
                             {checking ? "检查中..." : downloading ? "正在下载..." : downloaded ? "已下载" : "检查更新"}
-                        </button>
-                        {downloading ? (
-                            <button
-                                type="button"
-                                className="cursor-pointer rounded-md border border-stone-300 px-3 py-2 text-sm font-medium text-stone-600 transition hover:bg-stone-100 hover:text-stone-950 dark:border-stone-700 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-white"
-                                onClick={() => void cancelUpdateDownload()}
-                            >
-                                取消下载
-                            </button>
-                        ) : null}
+                        </Button>
+                        {downloading ? <Button danger onClick={() => void cancelUpdateDownload()}>取消下载</Button> : null}
                     </div>
                 </div>
                 <div className="mb-3 grid grid-cols-2 gap-3">

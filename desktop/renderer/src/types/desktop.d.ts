@@ -26,6 +26,7 @@ declare global {
             stageCacheDirectory: (directory: string) => Promise<StorageSettings>;
             resetStorageDirectory: (kind: "result" | "cache") => Promise<StorageSettings>;
             openStorageDirectory: (directory: string) => Promise<string>;
+            fetchUrl: (url: string) => Promise<{ bytes: ArrayBuffer; mimeType: string }>;
             saveFileDialog: (payload: { title?: string; defaultPath?: string; bytes: ArrayBuffer; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; path: string }>;
             writeGeneratedOutput: (payload: { kind: StorageKind; extension?: string; bytes?: ArrayBuffer; text?: string }) => Promise<{ path: string; name: string }>;
             persistenceFlushed: () => Promise<void>;

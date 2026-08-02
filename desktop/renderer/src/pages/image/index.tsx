@@ -1,6 +1,6 @@
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Copy, Download, Eye, FolderOpen, FolderPlus, ImagePlus, LoaderCircle, PenLine, SlidersHorizontal, Sparkles, Trash2, Upload, XCircle } from "lucide-react";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
-import { App, Button, Drawer, Dropdown, Empty, Image, Input, Modal, Tag, Tooltip, Typography, type MenuProps } from "antd";
+import { App, Button, Checkbox, Drawer, Dropdown, Empty, Image, Input, Modal, Tag, Tooltip, Typography, type MenuProps } from "antd";
 import localforage from "localforage";
 import { saveAs } from "file-saver";
 
@@ -91,6 +91,7 @@ export default function ImagePage() {
     const [startedAt, setStartedAt] = useState(0);
     const [elapsedMs, setElapsedMs] = useState(0);
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
+    const [selectedImageIds, setSelectedImageIds] = useState<string[]>([]);
     const [detailLog, setDetailLog] = useState<GenerationLog | null>(null);
     const [storageSettings, setStorageSettings] = useState<{ resultRoot: string; folders: Record<string, string> } | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -294,7 +295,13 @@ export default function ImagePage() {
     const downloadImage = async (image: GeneratedImage, index: number) => {
         if (window.lySpaceDesktop) {
             try {
-                const blob = await (await fetch(image.dataUrl)).blob();
+                let blob: Blob;
+                try {
+                    blob = await (await fetch(image.dataUrl)).blob();
+                } catch {
+                    const result = await window.lySpaceDesktop.fetchUrl(image.dataUrl);
+                    blob = new Blob([result.bytes], { type: result.mimeType || "image/png" });
+                }
                 const mime = blob.type.toLowerCase();
                 const extension = mime.includes("jpeg") ? "jpg" : mime.includes("webp") ? "webp" : mime.includes("gif") ? "gif" : "png";
                 const result = await window.lySpaceDesktop.saveFileDialog({ defaultPath: `image-${index + 1}.${extension}`, bytes: await blob.arrayBuffer() });
@@ -361,8 +368,9 @@ export default function ImagePage() {
         const imageKeys = deletedLogs.flatMap((log) => log.images.map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
         const deletedImageIds = new Set(deletedLogs.flatMap((log) => log.images.map((image) => image.id)));
         void Promise.all([deleteStoredImages(imageKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(refreshLogs).catch(() => undefined);
-        // 结果区同步移除已删除记录对应的图片，避免引用已回收的 blob 出现破图
+        // 结果区同步移除已删除记录对应的图片，并清理对应的图片勾选，避免引用已回收的 blob 出现破图
         setResults((value) => value.filter((result) => !(result.image && deletedImageIds.has(result.image.id))));
+        setSelectedImageIds((prev) => prev.filter((id) => !deletedImageIds.has(id)));
         setSelectedLogIds([]);
         setDeleteConfirmOpen(false);
     };
@@ -389,8 +397,32 @@ export default function ImagePage() {
         else message.info("未找到该图片的生成信息");
     };
 
-    const allLogsSelected = Boolean(logs.length) && selectedLogIds.length === logs.length;
-    const toggleAllLogs = () => setSelectedLogIds(allLogsSelected ? [] : logs.map((log) => log.id));
+    // 结果图片勾选与批量操作
+    const successImageResults = results.filter((result) => result.status === "success" && result.image);
+    const allImagesSelected = Boolean(successImageResults.length) && selectedImageIds.length === successImageResults.length;
+    const toggleAllImages = () => setSelectedImageIds(allImagesSelected ? [] : successImageResults.map((result) => result.image!.id));
+    const selectedImages = results.filter((result) => result.image && selectedImageIds.includes(result.image.id)).map((result) => result.image!);
+    const toggleImageSelected = (imageId: string, checked: boolean) =>
+        setSelectedImageIds((prev) => (checked ? [...prev, imageId] : prev.filter((id) => id !== imageId)));
+
+    const downloadSelected = async () => {
+        for (let i = 0; i < selectedImages.length; i += 1) await downloadImage(selectedImages[i], i);
+        setSelectedImageIds([]);
+    };
+    const addSelectedToAssets = async () => {
+        for (let i = 0; i < selectedImages.length; i += 1) await saveResultToAssets(selectedImages[i], i);
+        setSelectedImageIds([]);
+    };
+    const deleteSelectedImages = () => {
+        // 同步删除包含这些图片的生成记录并回收 blob，与「删除记录」行为对称
+        const relatedLogs = logs.filter((log) => log.images.some((image) => selectedImageIds.includes(image.id)));
+        const imageKeys = relatedLogs.flatMap((log) => log.images.map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
+        // 被删记录的全部图片 blob 已回收，结果区中同记录的其它未勾选图片也一并移除，避免破图
+        const deletedImageIds = new Set(relatedLogs.flatMap((log) => log.images.map((image) => image.id)));
+        void Promise.all([deleteStoredImages(imageKeys), ...relatedLogs.map((log) => logStore.removeItem(log.id))]).then(refreshLogs).catch(() => undefined);
+        setResults((value) => value.filter((result) => !(result.image && deletedImageIds.has(result.image.id))));
+        setSelectedImageIds([]);
+    };
 
     const deleteFailedLogs = () => {
         const failedIds = logs.filter((log) => log.status === "失败").map((log) => log.id);
@@ -600,10 +632,26 @@ export default function ImagePage() {
                             <div>
                                 <h2 className="text-xl font-semibold">生成结果</h2>
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center justify-end gap-2">
                                 {running ? <Tag className="m-0 px-2 py-1">等待 {formatDuration(elapsedMs)}</Tag> : null}
-                                <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!logs.length} onClick={toggleAllLogs}>
-                                    {allLogsSelected ? "取消全选" : "全选"}
+                                {selectedImageIds.length ? (
+                                    <>
+                                        <Tag color="blue" className="m-0">
+                                            已选 {selectedImageIds.length} 张
+                                        </Tag>
+                                        <Button size="small" icon={<Download className="size-3.5" />} onClick={() => void downloadSelected()}>
+                                            下载选中
+                                        </Button>
+                                        <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => void addSelectedToAssets()}>
+                                            添加资产
+                                        </Button>
+                                        <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={deleteSelectedImages}>
+                                            删除选中
+                                        </Button>
+                                    </>
+                                ) : null}
+                                <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!successImageResults.length} onClick={toggleAllImages}>
+                                    {allImagesSelected ? "取消全选" : "全选"}
                                 </Button>
                                 <Button size="small" icon={<XCircle className="size-3.5" />} disabled={!logs.some((log) => log.status === "失败")} onClick={deleteFailedLogs}>
                                     清除失败
@@ -617,7 +665,17 @@ export default function ImagePage() {
                             <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(210px,1fr))]">
                                 {displayResults.map((result, index) =>
                                     result.status === "success" && result.image ? (
-                                        <ResultImageCard key={result.id} image={result.image} index={index} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} onViewDetail={openResultDetail} />
+                                        <ResultImageCard
+                                            key={result.id}
+                                            image={result.image}
+                                            index={index}
+                                            selected={selectedImageIds.includes(result.image.id)}
+                                            onToggleSelect={(checked) => toggleImageSelected(result.image!.id, checked)}
+                                            onEdit={addResultToReferences}
+                                            onDownload={downloadImage}
+                                            onSaveAsset={saveResultToAssets}
+                                            onViewDetail={openResultDetail}
+                                        />
                                     ) : result.status === "failed" ? (
                                         <FailedImageCard key={result.id} error={result.error || "生成失败"} onRetry={() => retryResult(index)} />
                                     ) : result.status === "canceled" ? (
@@ -683,6 +741,8 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
 function ResultImageCard({
     image,
     index,
+    selected,
+    onToggleSelect,
     onEdit,
     onDownload,
     onSaveAsset,
@@ -690,6 +750,8 @@ function ResultImageCard({
 }: {
     image: GeneratedImage;
     index: number;
+    selected: boolean;
+    onToggleSelect: (checked: boolean) => void;
     onEdit: (image: GeneratedImage, index: number) => void;
     onDownload: (image: GeneratedImage, index: number) => void;
     onSaveAsset: (image: GeneratedImage, index: number) => void;
@@ -710,7 +772,13 @@ function ResultImageCard({
                 },
             }}
         >
-            <div className="overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
+            <div className="relative overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
+                <Checkbox
+                    className="absolute left-2 top-2 z-10"
+                    checked={selected}
+                    onClick={(event) => event.stopPropagation()}
+                    onChange={(event) => onToggleSelect(event.target.checked)}
+                />
                 <Image src={image.dataUrl} alt={`生成结果 ${index + 1}`} className="aspect-square object-cover" />
                 <div className="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
                     <div className="flex min-w-0 gap-x-2 gap-y-1 text-xs text-stone-500 dark:text-stone-400">

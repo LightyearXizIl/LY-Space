@@ -19,13 +19,26 @@ const generationLogStore = localforage.createInstance({ name: "infinite-canvas",
 const objectUrls = new Map<string, string>();
 
 export async function uploadImage(input: string | Blob): Promise<UploadedImage> {
-    const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
+    const blob = typeof input === "string" ? await fetchImageBlob(input) : input;
     const storageKey = `image:${nanoid()}`;
     await trackWrite(store.setItem(storageKey, blob));
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     const meta = await readImageMeta(url);
     return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType };
+}
+
+/** 获取图片 blob：浏览器 fetch 失败（如远程 URL 跨域被拦）时回退主进程下载，绕过 CORS 限制。 */
+async function fetchImageBlob(input: string) {
+    try {
+        return await (await fetch(input)).blob();
+    } catch (error) {
+        if (window.lySpaceDesktop) {
+            const result = await window.lySpaceDesktop.fetchUrl(input);
+            return new Blob([result.bytes], { type: result.mimeType || "image/png" });
+        }
+        throw error;
+    }
 }
 
 export async function resolveImageUrl(storageKey?: string, fallback = "") {

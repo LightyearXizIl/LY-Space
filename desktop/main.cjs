@@ -543,6 +543,21 @@ app.whenReady().then(async () => {
         return storageInfo();
     });
     ipcMain.handle("lyspace:open-storage-directory", async (_event, directory) => shell.openPath(directory));
+    ipcMain.handle("lyspace:fetch-url", async (_event, url) => {
+        if (!/^https?:\/\//i.test(String(url || ""))) throw new Error("仅支持 http/https 地址");
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 30000);
+        try {
+            const response = await electronNet.fetch(url, { signal: controller.signal });
+            if (!response.ok) throw new Error(`下载失败：HTTP ${response.status}`);
+            const contentType = response.headers.get("content-type") || "";
+            if (!contentType.toLowerCase().startsWith("image/")) throw new Error("下载内容不是图片");
+            const buffer = Buffer.from(await response.arrayBuffer());
+            return { bytes: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength), mimeType: contentType };
+        } finally {
+            clearTimeout(timer);
+        }
+    });
     ipcMain.handle("lyspace:save-file-dialog", async (_event, payload) => {
         const bytes = payload?.bytes ? Buffer.from(payload.bytes) : null;
         if (!bytes) throw new Error("没有可保存的文件内容");

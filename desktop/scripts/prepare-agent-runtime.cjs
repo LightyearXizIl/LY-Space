@@ -53,6 +53,10 @@ function listFiles(directory) {
 }
 
 function runPnpm(args, cwd = agentDir) {
+    const pnpmEntry = process.env.npm_execpath;
+    if (pnpmEntry && fs.existsSync(pnpmEntry)) {
+        return childProcess.spawnSync(process.execPath, [pnpmEntry, ...args], { cwd, stdio: "inherit", windowsHide: true });
+    }
     if (process.platform !== "win32") return childProcess.spawnSync("pnpm", args, { cwd, stdio: "inherit" });
     const pnpmCommand = (process.env.Path || process.env.PATH || "")
         .split(path.delimiter)
@@ -63,6 +67,6 @@ function runPnpm(args, cwd = agentDir) {
     return childProcess.spawnSync(
         path.join(dependencyRoot, "node", "bin", "node.exe"),
         [path.join(dependencyRoot, "node", "node_modules", "pnpm", "bin", "pnpm.mjs"), ...args],
-        { cwd, stdio: "inherit" },
+        { cwd, stdio: "inherit", windowsHide: true },
     );
 }

@@ -1,5 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, net: electronNet, protocol, shell } = require("electron");
 const { autoUpdater } = require("electron-updater");
+const { CancellationToken } = require("builder-util-runtime");
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -14,6 +15,7 @@ let allowWindowClose = false;
 let closingTimer = null;
 let installDownloadedUpdate = false;
 let downloadRequested = false;
+let downloadCancellation = null;
 let updateState = { status: "idle", version: "", releaseDate: "", releaseNotes: "", progress: null, error: "", supported: false };
 
 const RESULT_FOLDERS = { image: "Picture", video: "Video", audio: "Audio", text: "text" };
@@ -59,10 +61,27 @@ async function downloadUpdate() {
     if (!app.isPackaged || updateState.status === "downloading" || updateState.status === "downloaded") return updateState;
     downloadRequested = false;
     updateSnapshot({ status: "downloading", progress: { percent: 0, bytesPerSecond: 0, transferred: 0, total: 0 }, error: "" });
+    const cancellation = new CancellationToken();
+    downloadCancellation = cancellation;
     try {
-        await autoUpdater.downloadUpdate();
+        await autoUpdater.downloadUpdate(cancellation);
     } catch (error) {
-        updateError(error);
+        if (cancellation.cancelled) {
+            // 用户主动取消下载：恢复到可重新检查的状态，不显示错误
+            updateSnapshot({ status: "idle", version: updateState.version, releaseDate: updateState.releaseDate, releaseNotes: updateState.releaseNotes, progress: null, error: "" });
+        } else {
+            updateError(error);
+        }
+    } finally {
+        if (downloadCancellation === cancellation) downloadCancellation = null;
+    }
+    return updateState;
+}
+
+function cancelUpdateDownload() {
+    if (downloadCancellation && !downloadCancellation.cancelled) {
+        downloadCancellation.cancel();
+        downloadRequested = false;
     }
     return updateState;
 }
@@ -396,6 +415,7 @@ app.whenReady().then(async () => {
     configureAutoUpdater();
     ipcMain.handle("lyspace:update-state", () => updateState);
     ipcMain.handle("lyspace:check-and-download-update", () => checkAndDownloadUpdate());
+    ipcMain.handle("lyspace:cancel-update-download", () => cancelUpdateDownload());
     ipcMain.handle("lyspace:install-downloaded-update", () => requestUpdateInstall());
     ipcMain.handle("lyspace:storage-settings", () => storageInfo());
     ipcMain.handle("lyspace:choose-storage-directory", async (_event, kind) => {

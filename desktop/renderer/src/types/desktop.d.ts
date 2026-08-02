@@ -17,6 +17,7 @@ declare global {
         lySpaceDesktop?: {
             getUpdateState: () => Promise<AppUpdateState>;
             checkAndDownloadUpdate: () => Promise<AppUpdateState>;
+            cancelUpdateDownload: () => Promise<AppUpdateState>;
             installDownloadedUpdate: () => Promise<void>;
             onUpdateStateChanged: (listener: (state: AppUpdateState) => void) => () => void;
             getStorageSettings: () => Promise<StorageSettings>;

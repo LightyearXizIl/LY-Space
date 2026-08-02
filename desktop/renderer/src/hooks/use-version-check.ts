@@ -62,5 +62,14 @@ export function useVersionCheck() {
         }
     }, [message]);
 
-    return { open, setOpen, updateState, releases, hasNewVersion, checkAndDownloadUpdate, installDownloadedUpdate };
+    const cancelUpdateDownload = useCallback(async () => {
+        if (!window.lySpaceDesktop) return;
+        try {
+            setUpdateState(await window.lySpaceDesktop.cancelUpdateDownload());
+        } catch {
+            // 取消失败可忽略，状态会通过事件流更新
+        }
+    }, []);
+
+    return { open, setOpen, updateState, releases, hasNewVersion, checkAndDownloadUpdate, cancelUpdateDownload, installDownloadedUpdate };
 }

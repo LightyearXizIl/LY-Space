@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("lySpaceDesktop", {
     getUpdateState: () => ipcRenderer.invoke("lyspace:update-state"),
     checkAndDownloadUpdate: () => ipcRenderer.invoke("lyspace:check-and-download-update"),
+    cancelUpdateDownload: () => ipcRenderer.invoke("lyspace:cancel-update-download"),
     installDownloadedUpdate: () => ipcRenderer.invoke("lyspace:install-downloaded-update"),
     onUpdateStateChanged: (listener) => {
         const handler = (_event, state) => listener(state);

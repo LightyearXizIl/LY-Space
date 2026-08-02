@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.0.5 - 2026-08-02
+
++ [修复] 兼容以 OpenAI 调用格式配置的 Agnes 图片渠道：生图请求不再携带不支持的 `response_format`，统一改用 `return_base64`。
+
 ## v0.0.4 - 2026-08-02
 
 + [修复] Agnes Image 2.x 改用原生 `return_base64`、顶层参考图和明确像素尺寸请求，移除不受支持的 `response_format`。

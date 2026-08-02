@@ -844,6 +844,16 @@ function agnesImageSize(config: AiConfig) {
     return resolveRequestSize(resolution, config.size) || `${resolutionEdge(resolution)}x${resolutionEdge(resolution)}`;
 }
 
+/** 目标是否为 Agnes 端点：apiFormat 为 agnes，或 baseUrl 指向 Agnes 主机（兼容以 openai 格式配置的 Agnes 渠道）。 */
+function isAgnesTarget(requestConfig: AiConfig) {
+    if (requestConfig.apiFormat === "agnes") return true;
+    try {
+        return new URL(requestConfig.baseUrl).hostname.includes("agnes");
+    } catch {
+        return false;
+    }
+}
+
 async function requestAgnesImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
     const images = await Promise.all(references.map(imageToDataUrl));
     const makeRequest = async () => {
@@ -892,7 +902,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             throw new Error(readAxiosError(error, "请求失败"));
         }
     }
-    if (requestConfig.apiFormat === "agnes") return requestAgnesImages(requestConfig, prompt, [], n, options);
+    if (isAgnesTarget(requestConfig)) return requestAgnesImages(requestConfig, prompt, [], n, options);
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(config.imageResolution, config.size);
     const background = normalizeBackground(config.background);
@@ -958,7 +968,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             throw new Error(readAxiosError(error, "请求失败"));
         }
     }
-    if (requestConfig.apiFormat === "agnes") {
+    if (isAgnesTarget(requestConfig)) {
         if (mask) throw new Error("Agnes 图片接口不支持蒙版参数；请使用全图修复或生成式高清");
         return requestAgnesImages(requestConfig, requestPrompt, references, n, options);
     }

@@ -1,9 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, net: electronNet, protocol, shell } = require("electron");
 const { autoUpdater } = require("electron-updater");
-const childProcess = require("node:child_process");
 const fs = require("node:fs");
-const http = require("node:http");
-const nodeNet = require("node:net");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 
@@ -12,8 +9,6 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow = null;
-let agentChild = null;
-let agentState = { url: "", token: "", status: "error", error: "内置 Canvas Agent 尚未启动" };
 let storageSettings = null;
 let allowWindowClose = false;
 let closingTimer = null;
@@ -266,78 +261,6 @@ function webDirectory() {
     return path.join(__dirname, "renderer", "dist");
 }
 
-function agentEntry() {
-    return app.isPackaged
-        ? path.join(process.resourcesPath, "canvas-agent", "dist", "index.js")
-        : path.resolve(__dirname, "..", "canvas-agent", "dist", "index.js");
-}
-
-function availablePort() {
-    return new Promise((resolve, reject) => {
-        const server = nodeNet.createServer();
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", () => {
-            const address = server.address();
-            server.close((error) => (error ? reject(error) : resolve(address.port)));
-        });
-    });
-}
-
-function readAgentConfig(configFile) {
-    try {
-        return JSON.parse(fs.readFileSync(configFile, "utf8"));
-    } catch {
-        return null;
-    }
-}
-
-function checkAgentHealth(url) {
-    return new Promise((resolve) => {
-        const request = http.get(`${url}/health`, { timeout: 1000 }, (response) => {
-            response.resume();
-            resolve(response.statusCode === 200);
-        });
-        request.once("timeout", () => request.destroy());
-        request.once("error", () => resolve(false));
-    });
-}
-
-async function startAgent() {
-    const configDir = path.join(app.getPath("userData"), "canvas-agent");
-    const configFile = path.join(configDir, "canvas-agent.json");
-    const port = await availablePort();
-    fs.mkdirSync(configDir, { recursive: true });
-    agentChild = childProcess.spawn(process.execPath, [agentEntry()], {
-        windowsHide: true,
-        stdio: ["ignore", "ignore", "ignore"],
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", CANVAS_AGENT_CONFIG_DIR: configDir, PORT: String(port), LY_SPACE_DESKTOP_BUNDLED: "1" },
-    });
-    agentChild.once("error", (error) => {
-        agentState = { url: "", token: "", status: "error", error: `内置 Canvas Agent 无法启动：${error.message}` };
-    });
-    agentChild.once("exit", (code) => {
-        if (!app.isQuitting) agentState = { url: "", token: "", status: "error", error: `内置 Canvas Agent 已退出（${code ?? 0}）` };
-    });
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 300));
-        const config = readAgentConfig(configFile);
-        if (config?.url && config?.token && await checkAgentHealth(config.url)) {
-            agentState = { url: config.url, token: config.token, status: "ready" };
-            return;
-        }
-    }
-    agentState = { url: "", token: "", status: "error", error: "内置 Canvas Agent 启动超时，请在 Agent 面板重试" };
-}
-
-function stopAgent() {
-    if (!agentChild || agentChild.killed || !agentChild.pid) return;
-    const child = agentChild;
-    const pid = child.pid;
-    agentChild = null;
-    if (process.platform === "win32") childProcess.spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-    else child.kill("SIGTERM");
-}
-
 function registerAppProtocol() {
     protocol.handle("lyspace", (request) => {
         const root = webDirectory();
@@ -397,7 +320,6 @@ app.whenReady().then(async () => {
     registerAppProtocol();
     installApplicationMenu();
     configureAutoUpdater();
-    ipcMain.handle("lyspace:agent-config", () => agentState);
     ipcMain.handle("lyspace:update-state", () => updateState);
     ipcMain.handle("lyspace:check-and-download-update", () => checkAndDownloadUpdate());
     ipcMain.handle("lyspace:install-downloaded-update", () => requestUpdateInstall());
@@ -457,16 +379,7 @@ app.whenReady().then(async () => {
         app.relaunch();
         app.quit();
     });
-    try {
-        await startAgent();
-    } catch (error) {
-        agentState = { url: "", token: "", status: "error", error: error instanceof Error ? error.message : "内置 Canvas Agent 启动失败" };
-    }
     createWindow();
     if (app.isPackaged) void autoUpdater.checkForUpdates().catch(updateError);
-});
-app.on("before-quit", () => {
-    app.isQuitting = true;
-    stopAgent();
 });
 app.on("window-all-closed", () => app.quit());

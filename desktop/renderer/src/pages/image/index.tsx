@@ -1,6 +1,6 @@
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
-import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
+import { App, Button, Checkbox, Drawer, Dropdown, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
 import localforage from "localforage";
 import { saveAs } from "file-saver";
 
@@ -17,7 +17,6 @@ import { formatBytes, formatDuration, getDataUrlByteSize, readImageMeta } from "
 import { requestEdit, requestGeneration } from "@/services/api/image";
 import { deleteStoredImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
-import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import { loadWorkbenchSession, saveWorkbenchSession } from "@/services/workbench-session";
 import { trackWrite } from "@/services/desktop-storage";
 import { acknowledgeReferenceHandoff, getReferenceHandoffs } from "@/services/reference-handoff";
@@ -36,7 +35,7 @@ type GeneratedImage = {
 
 type GenerationResult = {
     id: string;
-    status: "pending" | "success" | "failed";
+    status: "pending" | "success" | "failed" | "canceled";
     image?: GeneratedImage;
     error?: string;
 };
@@ -53,10 +52,11 @@ type GenerationLog = {
     durationMs: number;
     successCount: number;
     failCount: number;
+    cancelCount: number;
     imageCount: number;
     size: string;
     quality: string;
-    status: "成功" | "失败";
+    status: "成功" | "失败" | "取消";
     images: GeneratedImage[];
     thumbnails: string[];
 };
@@ -67,7 +67,7 @@ type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => 
 
 const LOG_STORE_KEY = "infinite-canvas:image_generation_logs";
 const SESSION_STORE_KEY = "image-workbench:current-session";
-const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
+const RESULT_ACTION_BUTTON_CLASS = "min-w-[104px] flex-1 px-2 [&_.ant-btn-icon]:shrink-0";
 const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
 
 export default function ImagePage() {
@@ -95,13 +95,8 @@ export default function ImagePage() {
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [isReferenceDragActive, setIsReferenceDragActive] = useState(false);
-    const [autoRunToken, setAutoRunToken] = useState(0);
     const [sessionHydrated, setSessionHydrated] = useState(false);
-    const imageCommand = useWorkbenchAgentStore((state) => state.imageCommand);
-    const clearImageCommand = useWorkbenchAgentStore((state) => state.clearImageCommand);
-    const updateAgentTask = useWorkbenchAgentStore((state) => state.updateTask);
-    const processedCommandRef = useRef(0);
-    const agentTaskIdRef = useRef<string | undefined>(undefined);
+    const generationControllersRef = useRef(new Map<string, AbortController>());
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
     const canGenerate = Boolean(prompt.trim());
@@ -112,6 +107,14 @@ export default function ImagePage() {
         const timer = window.setInterval(() => setElapsedMs(performance.now() - startedAt), 1000);
         return () => window.clearInterval(timer);
     }, [running, startedAt]);
+
+    useEffect(
+        () => () => {
+            generationControllersRef.current.forEach((controller) => controller.abort());
+            generationControllersRef.current.clear();
+        },
+        [],
+    );
 
     useEffect(() => {
         void refreshLogs();
@@ -188,45 +191,50 @@ export default function ImagePage() {
         }
     };
 
+    const cancelResult = (id: string) => {
+        const controller = generationControllersRef.current.get(id);
+        if (!controller || controller.signal.aborted) return;
+        controller.abort();
+        setResults((value) => updateResultById(value, id, { status: "canceled", error: undefined, image: undefined }));
+    };
+
+    const cancelAllGenerations = () => {
+        generationControllersRef.current.forEach((controller) => controller.abort());
+        generationControllersRef.current.clear();
+    };
+
     const generate = async () => {
-        const agentTaskId = agentTaskIdRef.current;
-        agentTaskIdRef.current = undefined;
         const text = prompt.trim();
         if (!text) {
             message.error("请输入生图提示词");
-            if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "请输入生图提示词" });
             return;
         }
         if (!isAiConfigReady(effectiveConfig, model)) {
             message.warning("请先完成配置");
             openConfigDialog(true);
-            if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "生图配置不完整" });
             return;
         }
 
         const snapshot = buildRequestSnapshot();
-        if (!snapshot) {
-            if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "生图参数无效" });
-            return;
-        }
+        if (!snapshot) return;
 
         setElapsedMs(0);
         setRunning(true);
-        if (agentTaskId) updateAgentTask(agentTaskId, { status: "running", error: undefined });
         setPreviewLog(null);
-        setResults(Array.from({ length: generationCount }, () => ({ id: nanoid(), status: "pending" })));
+        const pendingResults = Array.from({ length: generationCount }, () => ({ id: nanoid(), status: "pending" as const }));
+        setResults(pendingResults);
         const batchStartedAt = performance.now();
         setStartedAt(batchStartedAt);
 
-        const tasks = Array.from({ length: generationCount }, (_, index) => runGenerationSlot(index, snapshot));
+        const tasks = pendingResults.map((item) => runGenerationSlot(item.id, snapshot));
 
         const result = await Promise.allSettled(tasks);
-        const successImages = result.filter((item): item is PromiseFulfilledResult<GeneratedImage> => item.status === "fulfilled").map((item) => item.value);
+        const successImages = result.filter((item): item is PromiseFulfilledResult<GeneratedImage | null> => item.status === "fulfilled").map((item) => item.value).filter((image): image is GeneratedImage => Boolean(image));
         const successCount = successImages.length;
-        const failCount = generationCount - successCount;
+        const cancelCount = result.filter((item) => item.status === "fulfilled" && item.value === null).length;
+        const failCount = result.filter((item) => item.status === "rejected").length;
         const failed = result.find((item): item is PromiseRejectedResult => item.status === "rejected");
         const error = failed?.reason instanceof Error ? failed.reason.message : failCount ? "生成失败" : undefined;
-        if (agentTaskId) updateAgentTask(agentTaskId, { status: successCount ? "succeeded" : "failed", successCount, failCount, error: successCount ? undefined : error });
 
         try {
             const logImages = await Promise.all(
@@ -244,37 +252,18 @@ export default function ImagePage() {
                     durationMs: performance.now() - batchStartedAt,
                     successCount,
                     failCount,
-                    status: successCount ? "成功" : "失败",
+                    cancelCount,
+                    status: successCount ? "成功" : failCount ? "失败" : "取消",
                     images: logImages,
                 }),
             );
-            successCount ? message.success("图片已生成") : message.error(failed?.reason instanceof Error ? failed.reason.message : "生成失败");
+            if (successCount) message.success("图片已生成");
+            else if (failCount) message.error(failed?.reason instanceof Error ? failed.reason.message : "生成失败");
+            else message.info("已取消生成");
         } finally {
             setRunning(false);
         }
     };
-
-    // 响应 Agent 面板下发的生图命令：填入提示词，并按需自动触发生成。
-    useEffect(() => {
-        if (!imageCommand || imageCommand.nonce === processedCommandRef.current) return;
-        processedCommandRef.current = imageCommand.nonce;
-        clearImageCommand();
-        if (typeof imageCommand.prompt === "string") setPrompt(imageCommand.prompt);
-        if (imageCommand.run && running) {
-            if (imageCommand.taskId) updateAgentTask(imageCommand.taskId, { status: "failed", error: "生图工作台已有任务正在运行" });
-            return;
-        }
-        if (imageCommand.run) {
-            agentTaskIdRef.current = imageCommand.taskId;
-            setAutoRunToken((value) => value + 1);
-        }
-    }, [imageCommand, clearImageCommand, running, updateAgentTask]);
-
-    useEffect(() => {
-        if (!autoRunToken) return;
-        void generate();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [autoRunToken]);
 
     const downloadImage = (image: GeneratedImage, index: number) => {
         saveAs(image.dataUrl, `image-${index + 1}.png`);
@@ -313,6 +302,7 @@ export default function ImagePage() {
     };
 
     const createSession = () => {
+        cancelAllGenerations();
         setPrompt("");
         setReferences([]);
         setResults([]);
@@ -366,19 +356,29 @@ export default function ImagePage() {
         return { text, config: { ...effectiveConfig, model, count: "1" }, references: [...references] };
     };
 
-    const runGenerationSlot = async (index: number, snapshot: { text: string; config: AiConfig; references: ReferenceImage[] }) => {
+    const runGenerationSlot = async (id: string, snapshot: { text: string; config: AiConfig; references: ReferenceImage[] }) => {
         const itemStartedAt = performance.now();
+        const controller = new AbortController();
+        generationControllersRef.current.set(id, controller);
         try {
-            const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references) : await requestGeneration(snapshot.config, snapshot.text);
+            const requestOptions = { signal: controller.signal };
+            const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references, undefined, requestOptions) : await requestGeneration(snapshot.config, snapshot.text, requestOptions);
             const image = result[0];
             if (!image) throw new Error("接口没有返回图片");
             const meta = await readImageMeta(image.dataUrl);
             const nextImage = { id: image.id, dataUrl: image.dataUrl, durationMs: performance.now() - itemStartedAt, width: meta.width, height: meta.height, bytes: getDataUrlByteSize(image.dataUrl) };
-            setResults((value) => updateResultAt(value, index, { status: "success", image: nextImage }));
+            if (controller.signal.aborted) return null;
+            setResults((value) => updateResultById(value, id, { status: "success", image: nextImage }));
             return nextImage;
         } catch (error) {
-            setResults((value) => updateResultAt(value, index, { status: "failed", error: error instanceof Error ? error.message : "生成失败" }));
+            if (controller.signal.aborted) {
+                setResults((value) => updateResultById(value, id, { status: "canceled", error: undefined, image: undefined }));
+                return null;
+            }
+            setResults((value) => updateResultById(value, id, { status: "failed", error: error instanceof Error ? error.message : "生成失败" }));
             throw error;
+        } finally {
+            if (generationControllersRef.current.get(id) === controller) generationControllersRef.current.delete(id);
         }
     };
 
@@ -386,13 +386,16 @@ export default function ImagePage() {
         const snapshot = buildRequestSnapshot();
         if (!snapshot) return;
         setPreviewLog(null);
-        setResults((value) => updateResultAt(value, index, { status: "pending", error: undefined, image: undefined }));
+        const id = results[index]?.id;
+        if (!id) return;
+        setResults((value) => updateResultById(value, id, { status: "pending", error: undefined, image: undefined }));
         const retryStartedAt = performance.now();
         try {
-            const image = await runGenerationSlot(index, snapshot);
+            const image = await runGenerationSlot(id, snapshot);
+            if (!image) return;
             const stored = await uploadImage(image.dataUrl);
             const logImage = { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
-            setResults((value) => updateResultAt(value, index, { image: { ...image, dataUrl: stored.url, storageKey: stored.storageKey } }));
+            setResults((value) => updateResultById(value, id, { image: { ...image, dataUrl: stored.url, storageKey: stored.storageKey } }));
             saveLog(
                 buildLog({
                     prompt: snapshot.text,
@@ -402,6 +405,7 @@ export default function ImagePage() {
                     durationMs: performance.now() - retryStartedAt,
                     successCount: 1,
                     failCount: 0,
+                    cancelCount: 0,
                     status: "成功",
                     images: [logImage],
                 }),
@@ -555,8 +559,10 @@ export default function ImagePage() {
                                         <ResultImageCard key={result.id} image={result.image} index={index} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
                                     ) : result.status === "failed" ? (
                                         <FailedImageCard key={result.id} error={result.error || "生成失败"} onRetry={() => retryResult(index)} />
+                                    ) : result.status === "canceled" ? (
+                                        <CanceledImageCard key={result.id} onRetry={() => retryResult(index)} />
                                     ) : (
-                                        <PendingImageCard key={result.id} />
+                                        <PendingImageCard key={result.id} onCancel={() => cancelResult(result.id)} />
                                     ),
                                 )}
                             </div>
@@ -645,7 +651,7 @@ function ResultImageCard({
                     <span>{formatBytes(image.bytes)}</span>
                     <span>{formatDuration(image.durationMs)}</span>
                 </div>
-                <div className="grid min-w-0 grid-cols-3 gap-2">
+                <div className="flex min-w-0 flex-wrap gap-2">
                     <Tooltip title="添加到资产">
                         <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => void onSaveAsset(image, index)}>
                             添加到资产
@@ -667,19 +673,37 @@ function ResultImageCard({
     );
 }
 
-function PendingImageCard() {
+function PendingImageCard({ onCancel }: { onCancel: () => void }) {
     return (
-        <div className="relative aspect-square overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
-            <div
-                className="absolute inset-0 opacity-60"
-                style={{
-                    backgroundImage: "radial-gradient(circle, rgba(120,113,108,0.35) 1.4px, transparent 1.6px)",
-                    backgroundSize: "16px 16px",
-                }}
-            />
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-stone-500 dark:text-stone-400">
-                <LoaderCircle className="size-6 animate-spin" />
-                <span>生成中</span>
+        <Dropdown menu={{ items: [{ key: "cancel", danger: true, label: "取消生成", onClick: onCancel }] }} trigger={["contextMenu"]}>
+            <div className="relative aspect-square overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
+                <div
+                    className="absolute inset-0 opacity-60"
+                    style={{
+                        backgroundImage: "radial-gradient(circle, rgba(120,113,108,0.35) 1.4px, transparent 1.6px)",
+                        backgroundSize: "16px 16px",
+                    }}
+                />
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-stone-500 dark:text-stone-400">
+                    <LoaderCircle className="size-6 animate-spin" />
+                    <span>生成中</span>
+                </div>
+            </div>
+        </Dropdown>
+    );
+}
+
+function CanceledImageCard({ onRetry }: { onRetry: () => void }) {
+    return (
+        <div className="overflow-hidden rounded-lg border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900">
+            <div className="flex aspect-square flex-col items-center justify-center gap-3 p-5 text-center">
+                <div className="text-sm font-medium text-stone-600 dark:text-stone-300">已取消</div>
+                <div className="text-xs text-stone-500 dark:text-stone-400">此图片的生成请求已停止</div>
+            </div>
+            <div className="flex justify-end border-t border-stone-200 p-3 dark:border-stone-800">
+                <Button size="small" onClick={onRetry}>
+                    重试
+                </Button>
             </div>
         </div>
     );
@@ -703,8 +727,8 @@ function FailedImageCard({ error, onRetry }: { error: string; onRetry: () => voi
     );
 }
 
-function updateResultAt(results: GenerationResult[], index: number, next: Partial<GenerationResult>) {
-    return results.map((item, itemIndex) => (itemIndex === index ? { ...item, ...next } : item));
+function updateResultById(results: GenerationResult[], id: string, next: Partial<GenerationResult>) {
+    return results.map((item) => (item.id === id ? { ...item, ...next } : item));
 }
 
 function LogPanel({
@@ -796,6 +820,11 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
                                 失败 {log.failCount}
                             </Tag>
                         ) : null}
+                        {log.cancelCount ? (
+                            <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="default">
+                                取消 {log.cancelCount}
+                            </Tag>
+                        ) : null}
                     </div>
                     <div className="flex flex-wrap justify-end gap-1">
                         <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.imageCount} 张</Tag>
@@ -852,6 +881,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         durationMs: log.durationMs || 0,
         successCount: log.successCount ?? log.imageCount ?? 0,
         failCount: log.failCount || 0,
+        cancelCount: log.cancelCount || 0,
         imageCount: log.imageCount || log.successCount || 0,
         size: log.size || config.size || "",
         quality: log.quality || config.quality || "",
@@ -908,6 +938,7 @@ function buildLog({
     durationMs,
     successCount,
     failCount,
+    cancelCount,
     status,
     images,
 }: {
@@ -918,6 +949,7 @@ function buildLog({
     durationMs: number;
     successCount: number;
     failCount: number;
+    cancelCount: number;
     status: GenerationLog["status"];
     images: GeneratedImage[];
 }): GenerationLog {
@@ -942,6 +974,7 @@ function buildLog({
         durationMs,
         successCount,
         failCount,
+        cancelCount,
         imageCount: Number(logConfig.count) || successCount,
         size: logConfig.size,
         quality: logConfig.quality,

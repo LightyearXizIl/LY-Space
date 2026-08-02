@@ -4,7 +4,7 @@ const path = require("node:path");
 const rootDir = path.resolve(__dirname, "..", "..");
 const version = fs.readFileSync(path.join(rootDir, "VERSION"), "utf8").trim();
 const normalizedVersion = version.replace(/^v/i, "");
-const packageFiles = ["desktop/package.json", "desktop/renderer/package.json", "canvas-agent/package.json"];
+const packageFiles = ["desktop/package.json", "desktop/renderer/package.json"];
 
 if (!/^v\d+\.\d+\.\d+$/.test(version)) throw new Error(`VERSION must be a v-prefixed semantic version, received ${version}`);
 for (const file of packageFiles) {

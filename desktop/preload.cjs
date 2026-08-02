@@ -1,7 +1,6 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("lySpaceDesktop", {
-    getAgentConfig: () => ipcRenderer.invoke("lyspace:agent-config"),
     getUpdateState: () => ipcRenderer.invoke("lyspace:update-state"),
     checkAndDownloadUpdate: () => ipcRenderer.invoke("lyspace:check-and-download-update"),
     installDownloadedUpdate: () => ipcRenderer.invoke("lyspace:install-downloaded-update"),

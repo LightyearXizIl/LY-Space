@@ -4,7 +4,6 @@ import { App } from "antd";
 
 import { createModelChannel, useConfigStore } from "@/stores/use-config-store";
 import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
-import { useAgentStore } from "@/stores/use-agent-store";
 import { flushPendingStorageWrites } from "@/services/desktop-storage";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
@@ -14,8 +13,6 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const config = useConfigStore((state) => state.config);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
-    const setAgentState = useAgentStore((state) => state.setAgentState);
-    const connectAgent = useAgentStore((state) => state.connectAgent);
 
     usePromptSourceScheduler();
 
@@ -67,18 +64,8 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     useEffect(() => {
         if (handledDesktopInit.current || !window.lySpaceDesktop) return;
         handledDesktopInit.current = true;
-        void window.lySpaceDesktop.getAgentConfig().then((agent) => {
-            if (agent.status === "ready") {
-                localStorage.setItem("canvas-agent-url", agent.url);
-                localStorage.setItem("canvas-agent-token", agent.token);
-                setAgentState({ url: agent.url, token: agent.token });
-                connectAgent({ silent: true });
-            } else {
-                setAgentState({ connectError: agent.error || "内置 Canvas Agent 启动失败" });
-            }
-            if (!config.channels.some((channel) => channel.apiKey.trim())) openConfigDialog(false, "channels");
-        }).catch(() => setAgentState({ connectError: "无法读取内置 Canvas Agent 配置" }));
-    }, [config.channels, connectAgent, openConfigDialog, setAgentState]);
+        if (!config.channels.some((channel) => channel.apiKey.trim())) openConfigDialog(false, "channels");
+    }, [config.channels, openConfigDialog]);
 
     return <>{children}</>;
 }

@@ -841,22 +841,18 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 function agnesImageSize(config: AiConfig) {
     const resolution = normalizeImageResolution(config.imageResolution);
     if (resolution === "8k") throw new Error("Agnes Image 2.1 官方最高支持 4K，请选择 4K 或更低分辨率");
-    return ({ "1k": "1K", "2k": "2K", "4k": "4K" } as Record<string, string>)[resolution];
+    return resolveRequestSize(resolution, config.size) || `${resolutionEdge(resolution)}x${resolutionEdge(resolution)}`;
 }
 
 async function requestAgnesImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
-    const ratio = config.size.includes(":") ? config.size : undefined;
     const images = await Promise.all(references.map(imageToDataUrl));
     const makeRequest = async () => {
         const response = await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/generations"), {
             model: config.model,
             prompt: withSystemPrompt(config, prompt),
             size: agnesImageSize(config),
-            ...(ratio ? { ratio } : {}),
-            extra_body: {
-                response_format: "b64_json",
-                ...(images.length ? { image: images } : {}),
-            },
+            return_base64: true,
+            ...(images.length ? { image: images } : {}),
         }, { headers: aiHeaders(config, "application/json"), signal: options?.signal });
         return parseImagePayload(response.data);
     };

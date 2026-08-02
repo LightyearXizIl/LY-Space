@@ -1,6 +1,6 @@
 import type { ComponentType, ReactNode } from "react";
 
-import type { CanvasAgentOp } from "@/lib/canvas/canvas-agent-ops";
+import type { CanvasOp } from "@/lib/canvas/canvas-ops";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { CanvasConnection, CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 import type { CanvasResourceKind } from "@/lib/canvas/canvas-resource-references";
@@ -53,8 +53,8 @@ export type CanvasNodeContext = {
     getConnections: () => CanvasConnection[];
     getUpstream: () => CanvasNodeData[];
     getDownstream: () => CanvasNodeData[];
-    // 画布操作,复用 Agent 指令集(增删节点/连线/选择/视口/触发生成)
-    applyOps: (ops: CanvasAgentOp[]) => void;
+    // 画布操作（增删节点、连线、选择、视口与触发生成）
+    applyOps: (ops: CanvasOp[]) => void;
     // 节点间/插件间通信
     emit: (event: string, payload?: unknown) => void;
     on: (event: string, handler: (payload: unknown) => void) => () => void;
@@ -82,7 +82,7 @@ export type CanvasPluginHost = {
     getDownstream: (nodeId: string) => CanvasNodeData[];
     updateNode: (nodeId: string, patch: Partial<Pick<CanvasNodeData, "title" | "width" | "height">>) => void;
     updateMetadata: (nodeId: string, patch: CanvasNodeMetadata) => void;
-    applyOps: (ops: CanvasAgentOp[]) => void;
+    applyOps: (ops: CanvasOp[]) => void;
     // AI 生成能力,复用画布页面当前的模型/密钥配置
     ai: CanvasPluginAi;
     // 打开/关闭指定节点下方的自定义 Panel

@@ -15,7 +15,6 @@ declare global {
     type StorageSettings = { resultRoot: string; cacheRoot: string; defaultResultRoot: string; defaultCacheRoot: string; pendingCacheRoot?: string; lastError?: string; folders: Record<StorageKind, string> };
     interface Window {
         lySpaceDesktop?: {
-            getAgentConfig: () => Promise<{ url: string; token: string; status: "ready" | "error"; error?: string }>;
             getUpdateState: () => Promise<AppUpdateState>;
             checkAndDownloadUpdate: () => Promise<AppUpdateState>;
             installDownloadedUpdate: () => Promise<void>;

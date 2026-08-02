@@ -1,6 +1,6 @@
 {
     "name": "ly-space-renderer",
-    "version": "0.0.3",
+    "version": "0.0.4",
     "private": true,
     "type": "module",
     "scripts": {
@@ -23,7 +23,6 @@
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
         "copy-to-clipboard": "^4.0.2",
-        "dayjs": "^1.11.20",
         "fflate": "^0.8.3",
         "file-saver": "^2.0.5",
         "localforage": "^1.10.0",
@@ -36,7 +35,6 @@
         "react-router": "^7.12.0",
         "react-router-dom": "^7.12.0",
         "shadcn": "^4.7.0",
-        "streamdown": "^2.5.0",
         "tailwind-merge": "^3.6.0",
         "tailwindcss": "^4",
         "three": "^0.184.0",

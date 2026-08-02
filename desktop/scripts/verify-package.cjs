@@ -10,7 +10,7 @@ const blockmap = `${installer}.blockmap`;
 const updateMetadata = path.join(releaseDir, "latest.yml");
 const unpackedDir = path.join(releaseDir, "win-unpacked");
 const appExe = path.join(unpackedDir, "LY Space.exe");
-const maxInstallerBytes = 420 * 1024 * 1024;
+const maxInstallerBytes = 180 * 1024 * 1024;
 
 for (const target of [installer, blockmap, updateMetadata, appExe]) {
     if (!fs.existsSync(target)) throw new Error(`Missing packaged artifact: ${target}`);
@@ -21,9 +21,9 @@ if (!fs.readFileSync(updateMetadata, "utf8").includes(`version: ${version}`)) th
 
 const files = listFiles(unpackedDir);
 const codexExecutables = files.filter((file) => path.basename(file).toLowerCase() === "codex.exe");
-if (codexExecutables.length !== 1) throw new Error(`Expected one bundled codex.exe, found ${codexExecutables.length}`);
-const prohibited = files.filter((file) => /\\resources\\canvas-agent\\node_modules\\(?:typescript|tsx|esbuild)(?:\\|$)|\\resources\\canvas-agent\\node_modules\\@types(?:\\|$)/i.test(file));
-if (prohibited.length) throw new Error(`Development dependencies were packaged: ${prohibited.slice(0, 5).join(", ")}`);
+if (codexExecutables.length) throw new Error(`Codex must not be bundled: ${codexExecutables.slice(0, 5).join(", ")}`);
+const bundledAgentFiles = files.filter((file) => /\\resources\\canvas-agent(?:\\|$)/i.test(file));
+if (bundledAgentFiles.length) throw new Error(`Canvas Agent must not be bundled: ${bundledAgentFiles.slice(0, 5).join(", ")}`);
 
 verifyWindowsMetadata(appExe);
 console.log(`Verified installer: ${(installerSize / 1024 / 1024).toFixed(2)} MiB`);

@@ -1,6 +1,6 @@
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
-import { App, Button, Checkbox, Drawer, Dropdown, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
+import { App, Button, Checkbox, Drawer, Dropdown, Empty, Image, Input, Modal, Tag, Tooltip, Typography, type MenuProps } from "antd";
 import localforage from "localforage";
 import { saveAs } from "file-saver";
 
@@ -222,7 +222,7 @@ export default function ImagePage() {
         setRunning(true);
         setPreviewLog(null);
         const pendingResults = Array.from({ length: generationCount }, () => ({ id: nanoid(), status: "pending" as const }));
-        setResults(pendingResults);
+        setResults((value) => [...pendingResults, ...value]);
         const batchStartedAt = performance.now();
         setStartedAt(batchStartedAt);
 
@@ -305,7 +305,7 @@ export default function ImagePage() {
         cancelAllGenerations();
         setPrompt("");
         setReferences([]);
-        setResults([]);
+        setResults((value) => value.map((result) => (result.status === "pending" ? { ...result, status: "canceled", error: undefined, image: undefined } : result)));
         setElapsedMs(0);
         setStartedAt(0);
         setSelectedLogIds([]);
@@ -415,6 +415,12 @@ export default function ImagePage() {
             // runGenerationSlot 已经把结果状态更新为 failed
         }
     };
+
+    const resultSwitcherItems: MenuProps["items"] = [
+        ...(results.length ? [{ key: "current", label: "当前结果" }] : []),
+        ...(results.length && logs.length ? [{ type: "divider" as const }] : []),
+        ...logs.map((log) => ({ key: log.id, label: `${log.title}（${log.imageCount} 张 · ${log.time}）` })),
+    ];
 
     return (
         <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
@@ -550,7 +556,28 @@ export default function ImagePage() {
                             <div>
                                 <h2 className="text-xl font-semibold">生成结果</h2>
                             </div>
-                            {running ? <Tag className="m-0 px-2 py-1">等待 {formatDuration(elapsedMs)}</Tag> : null}
+                            <div className="flex items-center gap-2">
+                                {running ? <Tag className="m-0 px-2 py-1">等待 {formatDuration(elapsedMs)}</Tag> : null}
+                                {logs.length ? (
+                                    <Dropdown
+                                        menu={{
+                                            items: resultSwitcherItems,
+                                            onClick: ({ key }) => {
+                                                if (key === "current") {
+                                                    setPreviewLog(null);
+                                                } else {
+                                                    const log = logs.find((item) => item.id === key);
+                                                    if (log) void previewGenerationLog(log);
+                                                }
+                                            },
+                                        }}
+                                    >
+                                        <Button size="small" icon={<History className="size-3.5" />}>
+                                            切换记录
+                                        </Button>
+                                    </Dropdown>
+                                ) : null}
+                            </div>
                         </div>
                         {results.length ? (
                             <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">

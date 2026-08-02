@@ -254,17 +254,15 @@ function migrateLegacyCacheIfNeeded() {
 function isIndexedDbIntact(directory) {
     const indexDbDir = path.join(directory, "IndexedDB");
     if (!fs.existsSync(indexDbDir)) return true;
-    let hasLevelDb = false;
     try {
         for (const entry of fs.readdirSync(indexDbDir, { withFileTypes: true })) {
             if (!entry.isDirectory() || !entry.name.includes(".indexeddb.leveldb")) continue;
-            hasLevelDb = true;
             if (!fs.existsSync(path.join(indexDbDir, entry.name, "CURRENT"))) return false;
         }
     } catch {
         return false;
     }
-    return !hasLevelDb || true;
+    return true;
 }
 
 function configureStorageBeforeReady() {

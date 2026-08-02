@@ -446,9 +446,11 @@ export default function ImagePage() {
         if (!id) return;
         setResults((value) => updateResultById(value, id, { status: "pending", error: undefined, image: undefined }));
         const retryStartedAt = performance.now();
+        let retriedImage: GeneratedImage | null = null;
         try {
             const image = await runGenerationSlot(id, snapshot);
             if (!image) return;
+            retriedImage = image;
             const stored = await uploadImage(image.dataUrl);
             const logImage = { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
             setResults((value) => updateResultById(value, id, { image: { ...image, dataUrl: stored.url, storageKey: stored.storageKey } }));
@@ -469,7 +471,10 @@ export default function ImagePage() {
             lastBatchRef.current = { prompt: snapshot.text, config: { ...snapshot.config, count: "1" }, references: snapshot.references, durationMs: performance.now() - retryStartedAt, images: [logImage] };
             message.success("重试成功");
         } catch {
-            // runGenerationSlot 已经把结果状态更新为 failed
+            // 落库失败时用重试成功图片设置兜底，保证右键详情仍可用（runGenerationSlot 已更新卡片状态）
+            if (retriedImage) {
+                lastBatchRef.current = { prompt: snapshot.text, config: { ...snapshot.config, count: "1" }, references: snapshot.references, durationMs: performance.now() - retryStartedAt, images: [retriedImage] };
+            }
         }
     };
 

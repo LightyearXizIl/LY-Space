@@ -65,9 +65,9 @@ type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
-const LOG_STORE_KEY = "infinite-canvas:image_generation_logs";
 const SESSION_STORE_KEY = "image-workbench:current-session";
 const RESULT_ACTION_BUTTON_CLASS = "min-w-[104px] flex-1 px-2 [&_.ant-btn-icon]:shrink-0";
+const MAX_REFERENCE_IMAGES = 6;
 const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
 
 export default function ImagePage() {
@@ -126,23 +126,29 @@ export default function ImagePage() {
 
     useEffect(() => {
         let active = true;
-        void loadWorkbenchSession<{ prompt: string; references: ReferenceImage[]; results: GenerationResult[]; elapsedMs: number; previewLogId?: string }>(SESSION_STORE_KEY).then((session) => {
-            if (!active || !session) return;
-            setPrompt(session.prompt || "");
-            setReferences(session.references || []);
-            setResults((session.results || []).map((result) => (result.status === "pending" ? { ...result, status: "failed", error: "上次生成已中断，可重试" } : result)));
-            setElapsedMs(session.elapsedMs || 0);
-            setPendingPreviewLogId(session.previewLogId || null);
-        }).finally(() => active && setSessionHydrated(true));
+        void loadWorkbenchSession<{ prompt: string; references: ReferenceImage[]; results: GenerationResult[]; elapsedMs: number; previewLogId?: string }>(SESSION_STORE_KEY)
+            .then((session) => {
+                if (!active || !session) return;
+                setPrompt(session.prompt || "");
+                setReferences(session.references || []);
+                setResults((session.results || []).map((result) => (result.status === "pending" ? { ...result, status: "failed", error: "上次生成已中断，可重试" } : result)));
+                setElapsedMs(session.elapsedMs || 0);
+                setPendingPreviewLogId(session.previewLogId || null);
+            })
+            .catch(() => undefined)
+            .finally(() => active && setSessionHydrated(true));
         return () => {
             active = false;
         };
     }, []);
 
+    // 生成期间每秒的 elapsedMs 变化不触发保存，避免生成过程中反复把整个结果集写入 IndexedDB；
+    // 每次结果/输入变化（含生成结束的最终状态）仍会保存。
     useEffect(() => {
         if (!sessionHydrated) return;
-        void saveWorkbenchSession(SESSION_STORE_KEY, { prompt, references, results, elapsedMs, previewLogId: previewLog?.id });
-    }, [elapsedMs, previewLog?.id, prompt, references, results, sessionHydrated]);
+        void saveWorkbenchSession(SESSION_STORE_KEY, { prompt, references, results, elapsedMs, previewLogId: previewLog?.id }).catch(() => undefined);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [previewLog?.id, prompt, references, results, sessionHydrated]);
 
     // logs 就绪后恢复上次查看的记录，结果区直接显示该记录结果
     useEffect(() => {
@@ -159,10 +165,11 @@ export default function ImagePage() {
         void (async () => {
             let nextReferences = references;
             for (const handoff of await getReferenceHandoffs("image")) {
+                if (nextReferences.length >= MAX_REFERENCE_IMAGES) break;
                 const dataUrl = await resolveImageUrl(handoff.storageKey);
                 if (!dataUrl) continue;
                 nextReferences = [...nextReferences, { id: nanoid(), name: handoff.name, type: handoff.type, dataUrl, storageKey: handoff.storageKey }];
-                await saveWorkbenchSession(SESSION_STORE_KEY, { prompt, references: nextReferences, results, elapsedMs, previewLogId: previewLog?.id });
+                await saveWorkbenchSession(SESSION_STORE_KEY, { prompt, references: nextReferences, results, elapsedMs, previewLogId: previewLog?.id }).catch(() => undefined);
                 await acknowledgeReferenceHandoff(handoff.id);
             }
             if (nextReferences !== references) {
@@ -176,8 +183,15 @@ export default function ImagePage() {
 
     const addReferences = async (files?: FileList | null) => {
         const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
+        if (!imageFiles.length) return;
+        const remaining = MAX_REFERENCE_IMAGES - references.length;
+        if (remaining <= 0) {
+            message.warning(`参考图最多添加 ${MAX_REFERENCE_IMAGES} 张，请先移除部分参考图`);
+            return;
+        }
+        if (imageFiles.length > remaining) message.warning(`参考图最多添加 ${MAX_REFERENCE_IMAGES} 张，已添加前 ${remaining} 张`);
         const nextReferences = await Promise.all(
-            imageFiles.map(async (file) => {
+            imageFiles.slice(0, remaining).map(async (file) => {
                 const image = await uploadImage(file);
                 return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
             }),
@@ -193,8 +207,14 @@ export default function ImagePage() {
                 message.error("剪切板里没有可读取的图片");
                 return;
             }
+            const remaining = MAX_REFERENCE_IMAGES - references.length;
+            if (remaining <= 0) {
+                message.warning(`参考图最多添加 ${MAX_REFERENCE_IMAGES} 张，请先移除部分参考图`);
+                return;
+            }
+            if (blobs.length > remaining) message.warning(`参考图最多添加 ${MAX_REFERENCE_IMAGES} 张，已读取前 ${remaining} 张`);
             const nextReferences = await Promise.all(
-                blobs.map(async (blob, index) => {
+                blobs.slice(0, remaining).map(async (blob, index) => {
                     const image = await uploadImage(blob);
                     return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
                 }),
@@ -275,6 +295,8 @@ export default function ImagePage() {
             if (successCount) message.success("图片已生成");
             else if (failCount) message.error(failed?.reason instanceof Error ? failed.reason.message : "生成失败");
             else message.info("已取消生成");
+        } catch (error) {
+            message.error(error instanceof Error ? `生成完成但保存记录失败：${error.message}` : "生成完成但保存记录失败");
         } finally {
             setRunning(false);
         }
@@ -285,6 +307,10 @@ export default function ImagePage() {
     };
 
     const addResultToReferences = async (image: GeneratedImage, index: number) => {
+        if (references.length >= MAX_REFERENCE_IMAGES) {
+            message.warning(`参考图最多添加 ${MAX_REFERENCE_IMAGES} 张，请先移除部分参考图`);
+            return;
+        }
         const stored = await uploadImage(image.dataUrl);
         setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.png`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
         message.success("已加入参考图");
@@ -308,8 +334,12 @@ export default function ImagePage() {
         if (payload.kind === "text") {
             setPrompt(payload.content);
         } else if (payload.kind === "image") {
-            const stored = await uploadImage(payload.dataUrl);
-            setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
+            if (references.length >= MAX_REFERENCE_IMAGES) {
+                message.warning(`参考图最多添加 ${MAX_REFERENCE_IMAGES} 张，请先移除部分参考图`);
+            } else {
+                const stored = await uploadImage(payload.dataUrl);
+                setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
+            }
         } else {
             message.warning("生图工作台只能使用文本或图片资产");
         }
@@ -328,8 +358,10 @@ export default function ImagePage() {
     };
 
     const deleteSelectedLogs = () => {
-        const imageKeys = logs.filter((log) => selectedLogIds.includes(log.id)).flatMap((log) => log.images.map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
-        void Promise.all([deleteStoredImages(imageKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(refreshLogs);
+        const imageKeys = logs
+            .filter((log) => selectedLogIds.includes(log.id))
+            .flatMap((log) => [...log.images, ...(log.references || [])].map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
+        void Promise.all([deleteStoredImages(imageKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(refreshLogs).catch(() => undefined);
         if (previewLog && selectedLogIds.includes(previewLog.id)) {
             setPreviewLog(null);
         }
@@ -338,7 +370,7 @@ export default function ImagePage() {
     };
 
     const saveLog = (log: GenerationLog) => {
-        void trackWrite(logStore.setItem(log.id, serializeLog(log))).then(refreshLogs);
+        void trackWrite(logStore.setItem(log.id, serializeLog(log))).then(refreshLogs).catch(() => undefined);
     };
 
     const refreshLogs = async () => setLogs(await readStoredLogs());
@@ -348,11 +380,7 @@ export default function ImagePage() {
         setLogsOpen(false);
         setPrompt(log.prompt);
         setReferences(log.references || []);
-        if (log.config.imageModel || log.model) updateConfig("imageModel", log.config.imageModel || log.model);
-        if (log.config.quality) updateConfig("quality", log.config.quality);
-        if (log.config.imageResolution) updateConfig("imageResolution", log.config.imageResolution);
-        if (log.config.size) updateConfig("size", log.config.size);
-        if (log.config.count) updateConfig("count", log.config.count);
+        // 只回填提示词与参考图，不回写模型/质量/尺寸等全局配置，避免查看历史悄悄改变后续生成参数
     };
 
     const openLogDetail = (log: GenerationLog) => setDetailLog(log);

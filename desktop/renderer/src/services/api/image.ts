@@ -6,7 +6,7 @@ import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl, imageToFile } from "@/services/image-storage";
-import { saveGeneratedBlob, saveGeneratedText } from "@/services/desktop-storage";
+import { notifyStorageError, saveGeneratedBlob, saveGeneratedText } from "@/services/desktop-storage";
 import type { ReferenceImage } from "@/types/image";
 
 export type AiTextMessage = {
@@ -139,7 +139,8 @@ function resolveSize(resolution: string | undefined, ratio: string): string {
     const isLandscape = parsedRatio.width >= parsedRatio.height;
     const longRatio = isLandscape ? parsedRatio.width / parsedRatio.height : parsedRatio.height / parsedRatio.width;
     const longSide = resolution ? resolutionEdge(resolution) : DEFAULT_IMAGE_SHORT_SIDE;
-    const shortSide = Math.max(IMAGE_SIZE_STEP, Math.round(longSide / longRatio / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP);
+    // 向上取整到 16 的倍数，避免 3:1 等大比例因向下取整后实际比例超限
+    const shortSide = Math.max(IMAGE_SIZE_STEP, Math.ceil(longSide / longRatio / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP);
 
     const width = isLandscape ? longSide : shortSide;
     const height = isLandscape ? shortSide : longSide;
@@ -171,10 +172,10 @@ function parseImageDimensions(value: string) {
 function validateImageSize(width: number, height: number) {
     if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new Error("图像尺寸必须是正整数，例如 1024x1024");
     if (width % IMAGE_SIZE_STEP !== 0 || height % IMAGE_SIZE_STEP !== 0) throw new Error("图像尺寸的宽高必须是 16 的倍数，请调整尺寸");
-    if (Math.max(width, height) > IMAGE_MAX_EDGE) throw new Error("图像尺寸最长边不能超过 3840px，请调整尺寸");
+    if (Math.max(width, height) > IMAGE_MAX_EDGE) throw new Error(`图像尺寸最长边不能超过 ${IMAGE_MAX_EDGE}px，请调整尺寸`);
     if (Math.max(width, height) / Math.min(width, height) > IMAGE_MAX_RATIO) throw new Error("图像宽高比不能超过 3:1，请调整尺寸");
     const pixels = width * height;
-    if (pixels < IMAGE_MIN_PIXELS || pixels > IMAGE_MAX_PIXELS) throw new Error("图像总像素需在 655360 到 8294400 之间，请调整尺寸");
+    if (pixels < IMAGE_MIN_PIXELS || pixels > IMAGE_MAX_PIXELS) throw new Error(`图像总像素需在 ${IMAGE_MIN_PIXELS} 到 ${IMAGE_MAX_PIXELS} 之间，请调整尺寸`);
 }
 
 function resolveRequestSize(resolution: string | undefined, size: string) {
@@ -212,13 +213,15 @@ function closestGeminiAspectRatio(value: string) {
 function resolveGeminiImageSize(resolution: string, dimensions: { width: number; height: number } | null) {
     const normalizedResolution = normalizeImageResolution(resolution);
     if (normalizedResolution === "8k") throw new Error("当前 Gemini 图片模型最高支持 4K，请选择 4K 或更低分辨率");
-    if (normalizedResolution) return ({ "1k": "1K", "2k": "2K", "4k": "4K" } as Record<string, string>)[normalizedResolution];
-    if (!dimensions) return undefined;
-    const edge = Math.max(dimensions.width, dimensions.height);
-    if (edge <= 768) return "512";
-    if (edge <= 1536) return "1K";
-    if (edge <= 3072) return "2K";
-    return "4K";
+    // 显式像素尺寸优先于分辨率档位，避免默认 1K 覆盖用户的显式尺寸
+    if (dimensions) {
+        const edge = Math.max(dimensions.width, dimensions.height);
+        if (edge <= 768) return "512";
+        if (edge <= 1536) return "1K";
+        if (edge <= 3072) return "2K";
+        return "4K";
+    }
+    return ({ "1k": "1K", "2k": "2K", "4k": "4K" } as Record<string, string>)[normalizedResolution];
 }
 
 function supportsGeminiImageSize(model: string) {
@@ -326,8 +329,9 @@ async function persistGeneratedImages<T extends { dataUrl: string }>(images: T[]
         images.map(async (image) => {
             try {
                 await saveGeneratedBlob("image", await (await fetch(image.dataUrl)).blob());
-            } catch {
-                // 结果仍会被工作台缓存；桌面目录写入失败通过全局提示告知用户。
+            } catch (error) {
+                // 结果仍会被工作台缓存；本地目录写入失败（含远程 URL 拉取失败）通过全局提示告知用户。
+                notifyStorageError(error);
             }
         }),
     );
@@ -527,17 +531,24 @@ function consumeResponseStreamBlock(block: string, state: ResponseStreamState, o
         .join("\n")
         .trim();
     if (!data || data === "[DONE]") return;
-    const event = JSON.parse(data) as Record<string, unknown>;
+    let event: Record<string, unknown>;
+    try {
+        event = JSON.parse(data) as Record<string, unknown>;
+    } catch {
+        // 非 JSON 的 data: 行（如代理的 ping/注释）直接忽略，避免中断整个流
+        return;
+    }
     const type = stringValue(event.type);
     const errorMessage = responseErrorMessage(event);
     if (errorMessage) state.error = errorMessage;
     if (type === "response.output_text.delta" && typeof event.delta === "string") {
         state.text += event.delta;
-        onDelta?.(state.text);
+        // 回调传增量文本，与 SDK 的“流式增量回调”约定一致（GRS 分支同样传增量）
+        onDelta?.(event.delta);
     }
     if (type === "response.output_text.done" && !state.text && typeof event.text === "string") {
         state.text = event.text;
-        onDelta?.(state.text);
+        onDelta?.(event.text);
     }
     if (type === "response.completed" && isRecord(event.response)) {
         state.payload = event.response as ResponseApiPayload;
@@ -578,14 +589,29 @@ async function requestStreamingResponse(config: AiConfig, body: Record<string, u
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     const state: ResponseStreamState = { buffer: "", text: "" };
+    let rawText = "";
     for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        consumeResponseStreamText(state, decoder.decode(value, { stream: true }), onDelta);
+        const chunk = decoder.decode(value, { stream: true });
+        rawText += chunk;
+        consumeResponseStreamText(state, chunk, onDelta);
         if (state.error) throw new Error(state.error);
     }
-    consumeResponseStreamText(state, decoder.decode(), onDelta, true);
+    const tail = decoder.decode();
+    rawText += tail;
+    consumeResponseStreamText(state, tail, onDelta, true);
     if (state.error) throw new Error(state.error);
+    if (!state.payload && !state.text && rawText.trim()) {
+        // 部分代理忽略 stream 参数直接返回 JSON：回退解析，避免静默丢失内容
+        try {
+            const payload = JSON.parse(rawText) as ResponseApiPayload;
+            validateResponsePayload(payload);
+            return parseToolResponse(payload);
+        } catch {
+            // 既非 SSE 事件也非 JSON 时保持原行为，由调用方兜底提示
+        }
+    }
     if (!state.payload) return { content: state.text, toolCalls: [] };
     validateResponsePayload(state.payload);
     const result = parseToolResponse(state.payload);
@@ -634,16 +660,35 @@ async function requestGrsaiChat(config: AiConfig, messages: AiTextMessage[], onD
     const decoder = new TextDecoder();
     let buffer = "";
     let text = "";
+    let rawText = "";
     for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+        const chunk = decoder.decode(value, { stream: true });
+        rawText += chunk;
+        buffer += chunk;
         const blocks = buffer.split(/\r?\n\r?\n/);
         buffer = blocks.pop() || "";
         for (const block of blocks) text += consumeGrsaiChatBlock(block, onDelta);
     }
-    buffer += decoder.decode();
+    const tail = decoder.decode();
+    rawText += tail;
+    buffer += tail;
     if (buffer.trim()) text += consumeGrsaiChatBlock(buffer, onDelta);
+    if (!text && rawText.trim()) {
+        // 部分代理忽略 stream 参数直接返回 JSON：回退解析，避免静默丢失内容
+        try {
+            const payload = JSON.parse(rawText) as OpenAiChatPayload;
+            if (payload.error?.message || payload.message) throw new Error(payload.error?.message || payload.message);
+            const answer = chatText(payload.choices?.[0]?.message?.content);
+            if (answer) {
+                onDelta(answer);
+                return answer;
+            }
+        } catch (error) {
+            if (!(error instanceof SyntaxError)) throw error;
+        }
+    }
     return text || "没有返回内容";
 }
 
@@ -739,14 +784,27 @@ async function requestGeminiStreamingResponse(config: AiConfig, body: Record<str
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     const state: GeminiStreamState = { buffer: "", text: "", toolCalls: [] };
+    let rawText = "";
     for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        consumeGeminiStreamText(state, decoder.decode(value, { stream: true }), onDelta);
+        const chunk = decoder.decode(value, { stream: true });
+        rawText += chunk;
+        consumeGeminiStreamText(state, chunk, onDelta);
         if (state.error) throw new Error(state.error);
     }
-    consumeGeminiStreamText(state, decoder.decode(), onDelta, true);
+    const tail = decoder.decode();
+    rawText += tail;
+    consumeGeminiStreamText(state, tail, onDelta, true);
     if (state.error) throw new Error(state.error);
+    if (!state.text && !state.toolCalls.length && rawText.trim()) {
+        // 部分代理忽略 alt=sse 直接返回 JSON：回退解析，避免静默丢失内容
+        try {
+            return parseGeminiToolResponse(JSON.parse(rawText) as GeminiPayload);
+        } catch (error) {
+            if (!(error instanceof SyntaxError)) throw error;
+        }
+    }
     return { content: state.text, toolCalls: state.toolCalls };
 }
 
@@ -773,10 +831,18 @@ function consumeGeminiStreamBlock(block: string, state: GeminiStreamState, onDel
         .join("\n")
         .trim();
     if (!data || data === "[DONE]") return;
-    const result = parseGeminiToolResponse(JSON.parse(data) as GeminiPayload);
+    let payload: GeminiPayload;
+    try {
+        payload = JSON.parse(data) as GeminiPayload;
+    } catch {
+        // 非 JSON 的 data: 行直接忽略，避免中断整个流
+        return;
+    }
+    const result = parseGeminiToolResponse(payload);
     if (result.content) {
         state.text += result.content;
-        onDelta?.(state.text);
+        // 回调传增量文本，与 SDK 的“流式增量回调”约定一致
+        onDelta?.(result.content);
     }
     state.toolCalls.push(...result.toolCalls);
 }
@@ -936,6 +1002,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const requestPrompt = buildImageReferencePromptText(prompt, references);
     const script = resolveModelScript(config, config.model || config.imageModel);
     if (script) {
+        if (mask) throw new Error("当前模型脚本不支持蒙版编辑，请移除蒙版后使用参考图编辑");
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(config.imageResolution, config.size);
         const background = normalizeBackground(config.background);
@@ -1129,10 +1196,14 @@ const defaultGeminiConfig: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat" | "
 function delay(ms: number, signal?: AbortSignal) {
     return new Promise<void>((resolve, reject) => {
         if (signal?.aborted) return reject(new DOMException("Aborted", "AbortError"));
-        const timer = setTimeout(resolve, ms);
-        signal?.addEventListener("abort", () => {
+        const onAbort = () => {
             clearTimeout(timer);
             reject(new DOMException("Aborted", "AbortError"));
-        }, { once: true });
+        };
+        const timer = setTimeout(() => {
+            signal?.removeEventListener("abort", onAbort);
+            resolve();
+        }, ms);
+        signal?.addEventListener("abort", onAbort, { once: true });
     });
 }

@@ -51,6 +51,6 @@ function extensionForBlob(blob: Blob, kind: Exclude<StorageKind, "text">) {
     return kind === "image" ? "png" : kind === "video" ? "mp4" : "mp3";
 }
 
-function notifyStorageError(error: unknown) {
+export function notifyStorageError(error: unknown) {
     window.dispatchEvent(new CustomEvent("lyspace:storage-error", { detail: error instanceof Error ? error.message : "生成结果保存到本地目录失败" }));
 }

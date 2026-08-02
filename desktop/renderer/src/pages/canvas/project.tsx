@@ -2368,7 +2368,6 @@ function InfiniteCanvasPage() {
                     return;
                 }
 
-                let streamed = "";
                 const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
                 const textCount = isConfigNode ? getGenerationCount(generationConfig.count) : 1;
                 const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : CanvasNodeType.Text];
@@ -2403,10 +2402,10 @@ function InfiniteCanvasPage() {
                             generationConfig,
                             buildNodeResponseMessages({ ...generationContext, prompt: effectivePrompt }),
                             (text) => {
-                                localStreamed = text;
-                                streamed = text;
+                                // onDelta 为增量回调，按序累加得到完整流式文本
+                                localStreamed += text;
                                 if (isConfigNode) return;
-                                setNodes((prev) => prev.map((node) => (node.id === targetNodeId ? { ...node, type: CanvasNodeType.Text, metadata: { ...node.metadata, content: text, status: NODE_STATUS_LOADING } } : node)));
+                                setNodes((prev) => prev.map((node) => (node.id === targetNodeId ? { ...node, type: CanvasNodeType.Text, metadata: { ...node.metadata, content: localStreamed, status: NODE_STATUS_LOADING } } : node)));
                             },
                             { signal: controller.signal },
                         )
@@ -2419,7 +2418,7 @@ function InfiniteCanvasPage() {
                 setNodes((prev) =>
                     prev.map((node) =>
                         childIds.includes(node.id)
-                            ? { ...node, metadata: { ...node.metadata, content: answerByNodeId.get(node.id) || streamed, status: NODE_STATUS_SUCCESS } }
+                            ? { ...node, metadata: { ...node.metadata, content: answerByNodeId.get(node.id), status: NODE_STATUS_SUCCESS } }
                             : node.id === nodeId && isConfigNode
                               ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } }
                               : node.id === nodeId && !editingTextNode
@@ -2427,7 +2426,7 @@ function InfiniteCanvasPage() {
                                       ...node,
                                       type: CanvasNodeType.Text,
                                       title: prompt.slice(0, 32) || "Generated Text",
-                                      metadata: { ...node.metadata, content: answerByNodeId.get(node.id) || streamed, model: generationConfig.model, reasoningEffort: generationConfig.reasoningEffort, status: NODE_STATUS_SUCCESS },
+                                      metadata: { ...node.metadata, content: answerByNodeId.get(node.id), model: generationConfig.model, reasoningEffort: generationConfig.reasoningEffort, status: NODE_STATUS_SUCCESS },
                                   }
                                 : node,
                     ),
@@ -2502,8 +2501,9 @@ function InfiniteCanvasPage() {
                         generationConfig,
                         buildNodeResponseMessages({ ...context, prompt }),
                         (text) => {
-                            streamed = text;
-                            setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: text, status: NODE_STATUS_LOADING } } : item)));
+                            // onDelta 为增量回调，按序累加得到完整流式文本
+                            streamed += text;
+                            setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: streamed, status: NODE_STATUS_LOADING } } : item)));
                         },
                         { signal: controller.signal },
                     );

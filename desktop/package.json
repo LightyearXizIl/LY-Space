@@ -1,6 +1,6 @@
 {
   "name": "ly-space-desktop",
-    "version": "0.1.2",
+  "version": "0.1.3",
   "description": "LY Space desktop creative workspace",
   "author": "LY Space",
   "private": true,
@@ -35,7 +35,10 @@
       "signExecutable": false,
       "verifyUpdateCodeSignature": false
     },
-    "electronLanguages": ["zh-CN", "en-US"],
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
     "compression": "maximum",
     "nsis": {
       "oneClick": false,
@@ -46,7 +49,14 @@
       "shortcutName": "LY Space"
     },
     "artifactName": "LY Space Setup ${version}.${ext}",
-    "publish": [{ "provider": "github", "owner": "LightyearXizIl", "repo": "LY-Space", "releaseType": "draft" }]
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "LightyearXizIl",
+        "repo": "LY-Space",
+        "releaseType": "draft"
+      }
+    ]
   },
   "devDependencies": {
     "electron": "^43.2.0",

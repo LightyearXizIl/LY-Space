@@ -178,6 +178,8 @@ function collisionFreePath(target) {
 
 function copyDirectory(source, target) {
     if (!fs.existsSync(source) || path.resolve(source) === path.resolve(target)) return;
+    // 防止目标目录嵌套于源目录导致无限递归复制
+    if (isNestedPath(target, source) || isNestedPath(source, target)) throw new Error("目标目录不能与源目录互相嵌套");
     fs.mkdirSync(target, { recursive: true });
     for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
         const sourcePath = path.join(source, entry.name);

@@ -82,7 +82,8 @@ export async function cleanupUnusedImages(usedData: unknown) {
     });
     const unused: string[] = [];
     await store.iterate((_value, key) => {
-        if (!usedKeys.has(key)) unused.push(key);
+        // 只清理 image_files 中带 image: 前缀的存储键，避免误删其他类型的脏数据
+        if (key.startsWith("image:") && !usedKeys.has(key)) unused.push(key);
     });
     await deleteStoredImages(unused);
 }

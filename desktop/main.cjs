@@ -20,6 +20,7 @@ let updateState = { status: "idle", version: "", releaseDate: "", releaseNotes: 
 
 const RESULT_FOLDERS = { image: "Picture", video: "Video", audio: "Audio", text: "text" };
 const DEFAULT_RESULT_ROOT = "E:/Software/LY Space/Result";
+const DEFAULT_CACHE_ROOT = "E:/Software/LY Space/Data cache";
 
 function displayVersion(version) {
     const value = String(version || "").trim().replace(/^v/i, "");
@@ -117,8 +118,7 @@ function storageBaseDirectory() {
 }
 
 function defaultStorageSettings() {
-    const base = storageBaseDirectory();
-    return { resultRoot: DEFAULT_RESULT_ROOT, cacheRoot: path.join(base, "Data cache"), defaultResultRoot: DEFAULT_RESULT_ROOT, defaultCacheRoot: path.join(base, "Data cache") };
+    return { resultRoot: DEFAULT_RESULT_ROOT, cacheRoot: DEFAULT_CACHE_ROOT, defaultResultRoot: DEFAULT_RESULT_ROOT, defaultCacheRoot: DEFAULT_CACHE_ROOT };
 }
 
 /** 是否为历史默认结果目录（安装目录/Result、documents/LY Space/Result），命中则切换为新默认。 */
@@ -129,12 +129,21 @@ function isLegacyDefaultResultRoot(value) {
     return candidates.some((candidate) => path.resolve(candidate) === resolved);
 }
 
+/** 是否为历史默认缓存目录（安装目录/Data cache、userData/app-data/Data cache、documents/LY Space/Data cache），命中则切换为新默认。 */
+function isLegacyDefaultCacheRoot(value) {
+    if (!value) return false;
+    const resolved = path.resolve(value);
+    const candidates = [path.join(storageBaseDirectory(), "Data cache"), path.join(app.getPath("userData"), "app-data", "Data cache"), path.join(app.getPath("documents"), "LY Space", "Data cache")];
+    return candidates.some((candidate) => path.resolve(candidate) === resolved);
+}
+
 function readStorageSettings() {
     const defaults = defaultStorageSettings();
     try {
         const saved = JSON.parse(fs.readFileSync(storageConfigFile(), "utf8"));
         const resultRoot = isLegacyDefaultResultRoot(saved.resultRoot) ? defaults.resultRoot : saved.resultRoot || defaults.resultRoot;
-        return { ...defaults, resultRoot, cacheRoot: saved.cacheRoot || defaults.cacheRoot, pendingCacheRoot: saved.pendingCacheRoot || "", lastError: saved.lastError || "" };
+        const cacheRoot = isLegacyDefaultCacheRoot(saved.cacheRoot) ? defaults.cacheRoot : saved.cacheRoot || defaults.cacheRoot;
+        return { ...defaults, resultRoot, cacheRoot, pendingCacheRoot: saved.pendingCacheRoot || "", lastError: saved.lastError || "" };
     } catch {
         return { ...defaults, pendingCacheRoot: "", lastError: "" };
     }
@@ -214,6 +223,50 @@ function migrateLegacyResultIfNeeded() {
     }
 }
 
+/** 历史默认缓存目录（安装目录/Data cache 等）已有数据自动迁移到新默认目录：合并复制、重名不覆盖，成功后持久化新路径。 */
+function migrateLegacyCacheIfNeeded() {
+    let savedRoot = "";
+    try {
+        savedRoot = String((JSON.parse(fs.readFileSync(storageConfigFile(), "utf8")).cacheRoot || "")).trim();
+    } catch {
+        return;
+    }
+    if (!isLegacyDefaultCacheRoot(savedRoot)) return;
+    if (path.resolve(savedRoot) === path.resolve(storageSettings.cacheRoot)) return;
+    if (!fs.existsSync(savedRoot)) return;
+    if (!isIndexedDbIntact(savedRoot)) {
+        // 旧库损坏（如升级清空安装目录导致 leveldb 不完整）时跳过迁移，避免把坏数据带到新目录
+        storageSettings.lastError = "旧缓存目录中的 IndexedDB 数据不完整，已跳过迁移（可重新生成）";
+        return;
+    }
+    try {
+        copyDirectory(savedRoot, storageSettings.cacheRoot);
+        storageSettings.lastError = "";
+        // 迁移成功才持久化新路径，失败时配置保持旧值以便下次启动重试
+        writeStorageSettings();
+    } catch (error) {
+        storageSettings.lastError = `旧缓存目录迁移失败：${error.message || error}`;
+        // 不写盘：配置仍为旧默认路径，下次启动自动重试迁移
+    }
+}
+
+/** 检查缓存目录中的 IndexedDB 库文件是否完整（存在 .indexeddb.leveldb 目录时必须含 CURRENT 文件）。 */
+function isIndexedDbIntact(directory) {
+    const indexDbDir = path.join(directory, "IndexedDB");
+    if (!fs.existsSync(indexDbDir)) return true;
+    let hasLevelDb = false;
+    try {
+        for (const entry of fs.readdirSync(indexDbDir, { withFileTypes: true })) {
+            if (!entry.isDirectory() || !entry.name.includes(".indexeddb.leveldb")) continue;
+            hasLevelDb = true;
+            if (!fs.existsSync(path.join(indexDbDir, entry.name, "CURRENT"))) return false;
+        }
+    } catch {
+        return false;
+    }
+    return !hasLevelDb || true;
+}
+
 function configureStorageBeforeReady() {
     storageSettings = readStorageSettings();
     if (storageSettings.pendingCacheRoot) {
@@ -243,7 +296,9 @@ function configureStorageBeforeReady() {
     migrateDataToCurrentInstall();
     // 旧默认结果目录（安装目录/Result 等）存在历史文件时自动迁移到新默认目录（放最后，失败提示不被后续逻辑覆盖）
     migrateLegacyResultIfNeeded();
-    // sessionData（IndexedDB/localStorage）跟随安装目录，存在 exe 目录/Data cache 下。
+    // 旧默认缓存目录（IndexedDB/localStorage）迁移到新默认目录，必须在 sessionData 指向新目录之前完成
+    migrateLegacyCacheIfNeeded();
+    // sessionData（IndexedDB/localStorage）指向缓存目录（默认 E:/Software/LY Space/Data cache）
     app.setPath("sessionData", storageSettings.cacheRoot);
     app.setPath("cache", path.join(storageSettings.cacheRoot, "Cache"));
 }

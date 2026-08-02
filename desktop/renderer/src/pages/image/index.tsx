@@ -237,7 +237,8 @@ export default function ImagePage() {
         setElapsedMs(0);
         setRunning(true);
         const pendingResults = Array.from({ length: generationCount }, () => ({ id: nanoid(), status: "pending" as const }));
-        setResults(pendingResults);
+        // 新任务排列在最前，保留之前的生成结果不被挤掉
+        setResults((prev) => [...pendingResults, ...prev]);
         const batchStartedAt = performance.now();
         setStartedAt(batchStartedAt);
 
@@ -280,6 +281,10 @@ export default function ImagePage() {
             else if (failCount) message.error(failed?.reason instanceof Error ? failed.reason.message : "生成失败");
             else message.info("已取消生成");
         } catch (error) {
+            // 落库失败时用原始成功图片设置兜底，保证刚生成的图片右键详情仍可用
+            if (successImages.length) {
+                lastBatchRef.current = { prompt: text, config: { ...snapshot.config, count: String(generationCount) }, references: snapshot.references, durationMs: performance.now() - batchStartedAt, images: successImages };
+            }
             message.error(error instanceof Error ? `生成完成但保存记录失败：${error.message}` : "生成完成但保存记录失败");
         } finally {
             setRunning(false);
@@ -307,23 +312,31 @@ export default function ImagePage() {
             message.warning(`参考图最多添加 ${MAX_REFERENCE_IMAGES} 张，请先移除部分参考图`);
             return;
         }
-        const stored = await uploadImage(image.dataUrl);
-        setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.png`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
-        message.success("已加入参考图");
+        try {
+            const stored = await uploadImage(image.dataUrl);
+            setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.png`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
+            message.success("已加入参考图");
+        } catch {
+            message.error("加入参考图失败");
+        }
     };
 
     const saveResultToAssets = async (image: GeneratedImage, index: number) => {
-        const stored = await uploadImage(image.dataUrl);
-        addAsset({
-            kind: "image",
-            title: `生成结果 ${index + 1}`,
-            coverUrl: stored.url,
-            tags: [],
-            source: "生图工作台",
-            data: { dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType },
-            metadata: { source: "image-page", prompt },
-        });
-        message.success("已加入我的资产");
+        try {
+            const stored = await uploadImage(image.dataUrl);
+            addAsset({
+                kind: "image",
+                title: `生成结果 ${index + 1}`,
+                coverUrl: stored.url,
+                tags: [],
+                source: "生图工作台",
+                data: { dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType },
+                metadata: { source: "image-page", prompt },
+            });
+            message.success("已加入我的资产");
+        } catch {
+            message.error("添加到资产失败");
+        }
     };
 
     const insertPickedAsset = async (payload: InsertAssetPayload) => {
@@ -808,7 +821,12 @@ function LogDetail({ log, storageSettings }: { log: GenerationLog; storageSettin
                         </div>
                     </Image.PreviewGroup>
                 </div>
-            ) : null}
+            ) : (
+                <div>
+                    <div className="mb-1 text-sm font-medium text-stone-500 dark:text-stone-400">参考图</div>
+                    <div className="rounded-lg border border-dashed border-stone-300 p-3 text-center text-sm text-stone-500 dark:border-stone-700">暂无参考图（仅提示词生成）</div>
+                </div>
+            )}
             <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
                 <LogDetailInfo label="模型" value={log.model} />
                 <LogDetailInfo label="尺寸" value={log.size} />

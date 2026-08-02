@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Copy, Download, Eye, FolderOpen, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { App, Button, Checkbox, Drawer, Dropdown, Empty, Image, Input, Modal, Tag, Tooltip, Typography, type MenuProps } from "antd";
 import localforage from "localforage";
@@ -93,9 +93,12 @@ export default function ImagePage() {
     const [elapsedMs, setElapsedMs] = useState(0);
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
+    const [detailLog, setDetailLog] = useState<GenerationLog | null>(null);
+    const [storageSettings, setStorageSettings] = useState<{ resultRoot: string; folders: Record<string, string> } | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [isReferenceDragActive, setIsReferenceDragActive] = useState(false);
     const [sessionHydrated, setSessionHydrated] = useState(false);
+    const [pendingPreviewLogId, setPendingPreviewLogId] = useState<string | null>(null);
     const generationControllersRef = useRef(new Map<string, AbortController>());
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
@@ -118,6 +121,7 @@ export default function ImagePage() {
 
     useEffect(() => {
         void refreshLogs();
+        void window.lySpaceDesktop?.getStorageSettings().then((settings) => setStorageSettings(settings as { resultRoot: string; folders: Record<string, string> }));
     }, []);
 
     useEffect(() => {
@@ -128,6 +132,7 @@ export default function ImagePage() {
             setReferences(session.references || []);
             setResults((session.results || []).map((result) => (result.status === "pending" ? { ...result, status: "failed", error: "上次生成已中断，可重试" } : result)));
             setElapsedMs(session.elapsedMs || 0);
+            setPendingPreviewLogId(session.previewLogId || null);
         }).finally(() => active && setSessionHydrated(true));
         return () => {
             active = false;
@@ -138,6 +143,16 @@ export default function ImagePage() {
         if (!sessionHydrated) return;
         void saveWorkbenchSession(SESSION_STORE_KEY, { prompt, references, results, elapsedMs, previewLogId: previewLog?.id });
     }, [elapsedMs, previewLog?.id, prompt, references, results, sessionHydrated]);
+
+    // logs 就绪后恢复上次查看的记录，结果区直接显示该记录结果
+    useEffect(() => {
+        if (!pendingPreviewLogId) return;
+        const log = logs.find((item) => item.id === pendingPreviewLogId);
+        if (log) {
+            setPreviewLog(log);
+            setPendingPreviewLogId(null);
+        }
+    }, [logs, pendingPreviewLogId]);
 
     useEffect(() => {
         if (!sessionHydrated) return;
@@ -222,7 +237,7 @@ export default function ImagePage() {
         setRunning(true);
         setPreviewLog(null);
         const pendingResults = Array.from({ length: generationCount }, () => ({ id: nanoid(), status: "pending" as const }));
-        setResults((value) => [...pendingResults, ...value]);
+        setResults(pendingResults);
         const batchStartedAt = performance.now();
         setStartedAt(batchStartedAt);
 
@@ -317,7 +332,6 @@ export default function ImagePage() {
         void Promise.all([deleteStoredImages(imageKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(refreshLogs);
         if (previewLog && selectedLogIds.includes(previewLog.id)) {
             setPreviewLog(null);
-            setResults([]);
         }
         setSelectedLogIds([]);
         setDeleteConfirmOpen(false);
@@ -339,7 +353,18 @@ export default function ImagePage() {
         if (log.config.imageResolution) updateConfig("imageResolution", log.config.imageResolution);
         if (log.config.size) updateConfig("size", log.config.size);
         if (log.config.count) updateConfig("count", log.config.count);
-        setResults(log.images.map((image) => ({ id: image.id, status: "success", image })));
+    };
+
+    const openLogDetail = (log: GenerationLog) => setDetailLog(log);
+
+    const copyLogPrompt = (log: GenerationLog) => {
+        void navigator.clipboard.writeText(log.prompt);
+        message.success("已复制提示词");
+    };
+
+    const deleteLog = (log: GenerationLog) => {
+        setSelectedLogIds([log.id]);
+        setDeleteConfirmOpen(true);
     };
 
     const buildRequestSnapshot = () => {
@@ -416,6 +441,8 @@ export default function ImagePage() {
         }
     };
 
+    const displayResults = previewLog ? previewLog.images.map((image) => ({ id: image.id, status: "success" as const, image })) : results;
+
     const resultSwitcherItems: MenuProps["items"] = [
         ...(results.length ? [{ key: "current", label: "当前结果" }] : []),
         ...(results.length && logs.length ? [{ type: "divider" as const }] : []),
@@ -434,6 +461,9 @@ export default function ImagePage() {
                         onCreateSession={createSession}
                         onDeleteSelected={() => setDeleteConfirmOpen(true)}
                         onPreviewLog={(log) => void previewGenerationLog(log)}
+                        onOpenDetail={openLogDetail}
+                        onCopyPrompt={copyLogPrompt}
+                        onDeleteLog={deleteLog}
                     />
                 </aside>
 
@@ -579,9 +609,9 @@ export default function ImagePage() {
                                 ) : null}
                             </div>
                         </div>
-                        {results.length ? (
-                            <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
-                                {results.map((result, index) =>
+                        {displayResults.length ? (
+                            <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(210px,1fr))]">
+                                {displayResults.map((result, index) =>
                                     result.status === "success" && result.image ? (
                                         <ResultImageCard key={result.id} image={result.image} index={index} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
                                     ) : result.status === "failed" ? (
@@ -622,6 +652,9 @@ export default function ImagePage() {
                     onCreateSession={createSession}
                     onDeleteSelected={() => setDeleteConfirmOpen(true)}
                     onPreviewLog={(log) => void previewGenerationLog(log)}
+                    onOpenDetail={openLogDetail}
+                    onCopyPrompt={copyLogPrompt}
+                    onDeleteLog={deleteLog}
                 />
             </Drawer>
             <Drawer title="参数" placement="bottom" size="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
@@ -633,6 +666,9 @@ export default function ImagePage() {
             <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
             <Modal title="删除生成记录" open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText="删除" okButtonProps={{ danger: true }} cancelText="取消">
                 确定删除选中的 {selectedLogIds.length} 条生成记录吗？
+            </Modal>
+            <Modal title="记录详情" open={Boolean(detailLog)} onCancel={() => setDetailLog(null)} footer={null} width={760} destroyOnHidden>
+                {detailLog ? <LogDetail log={detailLog} storageSettings={storageSettings} /> : null}
             </Modal>
         </div>
     );
@@ -766,6 +802,9 @@ function LogPanel({
     onCreateSession,
     onDeleteSelected,
     onPreviewLog,
+    onOpenDetail,
+    onCopyPrompt,
+    onDeleteLog,
 }: {
     logs: GenerationLog[];
     selectedLogIds: string[];
@@ -774,6 +813,9 @@ function LogPanel({
     onCreateSession: () => void;
     onDeleteSelected: () => void;
     onPreviewLog: (log: GenerationLog) => void;
+    onOpenDetail: (log: GenerationLog) => void;
+    onCopyPrompt: (log: GenerationLog) => void;
+    onDeleteLog: (log: GenerationLog) => void;
 }) {
     const allSelected = Boolean(logs.length) && selectedLogIds.length === logs.length;
     const toggleAll = () => onSelectedLogIdsChange(allSelected ? [] : logs.map((log) => log.id));
@@ -806,6 +848,9 @@ function LogPanel({
                         active={activeLogId === log.id}
                         onSelectedChange={(checked) => onSelectedLogIdsChange(checked ? [...selectedLogIds, log.id] : selectedLogIds.filter((id) => id !== log.id))}
                         onClick={() => onPreviewLog(log)}
+                        onOpenDetail={() => onOpenDetail(log)}
+                        onCopyPrompt={() => onCopyPrompt(log)}
+                        onDeleteLog={() => onDeleteLog(log)}
                     />
                 ))}
                 {!logs.length ? <div className="flex min-h-48 items-center justify-center rounded-lg border border-dashed border-stone-300 text-center text-sm text-stone-500 dark:border-stone-700">暂无生成记录</div> : null}
@@ -814,10 +859,27 @@ function LogPanel({
     );
 }
 
-function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: GenerationLog; selected: boolean; active: boolean; onSelectedChange: (checked: boolean) => void; onClick: () => void }) {
+function LogCard({ log, selected, active, onSelectedChange, onClick, onOpenDetail, onCopyPrompt, onDeleteLog }: { log: GenerationLog; selected: boolean; active: boolean; onSelectedChange: (checked: boolean) => void; onClick: () => void; onOpenDetail: () => void; onCopyPrompt: () => void; onDeleteLog: () => void }) {
     const thumbnails = (log.thumbnails || []).filter(Boolean).slice(0, 4);
 
     return (
+        <Dropdown
+            trigger={["contextMenu"]}
+            menu={{
+                items: [
+                    { key: "detail", label: "查看详情", icon: <Eye className="size-3.5" /> },
+                    { key: "copy", label: "复制提示词", icon: <Copy className="size-3.5" /> },
+                    { type: "divider" },
+                    { key: "delete", label: "删除", danger: true, icon: <Trash2 className="size-3.5" /> },
+                ],
+                onClick: ({ key, domEvent }) => {
+                    domEvent.stopPropagation();
+                    if (key === "detail") onOpenDetail();
+                    else if (key === "copy") onCopyPrompt();
+                    else if (key === "delete") onDeleteLog();
+                },
+            }}
+        >
         <button
             type="button"
             className={`block w-full rounded-lg border p-2 text-left transition ${active ? "border-stone-900 bg-blue-50 dark:border-stone-100 dark:bg-blue-950/20" : "border-stone-200 bg-background hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-900"}`}
@@ -865,6 +927,72 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
                 </div>
             </div>
         </button>
+        </Dropdown>
+    );
+}
+
+function LogDetail({ log, storageSettings }: { log: GenerationLog; storageSettings: { resultRoot: string; folders: Record<string, string> } | null }) {
+    const savedFolder = storageSettings?.folders?.image || storageSettings?.resultRoot || "";
+    const images = log.images.filter((image) => image.dataUrl);
+    return (
+        <div className="space-y-4">
+            <div>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium text-stone-500 dark:text-stone-400">提示词</span>
+                    <Button size="small" icon={<Copy className="size-3.5" />} onClick={() => void navigator.clipboard.writeText(log.prompt)}>
+                        复制
+                    </Button>
+                </div>
+                <div className="whitespace-pre-wrap rounded-lg border border-stone-200 bg-stone-50 p-3 text-sm dark:border-stone-800 dark:bg-stone-900">{log.prompt}</div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+                <LogDetailInfo label="模型" value={log.model} />
+                <LogDetailInfo label="尺寸" value={log.size} />
+                <LogDetailInfo label="质量" value={log.quality} />
+                <LogDetailInfo label="分辨率" value={log.config?.imageResolution || "自动"} />
+                <LogDetailInfo label="张数" value={`${log.imageCount} 张`} />
+                <LogDetailInfo label="时间" value={log.time} />
+                <LogDetailInfo label="耗时" value={formatDuration(log.durationMs)} />
+                <LogDetailInfo
+                    label="结果"
+                    value={[log.successCount ? `成功 ${log.successCount}` : "", log.failCount ? `失败 ${log.failCount}` : "", log.cancelCount ? `取消 ${log.cancelCount}` : ""].filter(Boolean).join(" / ") || "—"}
+                />
+            </div>
+            {images.length ? (
+                <div>
+                    <div className="mb-2 text-sm font-medium text-stone-500 dark:text-stone-400">生成结果（{images.length} 张）</div>
+                    <Image.PreviewGroup>
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                            {images.map((image, index) => (
+                                <Image key={image.id || index} src={image.dataUrl} alt={`result-${index + 1}`} className="aspect-square w-full rounded-lg border border-stone-200 object-cover dark:border-stone-800" />
+                            ))}
+                        </div>
+                    </Image.PreviewGroup>
+                </div>
+            ) : null}
+            {savedFolder ? (
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-stone-200 bg-stone-50 p-3 text-sm dark:border-stone-800 dark:bg-stone-900">
+                    <div className="min-w-0">
+                        <div className="text-stone-500 dark:text-stone-400">已保存到文件夹</div>
+                        <div className="truncate font-medium">{savedFolder}</div>
+                    </div>
+                    <Button size="small" icon={<FolderOpen className="size-3.5" />} onClick={() => void window.lySpaceDesktop?.openStorageDirectory(savedFolder)}>
+                        打开文件夹
+                    </Button>
+                </div>
+            ) : null}
+        </div>
+    );
+}
+
+function LogDetailInfo({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 dark:border-stone-800 dark:bg-stone-900">
+            <div className="text-xs text-stone-500 dark:text-stone-400">{label}</div>
+            <div className="mt-0.5 truncate font-medium" title={value}>
+                {value}
+            </div>
+        </div>
     );
 }
 

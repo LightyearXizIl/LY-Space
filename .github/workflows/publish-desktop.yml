@@ -27,9 +27,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pnpm --dir desktop install --frozen-lockfile
-          pnpm --dir desktop/renderer install --frozen-lockfile
-          pnpm --dir canvas-agent install --frozen-lockfile
+          pnpm --dir desktop install --frozen-lockfile --ignore-scripts
+          pnpm --dir desktop/renderer install --frozen-lockfile --ignore-scripts
+          pnpm --dir canvas-agent install --frozen-lockfile --ignore-scripts
 
       - name: Verify release version
         working-directory: desktop

@@ -19,6 +19,7 @@ let downloadCancellation = null;
 let updateState = { status: "idle", version: "", releaseDate: "", releaseNotes: "", progress: null, error: "", supported: false };
 
 const RESULT_FOLDERS = { image: "Picture", video: "Video", audio: "Audio", text: "text" };
+const DEFAULT_RESULT_ROOT = "E:/Software/LY Space/Result";
 
 function displayVersion(version) {
     const value = String(version || "").trim().replace(/^v/i, "");
@@ -117,14 +118,23 @@ function storageBaseDirectory() {
 
 function defaultStorageSettings() {
     const base = storageBaseDirectory();
-    return { resultRoot: path.join(base, "Result"), cacheRoot: path.join(base, "Data cache"), defaultResultRoot: path.join(base, "Result"), defaultCacheRoot: path.join(base, "Data cache") };
+    return { resultRoot: DEFAULT_RESULT_ROOT, cacheRoot: path.join(base, "Data cache"), defaultResultRoot: DEFAULT_RESULT_ROOT, defaultCacheRoot: path.join(base, "Data cache") };
+}
+
+/** 是否为历史默认结果目录（安装目录/Result、documents/LY Space/Result），命中则切换为新默认。 */
+function isLegacyDefaultResultRoot(value) {
+    if (!value) return false;
+    const resolved = path.resolve(value);
+    const candidates = [path.join(storageBaseDirectory(), "Result"), path.join(app.getPath("documents"), "LY Space", "Result")];
+    return candidates.some((candidate) => path.resolve(candidate) === resolved);
 }
 
 function readStorageSettings() {
     const defaults = defaultStorageSettings();
     try {
         const saved = JSON.parse(fs.readFileSync(storageConfigFile(), "utf8"));
-        return { ...defaults, resultRoot: saved.resultRoot || defaults.resultRoot, cacheRoot: saved.cacheRoot || defaults.cacheRoot, pendingCacheRoot: saved.pendingCacheRoot || "", lastError: saved.lastError || "" };
+        const resultRoot = isLegacyDefaultResultRoot(saved.resultRoot) ? defaults.resultRoot : saved.resultRoot || defaults.resultRoot;
+        return { ...defaults, resultRoot, cacheRoot: saved.cacheRoot || defaults.cacheRoot, pendingCacheRoot: saved.pendingCacheRoot || "", lastError: saved.lastError || "" };
     } catch {
         return { ...defaults, pendingCacheRoot: "", lastError: "" };
     }
@@ -180,6 +190,28 @@ function copyDirectory(source, target) {
     }
 }
 
+/** 历史默认结果目录（安装目录/Result 等）已有文件自动迁移到新默认目录：合并复制、重名不覆盖，成功后持久化新路径。 */
+function migrateLegacyResultIfNeeded() {
+    let savedRoot = "";
+    try {
+        savedRoot = String((JSON.parse(fs.readFileSync(storageConfigFile(), "utf8")).resultRoot || "")).trim();
+    } catch {
+        return;
+    }
+    if (!isLegacyDefaultResultRoot(savedRoot)) return;
+    if (path.resolve(savedRoot) === path.resolve(storageSettings.resultRoot)) return;
+    if (!fs.existsSync(savedRoot)) return;
+    try {
+        copyDirectory(savedRoot, storageSettings.resultRoot);
+        storageSettings.lastError = "";
+        // 迁移成功才持久化新路径，失败时配置保持旧值以便下次启动重试
+        writeStorageSettings();
+    } catch (error) {
+        storageSettings.lastError = `旧结果目录迁移失败：${error.message || error}`;
+        // 不写盘：配置仍为旧默认路径，下次启动自动重试迁移
+    }
+}
+
 function configureStorageBeforeReady() {
     storageSettings = readStorageSettings();
     if (storageSettings.pendingCacheRoot) {
@@ -199,8 +231,7 @@ function configureStorageBeforeReady() {
     try {
         ensureStorageDirectories();
     } catch {
-        const fallbackBase = path.join(app.getPath("documents"), "LY Space");
-        storageSettings.resultRoot = path.join(fallbackBase, "Result");
+        storageSettings.resultRoot = path.join(app.getPath("documents"), "LY Space", "Result");
         storageSettings.cacheRoot = path.join(app.getPath("userData"), "app-data", "Data cache");
         storageSettings.pendingCacheRoot = "";
         ensureStorageDirectories();
@@ -208,6 +239,8 @@ function configureStorageBeforeReady() {
     }
     // 数据跟随安装目录：换目录安装/更新后自动把旧安装目录的数据迁移到当前安装目录。
     migrateDataToCurrentInstall();
+    // 旧默认结果目录（安装目录/Result 等）存在历史文件时自动迁移到新默认目录（放最后，失败提示不被后续逻辑覆盖）
+    migrateLegacyResultIfNeeded();
     // sessionData（IndexedDB/localStorage）跟随安装目录，存在 exe 目录/Data cache 下。
     app.setPath("sessionData", storageSettings.cacheRoot);
     app.setPath("cache", path.join(storageSettings.cacheRoot, "Cache"));
@@ -455,6 +488,19 @@ app.whenReady().then(async () => {
         return storageInfo();
     });
     ipcMain.handle("lyspace:open-storage-directory", async (_event, directory) => shell.openPath(directory));
+    ipcMain.handle("lyspace:save-file-dialog", async (_event, payload) => {
+        const bytes = payload?.bytes ? Buffer.from(payload.bytes) : null;
+        if (!bytes) throw new Error("没有可保存的文件内容");
+        const safeName = String(payload?.defaultPath || "image.png").replace(/[\\/:*?"<>|]/g, "_");
+        const selected = await dialog.showSaveDialog(mainWindow, {
+            title: payload?.title || "保存文件",
+            defaultPath: path.join(app.getPath("downloads"), safeName),
+            filters: payload?.filters || [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+        });
+        if (selected.canceled || !selected.filePath) return { canceled: true, path: "" };
+        await fs.promises.writeFile(selected.filePath, bytes);
+        return { canceled: false, path: selected.filePath };
+    });
     ipcMain.handle("lyspace:write-generated-output", (_event, payload) => writeGeneratedOutput(payload));
     ipcMain.handle("lyspace:persistence-flushed", () => {
         if (!mainWindow || allowWindowClose) return;

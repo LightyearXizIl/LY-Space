@@ -187,39 +187,91 @@ function configureStorageBeforeReady() {
         ensureStorageDirectories();
         writeStorageSettings();
     }
-    // sessionData 保持 userData 默认（跨安装/更新目录稳定）；旧版本（≤0.0.8）曾把 IndexedDB/localStorage 放在
-    // cacheRoot（默认 exe 目录/Data cache），换目录安装会导致记录"消失"，启动时一次性迁移回 userData。
-    migrateLegacySessionData(storageSettings.cacheRoot, app.getPath("sessionData"));
+    // 数据跟随安装目录：换目录安装/更新后自动把旧安装目录的数据迁移到当前安装目录。
+    migrateDataToCurrentInstall();
+    // sessionData（IndexedDB/localStorage）跟随安装目录，存在 exe 目录/Data cache 下。
+    app.setPath("sessionData", storageSettings.cacheRoot);
     app.setPath("cache", path.join(storageSettings.cacheRoot, "Cache"));
 }
 
-/** 把旧 cacheRoot（exe 目录/Data cache）里的 Chromium profile 数据一次性复制到 userData（sessionData 目标位置）。 */
-function migrateLegacySessionData(legacyCacheRoot, targetSessionData) {
-    if (!legacyCacheRoot || path.resolve(legacyCacheRoot) === path.resolve(targetSessionData)) return;
-    const marker = path.join(targetSessionData, ".ly-space-session-migrated");
-    if (fs.existsSync(marker)) return;
-    const webDataNames = ["IndexedDB", "Local Storage", "Session Storage", "Cookies", "Preferences"];
-    const anySource = webDataNames.some((name) => fs.existsSync(path.join(legacyCacheRoot, name)));
-    if (!anySource) {
-        try {
-            fs.writeFileSync(marker, "1", "utf8");
-        } catch {
-            // 忽略标记写入失败
-        }
-        return;
-    }
+const DATA_LOCATION_MARKER_FILE = () => path.join(app.getPath("userData"), "app-data", "data-location.json");
+
+/** 数据跟随安装目录：把旧安装目录（marker 记录）与 v0.0.9 userData 中的历史数据迁移到当前安装目录。 */
+function migrateDataToCurrentInstall() {
+    const currentInstallDir = path.dirname(process.execPath);
+    const sources = [];
     try {
-        fs.mkdirSync(targetSessionData, { recursive: true });
-        for (const name of webDataNames) {
-            const source = path.join(legacyCacheRoot, name);
-            const target = path.join(targetSessionData, name);
-            if (!fs.existsSync(source) || fs.existsSync(target)) continue;
-            if (fs.statSync(source).isDirectory()) copyDirectory(source, target);
-            else fs.copyFileSync(source, target);
+        const marker = JSON.parse(fs.readFileSync(DATA_LOCATION_MARKER_FILE(), "utf8"));
+        if (marker && typeof marker.dataDirectory === "string" && path.resolve(marker.dataDirectory) !== path.resolve(currentInstallDir) && fs.existsSync(marker.dataDirectory)) {
+            sources.push(marker.dataDirectory);
         }
-        fs.writeFileSync(marker, "1", "utf8");
     } catch {
-        // 迁移失败不阻塞启动，旧数据仍留在原目录
+        // 首次运行无 marker
+    }
+    if (path.resolve(app.getPath("userData")) !== path.resolve(currentInstallDir)) sources.push(app.getPath("userData"));
+    for (const source of sources) migrateFromSource(source, currentInstallDir);
+    try {
+        fs.mkdirSync(path.dirname(DATA_LOCATION_MARKER_FILE()), { recursive: true });
+        fs.writeFileSync(DATA_LOCATION_MARKER_FILE(), JSON.stringify({ dataDirectory: currentInstallDir }), "utf8");
+    } catch {
+        // 忽略 marker 写入失败
+    }
+    updateStoragePathsAfterMigration(sources, currentInstallDir);
+}
+
+function migrateFromSource(source, currentInstallDir) {
+    // Result（生成结果图片等）
+    const legacyResult = path.join(source, "Result");
+    const currentResult = path.join(currentInstallDir, "Result");
+    if (fs.existsSync(legacyResult) && !fs.existsSync(currentResult)) {
+        try {
+            copyDirectory(legacyResult, currentResult);
+        } catch {
+            // 单项失败不阻塞
+        }
+    }
+    const currentCache = path.join(currentInstallDir, "Data cache");
+    // 旧安装目录的 Data cache（IndexedDB/localStorage/sessionData/Cache）
+    const legacyCacheDir = path.join(source, "Data cache");
+    if (fs.existsSync(legacyCacheDir) && !fs.existsSync(currentCache)) {
+        try {
+            copyDirectory(legacyCacheDir, currentCache);
+        } catch {
+            // 单项失败不阻塞
+        }
+    }
+    // userData 根目录的 Chromium web 数据（v0.0.9 的 sessionData 曾在 userData 根）
+    for (const name of ["IndexedDB", "Local Storage", "Session Storage", "Cookies", "Preferences"]) {
+        const legacyWeb = path.join(source, name);
+        const targetWeb = path.join(currentCache, name);
+        if (!fs.existsSync(legacyWeb) || fs.existsSync(targetWeb)) continue;
+        try {
+            fs.mkdirSync(currentCache, { recursive: true });
+            if (fs.statSync(legacyWeb).isDirectory()) copyDirectory(legacyWeb, targetWeb);
+            else fs.copyFileSync(legacyWeb, targetWeb);
+        } catch {
+            // 单项失败不阻塞
+        }
+    }
+}
+
+function updateStoragePathsAfterMigration(sources, currentInstallDir) {
+    let changed = false;
+    for (const source of sources) {
+        const legacyResult = path.join(source, "Result");
+        const legacyCache = path.join(source, "Data cache");
+        if (storageSettings.resultRoot && path.resolve(storageSettings.resultRoot) === path.resolve(legacyResult)) {
+            storageSettings.resultRoot = path.join(currentInstallDir, "Result");
+            changed = true;
+        }
+        if (storageSettings.cacheRoot && path.resolve(storageSettings.cacheRoot) === path.resolve(legacyCache)) {
+            storageSettings.cacheRoot = path.join(currentInstallDir, "Data cache");
+            changed = true;
+        }
+    }
+    if (changed) {
+        storageSettings.lastError = "";
+        writeStorageSettings();
     }
 }
 

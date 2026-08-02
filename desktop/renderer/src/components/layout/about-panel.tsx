@@ -1,5 +1,5 @@
 import { Alert, Progress, Tag, Timeline } from "antd";
-import { AtSign, ExternalLink, Globe, Info, User } from "lucide-react";
+import { ExternalLink, Globe, Info, User } from "lucide-react";
 import { useVersionCheck } from "@/hooks/use-version-check";
 import { APP_VERSION } from "@/constant/env";
 
@@ -44,7 +44,10 @@ export function AboutPanel() {
         <div className="space-y-5">
             <section className="rounded-lg border border-stone-200 p-4 dark:border-stone-800">
                 <div className="flex items-center gap-3">
-                    <div className="flex size-11 items-center justify-center rounded-lg bg-stone-900 text-lg font-bold text-white dark:bg-stone-100 dark:text-stone-950">LY</div>
+                    <svg width="44" height="44" viewBox="0 0 64 64" fill="currentColor" className="size-11 shrink-0 text-stone-950 dark:text-stone-100" aria-label="LY Space logo">
+                        <path d="M32 8L58 54H46L32 29L18 54H6L32 8Z" />
+                        <path d="M32 40L40 54H24L32 40Z" />
+                    </svg>
                     <div>
                         <div className="text-lg font-semibold text-stone-950 dark:text-stone-100">LY Space</div>
                         <div className="text-xs text-stone-500 dark:text-stone-400">当前版本 {APP_VERSION}</div>
@@ -61,10 +64,7 @@ export function AboutPanel() {
                     </div>
                     <div className="space-y-2 text-sm text-stone-600 dark:text-stone-300">
                         <div>作者：Light year</div>
-                        <div className="flex items-center gap-1.5">
-                            <AtSign className="size-3.5 text-stone-400" />
-                            微信号：XizllHZ_007
-                        </div>
+                        <div className="flex items-center gap-1.5">微信号：XizllHZ_007</div>
                     </div>
                 </div>
                 <div className="rounded-lg border border-stone-200 p-4 dark:border-stone-800">

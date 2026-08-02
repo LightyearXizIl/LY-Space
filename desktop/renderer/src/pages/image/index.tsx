@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Copy, Download, Eye, FolderOpen, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Copy, Download, Eye, FolderOpen, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, XCircle } from "lucide-react";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { App, Button, Checkbox, Drawer, Dropdown, Empty, Image, Input, Modal, Tag, Tooltip, Typography, type MenuProps } from "antd";
 import localforage from "localforage";
@@ -367,6 +367,13 @@ export default function ImagePage() {
         setDeleteConfirmOpen(true);
     };
 
+    const deleteFailedLogs = () => {
+        const failedIds = logs.filter((log) => log.status === "失败").map((log) => log.id);
+        if (!failedIds.length) return;
+        setSelectedLogIds(failedIds);
+        setDeleteConfirmOpen(true);
+    };
+
     const buildRequestSnapshot = () => {
         const text = prompt.trim();
         if (!text) {
@@ -464,6 +471,7 @@ export default function ImagePage() {
                         onOpenDetail={openLogDetail}
                         onCopyPrompt={copyLogPrompt}
                         onDeleteLog={deleteLog}
+                        onDeleteFailed={deleteFailedLogs}
                     />
                 </aside>
 
@@ -655,6 +663,7 @@ export default function ImagePage() {
                     onOpenDetail={openLogDetail}
                     onCopyPrompt={copyLogPrompt}
                     onDeleteLog={deleteLog}
+                    onDeleteFailed={deleteFailedLogs}
                 />
             </Drawer>
             <Drawer title="参数" placement="bottom" size="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
@@ -805,6 +814,7 @@ function LogPanel({
     onOpenDetail,
     onCopyPrompt,
     onDeleteLog,
+    onDeleteFailed,
 }: {
     logs: GenerationLog[];
     selectedLogIds: string[];
@@ -816,9 +826,11 @@ function LogPanel({
     onOpenDetail: (log: GenerationLog) => void;
     onCopyPrompt: (log: GenerationLog) => void;
     onDeleteLog: (log: GenerationLog) => void;
+    onDeleteFailed: () => void;
 }) {
     const allSelected = Boolean(logs.length) && selectedLogIds.length === logs.length;
     const toggleAll = () => onSelectedLogIdsChange(allSelected ? [] : logs.map((log) => log.id));
+    const hasFailed = logs.some((log) => log.status === "失败");
 
     return (
         <>
@@ -834,6 +846,9 @@ function LogPanel({
                 </Button>
                 <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!logs.length} onClick={toggleAll}>
                     {allSelected ? "取消" : "全选"}
+                </Button>
+                <Button size="small" icon={<XCircle className="size-3.5" />} disabled={!hasFailed} onClick={onDeleteFailed}>
+                    清除失败
                 </Button>
                 <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedLogIds.length} onClick={onDeleteSelected}>
                     删除

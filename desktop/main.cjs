@@ -162,7 +162,6 @@ function copyDirectory(source, target) {
 }
 
 function configureStorageBeforeReady() {
-    const legacySessionData = app.getPath("sessionData");
     storageSettings = readStorageSettings();
     if (storageSettings.pendingCacheRoot) {
         try {
@@ -188,17 +187,40 @@ function configureStorageBeforeReady() {
         ensureStorageDirectories();
         writeStorageSettings();
     }
-    if (path.resolve(legacySessionData) !== path.resolve(storageSettings.cacheRoot) && !fs.existsSync(path.join(storageSettings.cacheRoot, ".ly-space-session-migrated"))) {
-        try {
-            copyDirectory(legacySessionData, storageSettings.cacheRoot);
-            fs.writeFileSync(path.join(storageSettings.cacheRoot, ".ly-space-session-migrated"), "1", "utf8");
-        } catch {
-            storageSettings.cacheRoot = legacySessionData;
-            ensureStorageDirectories();
-        }
-    }
-    app.setPath("sessionData", storageSettings.cacheRoot);
+    // sessionData 保持 userData 默认（跨安装/更新目录稳定）；旧版本（≤0.0.8）曾把 IndexedDB/localStorage 放在
+    // cacheRoot（默认 exe 目录/Data cache），换目录安装会导致记录"消失"，启动时一次性迁移回 userData。
+    migrateLegacySessionData(storageSettings.cacheRoot, app.getPath("sessionData"));
     app.setPath("cache", path.join(storageSettings.cacheRoot, "Cache"));
+}
+
+/** 把旧 cacheRoot（exe 目录/Data cache）里的 Chromium profile 数据一次性复制到 userData（sessionData 目标位置）。 */
+function migrateLegacySessionData(legacyCacheRoot, targetSessionData) {
+    if (!legacyCacheRoot || path.resolve(legacyCacheRoot) === path.resolve(targetSessionData)) return;
+    const marker = path.join(targetSessionData, ".ly-space-session-migrated");
+    if (fs.existsSync(marker)) return;
+    const webDataNames = ["IndexedDB", "Local Storage", "Session Storage", "Cookies", "Preferences"];
+    const anySource = webDataNames.some((name) => fs.existsSync(path.join(legacyCacheRoot, name)));
+    if (!anySource) {
+        try {
+            fs.writeFileSync(marker, "1", "utf8");
+        } catch {
+            // 忽略标记写入失败
+        }
+        return;
+    }
+    try {
+        fs.mkdirSync(targetSessionData, { recursive: true });
+        for (const name of webDataNames) {
+            const source = path.join(legacyCacheRoot, name);
+            const target = path.join(targetSessionData, name);
+            if (!fs.existsSync(source) || fs.existsSync(target)) continue;
+            if (fs.statSync(source).isDirectory()) copyDirectory(source, target);
+            else fs.copyFileSync(source, target);
+        }
+        fs.writeFileSync(marker, "1", "utf8");
+    } catch {
+        // 迁移失败不阻塞启动，旧数据仍留在原目录
+    }
 }
 
 function storageInfo() {

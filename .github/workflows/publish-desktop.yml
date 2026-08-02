@@ -30,6 +30,7 @@ jobs:
           pnpm --dir desktop install --frozen-lockfile --ignore-scripts
           pnpm --dir desktop/renderer install --frozen-lockfile --ignore-scripts
           pnpm --dir canvas-agent install --frozen-lockfile --ignore-scripts
+          pnpm --dir desktop exec node node_modules/electron/install.js
 
       - name: Verify release version
         working-directory: desktop

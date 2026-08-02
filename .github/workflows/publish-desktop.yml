@@ -61,9 +61,14 @@ jobs:
           foreach ($item in $assets) {
             if ($existing -contains $item.Name) { Write-Host "已存在: $($item.Name)"; continue }
             if (-not (Test-Path $item.Local)) { Write-Host "::warning::本地缺少文件 $($item.Local)，跳过补传"; continue }
+            # GitHub 会把资产名中的空格规范化为连字符，这里用连字符临时文件名上传，保证与 electron-builder 命名一致
+            $uploadPath = Join-Path $env:TEMP $item.Name
+            Copy-Item $item.Local $uploadPath -Force
             Write-Host "补传缺失资产: $($item.Name)"
-            gh release upload $tag $item.Local --clobber
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            gh release upload $tag $uploadPath --clobber
+            $code = $LASTEXITCODE
+            Remove-Item $uploadPath -Force -ErrorAction SilentlyContinue
+            if ($code -ne 0) { exit $code }
           }
           Write-Host "资产校验完成"
 

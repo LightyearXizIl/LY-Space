@@ -37,7 +37,7 @@ jobs:
 
       - name: Build and upload draft release
         working-directory: desktop
-        run: pnpm run publish:win
+        run: pnpm --config.verify-deps-before-run=none run publish:win
         env:
           GH_TOKEN: ${{ github.token }}
 

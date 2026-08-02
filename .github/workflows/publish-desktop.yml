@@ -41,6 +41,32 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      - name: Ensure all release assets uploaded
+        shell: pwsh
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # electron-builder 上传大文件偶发漏传（exe/latest.yml/blockmap 每次漏的不一样），
+          # 这里校验 release 资产完整性，缺失的立即补传，上传失败则让 CI 失败以便重试。
+          $tag = $env:GITHUB_REF_NAME
+          $version = $tag.TrimStart("v")
+          $existing = @(gh release view $tag --json assets --jq ".assets[].name" 2>$null)
+          $releaseDir = (Resolve-Path "..\release").Path
+          $assets = @(
+            @{ Name = "LY-Space-Setup-$version.exe"; Local = Join-Path $releaseDir "LY Space Setup $version.exe" },
+            @{ Name = "LY-Space-Setup-$version.exe.blockmap"; Local = Join-Path $releaseDir "LY Space Setup $version.exe.blockmap" },
+            @{ Name = "latest.yml"; Local = Join-Path $releaseDir "latest.yml" }
+          )
+          foreach ($item in $assets) {
+            if ($existing -contains $item.Name) { Write-Host "已存在: $($item.Name)"; continue }
+            if (-not (Test-Path $item.Local)) { Write-Host "::warning::本地缺少文件 $($item.Local)，跳过补传"; continue }
+            Write-Host "补传缺失资产: $($item.Name)"
+            gh release upload $tag $item.Local --clobber
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          Write-Host "资产校验完成"
+
       - name: Publish verified release
         shell: pwsh
         env:

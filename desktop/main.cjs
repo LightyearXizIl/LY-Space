@@ -607,6 +607,20 @@ app.whenReady().then(async () => {
         return { canceled: false, paths: savedPaths };
     });
     ipcMain.handle("lyspace:write-generated-output", (_event, payload) => writeGeneratedOutput(payload));
+    // 免费图床（catbox）上传：主进程代理，无浏览器 CORS 限制
+    ipcMain.handle("lyspace:upload-free-host", async (_event, payload) => {
+        const name = String(payload?.name || "reference.png");
+        const mimeType = String(payload?.mimeType || "application/octet-stream");
+        const bytes = payload?.bytes ? Buffer.from(payload.bytes) : null;
+        if (!bytes) throw new Error("没有可上传的图片内容");
+        const form = new FormData();
+        form.append("reqtype", "fileupload");
+        form.append("fileToUpload", new Blob([bytes], { type: mimeType }), name);
+        const response = await fetch("https://catbox.moe/user/api.php", { method: "POST", body: form });
+        const text = (await response.text()).trim();
+        if (!response.ok || !/^https:\/\//i.test(text)) throw new Error(`免费图床上传失败（HTTP ${response.status}）`);
+        return { url: text };
+    });
     // 删除已落盘的生成文件；localPath 全部由本进程 writeGeneratedOutput 生成（可信来源），仅校验绝对路径防止误删
     ipcMain.handle("lyspace:delete-generated-files", async (_event, paths) => {
         if (!Array.isArray(paths)) return { deleted: 0, missing: 0, failed: 0, skipped: 0 };

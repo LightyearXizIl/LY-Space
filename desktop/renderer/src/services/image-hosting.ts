@@ -3,18 +3,33 @@ import type { ReferenceImage } from "@/types/image";
 
 /**
  * 免费图床上传（catbox.moe，匿名免配置）。返回公网 HTTPS 图片 URL。
+ * 优先浏览器直传（catbox 支持 CORS 时），失败（CORS/网络拦截）自动回退主进程代理上传（无浏览器跨域限制）。
  * 依赖第三方服务：图片会公开到公网，国内网络可能不稳定；失败时抛错由调用方提示。
  */
 export async function uploadImageToFreeHost(input: Blob, name: string): Promise<string> {
-    const form = new FormData();
-    form.append("reqtype", "fileupload");
-    form.append("fileToUpload", input, name || "reference.png");
-    const response = await fetch("https://catbox.moe/user/api.php", { method: "POST", body: form });
-    const text = (await response.text()).trim();
-    if (!response.ok || !/^https:\/\//i.test(text)) {
-        throw new Error(`免费图床上传失败${text && text.length < 200 ? `：${text}` : `（HTTP ${response.status}）`}`);
+    const direct = async (): Promise<string> => {
+        const form = new FormData();
+        form.append("reqtype", "fileupload");
+        form.append("fileToUpload", input, name || "reference.png");
+        const response = await fetch("https://catbox.moe/user/api.php", { method: "POST", body: form });
+        const text = (await response.text()).trim();
+        if (!response.ok || !/^https:\/\//i.test(text)) {
+            throw new Error(`免费图床上传失败${text && text.length < 200 ? `：${text}` : `（HTTP ${response.status}）`}`);
+        }
+        return text;
+    };
+    try {
+        return await direct();
+    } catch (error) {
+        // 浏览器直传被 CORS/网络拦截时回退主进程代理（无跨域限制）
+        if (!window.lySpaceDesktop) throw error;
+        try {
+            const result = await window.lySpaceDesktop.uploadFreeHost({ name: name || "reference.png", mimeType: input.type || "application/octet-stream", bytes: await input.arrayBuffer() });
+            return result.url;
+        } catch {
+            throw error;
+        }
     }
-    return text;
 }
 
 async function readReferenceBlob(item: ReferenceImage): Promise<Blob> {

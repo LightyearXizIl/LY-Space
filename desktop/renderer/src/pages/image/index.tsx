@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Copy, Download, Eye, FolderOpen, FolderPlus, ImagePlus, LoaderCircle, PenLine, RotateCcw, SlidersHorizontal, Sparkles, Trash2, Upload, XCircle } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Copy, Download, Eye, FolderOpen, FolderPlus, ImagePlus, LoaderCircle, PenLine, RotateCcw, SlidersHorizontal, Sparkles, Trash2, Upload, Wand2, XCircle } from "lucide-react";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { App, Button, Checkbox, Drawer, Dropdown, Empty, Image, Input, Modal, Tag, Tooltip, Typography, type MenuProps } from "antd";
 import localforage from "localforage";
@@ -14,7 +14,7 @@ import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } f
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration, getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
-import { requestEdit, requestGeneration } from "@/services/api/image";
+import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
 import { deleteStoredImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { loadWorkbenchSession, saveWorkbenchSession } from "@/services/workbench-session";
@@ -87,6 +87,7 @@ export default function ImagePage() {
     const [logs, setLogs] = useState<GenerationLog[]>([]);
     const [running, setRunning] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
+    const [optimizingPrompt, setOptimizingPrompt] = useState(false);
     const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [startedAt, setStartedAt] = useState(0);
@@ -292,19 +293,30 @@ export default function ImagePage() {
         }
     };
 
+    const fetchImageAsBlob = async (dataUrl: string): Promise<Blob> => {
+        try {
+            return await (await fetch(dataUrl)).blob();
+        } catch {
+            if (!window.lySpaceDesktop) throw new Error("图片下载失败");
+            // 浏览器 fetch 失败（远程 URL 跨域）时回退主进程下载
+            const result = await window.lySpaceDesktop.fetchUrl(dataUrl);
+            return new Blob([result.bytes], { type: result.mimeType || "image/png" });
+        }
+    };
+
+    const extensionForBlob = (blob: Blob) => {
+        const mime = blob.type.toLowerCase();
+        if (mime.includes("jpeg")) return "jpg";
+        if (mime.includes("webp")) return "webp";
+        if (mime.includes("gif")) return "gif";
+        return "png";
+    };
+
     const downloadImage = async (image: GeneratedImage, index: number) => {
         if (window.lySpaceDesktop) {
             try {
-                let blob: Blob;
-                try {
-                    blob = await (await fetch(image.dataUrl)).blob();
-                } catch {
-                    const result = await window.lySpaceDesktop.fetchUrl(image.dataUrl);
-                    blob = new Blob([result.bytes], { type: result.mimeType || "image/png" });
-                }
-                const mime = blob.type.toLowerCase();
-                const extension = mime.includes("jpeg") ? "jpg" : mime.includes("webp") ? "webp" : mime.includes("gif") ? "gif" : "png";
-                const result = await window.lySpaceDesktop.saveFileDialog({ defaultPath: `image-${index + 1}.${extension}`, bytes: await blob.arrayBuffer() });
+                const blob = await fetchImageAsBlob(image.dataUrl);
+                const result = await window.lySpaceDesktop.saveFileDialog({ defaultPath: `image-${index + 1}.${extensionForBlob(blob)}`, bytes: await blob.arrayBuffer() });
                 if (!result.canceled) message.success("图片已保存");
             } catch {
                 message.error("保存图片失败");
@@ -368,9 +380,14 @@ export default function ImagePage() {
 
     const refreshLogs = async () => setLogs(await readStoredLogs());
 
-    const resolveDetailLog = (image: GeneratedImage): GenerationLog | null => {
+    const resolveDetailLog = async (image: GeneratedImage): Promise<GenerationLog | null> => {
         const matched = logs.find((log) => log.images.some((item) => item.id === image.id));
         if (matched) return matched;
+        // logs state 可能尚未加载完成（IndexedDB 异步读取），异步重读兜底并顺带刷新 state
+        const stored = await readStoredLogs();
+        if (stored.length) setLogs(stored);
+        const matchedStored = stored.find((log) => log.images.some((item) => item.id === image.id));
+        if (matchedStored) return matchedStored;
         const batch = lastBatchRef.current;
         if (batch && batch.images.some((item) => item.id === image.id)) {
             return buildLog({ prompt: batch.prompt, model, config: batch.config, references: batch.references, durationMs: batch.durationMs, successCount: batch.images.length, failCount: 0, cancelCount: 0, status: "成功", images: batch.images });
@@ -378,14 +395,14 @@ export default function ImagePage() {
         return null;
     };
 
-    const openResultDetail = (image: GeneratedImage) => {
-        const log = resolveDetailLog(image);
+    const openResultDetail = async (image: GeneratedImage) => {
+        const log = await resolveDetailLog(image);
         if (log) setDetailLog(log);
         else message.info("未找到该图片的生成信息");
     };
 
-    const restoreToWorkbench = (image: GeneratedImage) => {
-        const log = resolveDetailLog(image);
+    const restoreToWorkbench = async (image: GeneratedImage) => {
+        const log = await resolveDetailLog(image);
         if (!log) {
             message.error("未找到该图片的生成信息，无法恢复");
             return;
@@ -413,25 +430,50 @@ export default function ImagePage() {
         setSelectedImageIds((prev) => (checked ? [...prev, imageId] : prev.filter((id) => id !== imageId)));
 
     const downloadSelected = async () => {
-        for (let i = 0; i < selectedImages.length; i += 1) await downloadImage(selectedImages[i], i);
+        if (window.lySpaceDesktop) {
+            try {
+                const files = await Promise.all(
+                    selectedImages.map(async (image, index) => {
+                        const blob = await fetchImageAsBlob(image.dataUrl);
+                        return { name: `image-${index + 1}.${extensionForBlob(blob)}`, bytes: await blob.arrayBuffer() };
+                    }),
+                );
+                // 只弹一次保存对话框，全部图片写入所选目录
+                const result = await window.lySpaceDesktop.saveFilesDialog({ files });
+                if (!result.canceled) message.success(`已保存 ${result.paths.length} 张图片`);
+            } catch {
+                message.error("保存图片失败");
+            }
+        } else {
+            for (let i = 0; i < selectedImages.length; i += 1) saveAs(selectedImages[i].dataUrl, `image-${i + 1}.png`);
+        }
         setSelectedImageIds([]);
     };
     const addSelectedToAssets = async () => {
         for (let i = 0; i < selectedImages.length; i += 1) await saveResultToAssets(selectedImages[i], i);
         setSelectedImageIds([]);
     };
-    const deleteSelectedImages = () => {
+    const deleteSelectedImages = async () => {
         // 同步删除包含这些图片的生成记录并回收 blob，与「删除记录」行为对称
         const relatedLogs = logs.filter((log) => log.images.some((image) => selectedImageIds.includes(image.id)));
         const imageKeys = relatedLogs.flatMap((log) => log.images.map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
-        // 同步删除本地已落盘文件（localPath 记录于生成时；旧数据无路径则忽略，本地文件不存在时主进程静默忽略）
-        const localPaths = [...new Set(relatedLogs.flatMap((log) => log.images.map((image) => image.localPath).filter((path): path is string => Boolean(path))))];
+        // 同步删除本地已落盘文件（localPath 记录于生成时；本地文件不存在时主进程静默忽略）
+        const relatedImages = relatedLogs.flatMap((log) => log.images);
+        const localPaths = [...new Set(relatedImages.map((image) => image.localPath).filter((path): path is string => Boolean(path)))];
+        const skippedLocalCount = relatedImages.filter((image) => !image.localPath).length;
         // 被删记录的全部图片 blob 已回收，结果区中同记录的其它未勾选图片也一并移除，避免破图
-        const deletedImageIds = new Set(relatedLogs.flatMap((log) => log.images.map((image) => image.id)));
+        const deletedImageIds = new Set(relatedImages.map((image) => image.id));
         void Promise.all([deleteStoredImages(imageKeys), ...relatedLogs.map((log) => logStore.removeItem(log.id))]).then(refreshLogs).catch(() => undefined);
         if (localPaths.length && window.lySpaceDesktop) {
-            void window.lySpaceDesktop.deleteGeneratedFiles(localPaths).catch(() => undefined);
+            try {
+                const { deleted, missing, failed } = await window.lySpaceDesktop.deleteGeneratedFiles(localPaths);
+                if (failed) message.warning(`有 ${failed} 个本地文件删除失败（可能被占用或权限不足），其余 ${deleted} 个已删除`);
+                else if (deleted === 0 && missing === localPaths.length) message.info("本地文件不存在，已忽略");
+            } catch {
+                message.warning("本地文件删除失败");
+            }
         }
+        if (skippedLocalCount) message.info(`${skippedLocalCount} 张图片没有本地文件记录（旧版本生成），已跳过本地删除`);
         setResults((value) => value.filter((result) => !(result.image && deletedImageIds.has(result.image.id))));
         setSelectedImageIds([]);
     };
@@ -449,6 +491,41 @@ export default function ImagePage() {
             void Promise.all(failedIds.map((id) => logStore.removeItem(id))).then(refreshLogs).catch(() => undefined);
         }
         message.success("已清除失败的生成项");
+    };
+
+    const optimizePrompt = async () => {
+        const text = prompt.trim();
+        if (!text) {
+            message.warning("请先输入提示词");
+            return;
+        }
+        if (!isAiConfigReady(effectiveConfig, model)) {
+            message.warning("请先完成配置");
+            openConfigDialog(true);
+            return;
+        }
+        setOptimizingPrompt(true);
+        try {
+            let streamed = "";
+            const answer = await requestImageQuestion(
+                effectiveConfig,
+                [
+                    { role: "system", content: "你是专业的生图提示词优化专家。请优化用户给出的提示词，使其更具体、生动、可控（可补充主体、风格、构图、光线、氛围、画质等描述），只输出优化后的提示词本身，不要解释、不要引号、不要多余内容。" },
+                    { role: "user", content: text },
+                ],
+                (delta) => {
+                    // onDelta 为增量回调，按序累加并流式回填提示词
+                    streamed += delta;
+                    setPrompt(streamed);
+                },
+            );
+            setPrompt(answer || streamed);
+            message.success("提示词已优化");
+        } catch (error) {
+            message.error(error instanceof Error ? `提示词优化失败：${error.message}` : "提示词优化失败");
+        } finally {
+            setOptimizingPrompt(false);
+        }
     };
 
     const buildRequestSnapshot = () => {
@@ -564,7 +641,12 @@ export default function ImagePage() {
                                         </Button>
                                     </div>
                                 </div>
-                                <Input.TextArea value={prompt} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setPrompt(event.target.value)} rows={7} placeholder="描述画面主体、风格、构图、光线和用途" />
+                                <div className="relative">
+                                    <Input.TextArea value={prompt} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setPrompt(event.target.value)} rows={7} placeholder="描述画面主体、风格、构图、光线和用途" />
+                                    <Tooltip title="优化提示词">
+                                        <Button type="text" size="small" className="absolute bottom-2 right-2 z-10" icon={<Wand2 className="size-4" />} loading={optimizingPrompt} onClick={() => void optimizePrompt()} />
+                                    </Tooltip>
+                                </div>
                             </div>
 
                             <div className="min-w-0">
@@ -607,21 +689,23 @@ export default function ImagePage() {
                                         event.currentTarget.scrollLeft += event.deltaY;
                                     }}
                                 >
-                                    {references.map((item, index) => (
-                                        <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
-                                            <img src={item.dataUrl} alt={item.name} className="size-full object-cover" />
-                                            <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{imageReferenceLabel(index)}</span>
-                                            <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
-                                            <button
-                                                type="button"
-                                                className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex"
-                                                onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}
-                                                aria-label="移除参考图"
-                                            >
-                                                <Trash2 className="size-3.5" />
-                                            </button>
-                                        </div>
-                                    ))}
+                                    <Image.PreviewGroup>
+                                        {references.map((item, index) => (
+                                            <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
+                                                <Image src={item.dataUrl} alt={item.name} className="size-full object-cover" />
+                                                <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{imageReferenceLabel(index)}</span>
+                                                <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
+                                                <button
+                                                    type="button"
+                                                    className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex"
+                                                    onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}
+                                                    aria-label="移除参考图"
+                                                >
+                                                    <Trash2 className="size-3.5" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </Image.PreviewGroup>
                                     {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{isReferenceDragActive ? "松开即可添加参考图" : "暂无参考图，可将图片拖到这里"}</div> : null}
                                 </div>
                             </div>

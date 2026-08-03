@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld("lySpaceDesktop", {
     openStorageDirectory: (directory) => ipcRenderer.invoke("lyspace:open-storage-directory", directory),
     fetchUrl: (url) => ipcRenderer.invoke("lyspace:fetch-url", url),
     saveFileDialog: (payload) => ipcRenderer.invoke("lyspace:save-file-dialog", payload),
+    saveFilesDialog: (payload) => ipcRenderer.invoke("lyspace:save-files-dialog", payload),
     writeGeneratedOutput: (payload) => ipcRenderer.invoke("lyspace:write-generated-output", payload),
     deleteGeneratedFiles: (paths) => ipcRenderer.invoke("lyspace:delete-generated-files", paths),
     persistenceFlushed: () => ipcRenderer.invoke("lyspace:persistence-flushed"),

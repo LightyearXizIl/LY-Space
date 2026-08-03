@@ -28,8 +28,9 @@ declare global {
             openStorageDirectory: (directory: string) => Promise<string>;
             fetchUrl: (url: string) => Promise<{ bytes: ArrayBuffer; mimeType: string }>;
             saveFileDialog: (payload: { title?: string; defaultPath?: string; bytes: ArrayBuffer; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; path: string }>;
+            saveFilesDialog: (payload: { title?: string; files: Array<{ name: string; bytes: ArrayBuffer }>; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; paths: string[] }>;
             writeGeneratedOutput: (payload: { kind: StorageKind; extension?: string; bytes?: ArrayBuffer; text?: string }) => Promise<{ path: string; name: string }>;
-            deleteGeneratedFiles: (paths: string[]) => Promise<{ deleted: number; missing: number }>;
+            deleteGeneratedFiles: (paths: string[]) => Promise<{ deleted: number; missing: number; failed: number }>;
             persistenceFlushed: () => Promise<void>;
             relaunchAfterFlush: () => Promise<void>;
             onFlushPersistence: (listener: () => void) => () => void;

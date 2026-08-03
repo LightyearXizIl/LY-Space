@@ -575,13 +575,45 @@ app.whenReady().then(async () => {
         await fs.promises.writeFile(selected.filePath, bytes);
         return { canceled: false, path: selected.filePath };
     });
+    // 批量保存：只弹一次保存对话框，全部文件写入所选目录（首张用所选路径，其余按传入 name 命名、重名自动加序号）
+    ipcMain.handle("lyspace:save-files-dialog", async (_event, payload) => {
+        const files = Array.isArray(payload?.files) ? payload.files : [];
+        if (!files.length) return { canceled: true, paths: [] };
+        const safeName = String(files[0]?.name || "image-1.png").replace(/[\\/:*?"<>|]/g, "_");
+        const selected = await dialog.showSaveDialog(mainWindow, {
+            title: payload?.title || "保存文件",
+            defaultPath: path.join(app.getPath("downloads"), safeName),
+            filters: payload?.filters || [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+        });
+        if (selected.canceled || !selected.filePath) return { canceled: true, paths: [] };
+        const directory = path.dirname(selected.filePath);
+        const savedPaths = [];
+        for (let i = 0; i < files.length; i += 1) {
+            const bytes = files[i]?.bytes ? Buffer.from(files[i].bytes) : null;
+            if (!bytes) continue;
+            let target = i === 0 ? selected.filePath : path.join(directory, String(files[i]?.name || `image-${i + 1}.png`).replace(/[\\/:*?"<>|]/g, "_"));
+            if (i > 0) {
+                const ext = path.extname(target);
+                const stem = path.basename(target, ext);
+                let counter = 1;
+                while (fs.existsSync(target)) {
+                    target = path.join(directory, `${stem}-${counter}${ext}`);
+                    counter += 1;
+                }
+            }
+            await fs.promises.writeFile(target, bytes);
+            savedPaths.push(target);
+        }
+        return { canceled: false, paths: savedPaths };
+    });
     ipcMain.handle("lyspace:write-generated-output", (_event, payload) => writeGeneratedOutput(payload));
     // 删除已落盘的生成文件；路径限定在 resultRoot 内，本地文件不存在（ENOENT）时静默忽略
     ipcMain.handle("lyspace:delete-generated-files", async (_event, paths) => {
-        if (!Array.isArray(paths)) return { deleted: 0, missing: 0 };
+        if (!Array.isArray(paths)) return { deleted: 0, missing: 0, failed: 0 };
         const root = path.resolve(storageSettings.resultRoot);
         let deleted = 0;
         let missing = 0;
+        let failed = 0;
         for (const rawPath of paths) {
             if (typeof rawPath !== "string") continue;
             const target = path.resolve(rawPath);
@@ -591,9 +623,10 @@ app.whenReady().then(async () => {
                 deleted += 1;
             } catch (error) {
                 if (error?.code === "ENOENT") missing += 1;
+                else failed += 1;
             }
         }
-        return { deleted, missing };
+        return { deleted, missing, failed };
     });
     ipcMain.handle("lyspace:persistence-flushed", () => {
         if (!mainWindow || allowWindowClose) return;

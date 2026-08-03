@@ -13,7 +13,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS, SEEDANCE_VIDEO_MIME_TYPES } from "@/lib/seedance-video";
 import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
-import { resolveImageUrl, uploadImage } from "@/services/image-storage";
+import { imageToDataUrl, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { requestImageQuestion } from "@/services/api/image";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -271,11 +271,20 @@ export default function VideoPage() {
             message.error("剪切板里没有可读取的图片");
         }
     };
-    // Agnes 等渠道只接受公网 HTTPS 参考图：本地参考图自动托管（OSS 优先，未配置时免费图床兜底）
+    // Agnes 等渠道只接受公网 HTTPS 参考图：本地参考图自动托管（OSS 优先，免费图床兜底），失败回退 base64 直发
     const ensurePublicReferenceUrls = async (refs: ReferenceImage[]) => {
         const localRefs = refs.filter((item) => !/^https:\/\//i.test(item.dataUrl || item.url || ""));
         if (!localRefs.length) return refs;
-        const hosted = await Promise.all(localRefs.map(hostReferenceImage));
+        const hosted = await Promise.all(
+            localRefs.map(async (item) => {
+                try {
+                    return await hostReferenceImage(item);
+                } catch {
+                    const dataUrl = await imageToDataUrl(item);
+                    return { ...item, url: dataUrl, dataUrl };
+                }
+            }),
+        );
         const hostedById = new Map(hosted.map((item) => [item.id, item]));
         return refs.map((item) => hostedById.get(item.id) || item);
     };

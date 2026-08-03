@@ -638,12 +638,21 @@ app.whenReady().then(async () => {
         return { canceled: false, paths: savedPaths };
     });
     ipcMain.handle("lyspace:write-generated-output", (_event, payload) => writeGeneratedOutput(payload));
-    // 免费图床（tmpfiles.org 优先，catbox.moe 兜底）上传：主进程代理，无浏览器 CORS 限制
+    // 免费图床（uguu.se 优先，tmpfiles.org、catbox.moe 兜底）上传：主进程代理，无浏览器 CORS 限制
     ipcMain.handle("lyspace:upload-free-host", async (_event, payload) => {
         const name = String(payload?.name || "reference.png");
         const mimeType = String(payload?.mimeType || "application/octet-stream");
         const bytes = payload?.bytes ? Buffer.from(payload.bytes) : null;
         if (!bytes) throw new Error("没有可上传的图片内容");
+        const uploadUguu = async () => {
+            const form = new FormData();
+            form.append("files[]", new Blob([bytes], { type: mimeType }), name);
+            const response = await fetch("https://uguu.se/upload.php", { method: "POST", body: form });
+            const payloadJson = await response.json().catch(() => null);
+            const url = typeof payloadJson?.files?.[0]?.url === "string" ? payloadJson.files[0].url : "";
+            if (!response.ok || !/^https:\/\//i.test(url)) throw new Error(`免费图床上传失败（HTTP ${response.status}）`);
+            return url;
+        };
         const uploadTmpfiles = async () => {
             const form = new FormData();
             form.append("file", new Blob([bytes], { type: mimeType }), name);
@@ -663,9 +672,13 @@ app.whenReady().then(async () => {
             return text;
         };
         try {
-            return { url: await uploadTmpfiles() };
+            return { url: await uploadUguu() };
         } catch {
-            return { url: await uploadCatbox() };
+            try {
+                return { url: await uploadTmpfiles() };
+            } catch {
+                return { url: await uploadCatbox() };
+            }
         }
     });
     // 删除已落盘的生成文件；localPath 全部由本进程 writeGeneratedOutput 生成（可信来源），仅校验绝对路径防止误删

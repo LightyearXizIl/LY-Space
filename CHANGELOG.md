@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## v0.2.8 - 2026-08-03
+
++ [修复] 视频参考图上传后 Agnes 报 "image URL could not be downloaded"：图床优先级调整为 uguu.se 优先（tmpfiles.org/catbox.moe 兜底），上传前统一转 PNG/JPEG 保证格式兼容；图床全部失败时回退以 base64 直发，兼容 Agnes 中国站（国内服务器访问海外图床受限）。
 ## v0.2.7 - 2026-08-03
 
 + [修复] 视频参考图自动上传报 "Failed to fetch" 彻底解决：免费图床改为 tmpfiles.org 优先、catbox.moe 兜底，浏览器直传与主进程代理双通道，全部失败时明确提示配置 OSS 或改用公网 URL。

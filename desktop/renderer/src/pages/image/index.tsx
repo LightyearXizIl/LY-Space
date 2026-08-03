@@ -1012,12 +1012,7 @@ function ResultImageCard({
 function PendingImageCard({ onCancel }: { onCancel: () => void }) {
     return (
         <Dropdown menu={{ items: [{ key: "cancel", danger: true, label: "取消生成", onClick: onCancel }] }} trigger={["contextMenu"]}>
-            <div
-                className="group relative aspect-square cursor-pointer overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 transition-colors hover:border-red-300 dark:border-stone-700 dark:bg-stone-900 dark:hover:border-red-800"
-                onClick={onCancel}
-                role="button"
-                aria-label="点击取消生成"
-            >
+            <div className="relative aspect-square overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
                 <div
                     className="absolute inset-0 opacity-60"
                     style={{
@@ -1027,8 +1022,7 @@ function PendingImageCard({ onCancel }: { onCancel: () => void }) {
                 />
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-stone-500 dark:text-stone-400">
                     <LoaderCircle className="size-6 animate-spin" />
-                    <span className="group-hover:hidden">生成中</span>
-                    <span className="hidden text-red-500 group-hover:block">点击取消</span>
+                    <span>生成中</span>
                 </div>
             </div>
         </Dropdown>

@@ -44,7 +44,7 @@ function aiHeaders(config: AiConfig, contentType?: string) {
 
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationResult> {
     const task = await createVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
-    const delayMs = task.provider === "seedance" || task.provider === "agnes" ? 5000 : 2500;
+    const delayMs = task.provider === "seedance" ? 5000 : task.provider === "agnes" ? 10000 : 2500;
     for (let attempt = 0; attempt < 120; attempt += 1) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         const state = await pollVideoGenerationTask(config, task, options);
@@ -128,6 +128,10 @@ async function pollAgnesVideoTask(config: AiConfig, task: VideoGenerationTask, o
         if (["failed", "cancelled", "error"].includes((state.status || "").toLowerCase())) return { status: "failed", error: readApiErrorMessage(state.error?.message) || "Agnes 视频生成失败" };
         return { status: "pending" };
     } catch (error) {
+        // 限流（429 / rate limit）时视为暂时不可查询，返回 pending 由轮询层稍后重试，不中断生成
+        if (axios.isAxiosError(error) && (error.response?.status === 429 || /rate limit/i.test(`${error.response?.data?.message || ""} ${error.message}`))) {
+            return { status: "pending" };
+        }
         throw new Error(readAxiosError(error, "Agnes 视频任务查询失败"));
     }
 }

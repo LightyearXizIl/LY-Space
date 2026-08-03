@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Copy, Download, Eye, FolderOpen, FolderPlus, ImagePlus, LoaderCircle, PenLine, SlidersHorizontal, Sparkles, Trash2, Upload, XCircle } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Copy, Download, Eye, FolderOpen, FolderPlus, ImagePlus, LoaderCircle, PenLine, RotateCcw, SlidersHorizontal, Sparkles, Trash2, Upload, XCircle } from "lucide-react";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { App, Button, Checkbox, Drawer, Dropdown, Empty, Image, Input, Modal, Tag, Tooltip, Typography, type MenuProps } from "antd";
 import localforage from "localforage";
@@ -26,6 +26,7 @@ type GeneratedImage = {
     id: string;
     dataUrl: string;
     storageKey?: string;
+    localPath?: string;
     durationMs: number;
     width: number;
     height: number;
@@ -90,11 +91,9 @@ export default function ImagePage() {
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [startedAt, setStartedAt] = useState(0);
     const [elapsedMs, setElapsedMs] = useState(0);
-    const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [selectedImageIds, setSelectedImageIds] = useState<string[]>([]);
     const [detailLog, setDetailLog] = useState<GenerationLog | null>(null);
     const [storageSettings, setStorageSettings] = useState<{ resultRoot: string; folders: Record<string, string> } | null>(null);
-    const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [isReferenceDragActive, setIsReferenceDragActive] = useState(false);
     const [sessionHydrated, setSessionHydrated] = useState(false);
     const generationControllersRef = useRef(new Map<string, AbortController>());
@@ -363,19 +362,6 @@ export default function ImagePage() {
         setAssetPickerOpen(false);
     };
 
-    const deleteSelectedLogs = () => {
-        const deletedLogs = logs.filter((log) => selectedLogIds.includes(log.id));
-        // 只回收该记录独有引用的结果图 blob；参考图可能与当前会话或其他记录共享，不能随删除回收
-        const imageKeys = deletedLogs.flatMap((log) => log.images.map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
-        const deletedImageIds = new Set(deletedLogs.flatMap((log) => log.images.map((image) => image.id)));
-        void Promise.all([deleteStoredImages(imageKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(refreshLogs).catch(() => undefined);
-        // 结果区同步移除已删除记录对应的图片，并清理对应的图片勾选，避免引用已回收的 blob 出现破图
-        setResults((value) => value.filter((result) => !(result.image && deletedImageIds.has(result.image.id))));
-        setSelectedImageIds((prev) => prev.filter((id) => !deletedImageIds.has(id)));
-        setSelectedLogIds([]);
-        setDeleteConfirmOpen(false);
-    };
-
     const saveLog = (log: GenerationLog) => {
         void trackWrite(logStore.setItem(log.id, serializeLog(log))).then(refreshLogs).catch(() => undefined);
     };
@@ -398,6 +384,26 @@ export default function ImagePage() {
         else message.info("未找到该图片的生成信息");
     };
 
+    const restoreToWorkbench = (image: GeneratedImage) => {
+        const log = resolveDetailLog(image);
+        if (!log) {
+            message.error("未找到该图片的生成信息，无法恢复");
+            return;
+        }
+        // 将该次生成操作恢复到工作台：提示词、参考图与参数逐项还原，不自动触发生成
+        setPrompt(log.prompt);
+        setReferences(log.references || []);
+        const { config: logConfig } = log;
+        if (logConfig.imageModel) updateConfig("imageModel", logConfig.imageModel);
+        if (logConfig.model) updateConfig("model", logConfig.model);
+        if (logConfig.quality) updateConfig("quality", logConfig.quality);
+        if (logConfig.imageResolution) updateConfig("imageResolution", logConfig.imageResolution);
+        if (logConfig.size) updateConfig("size", logConfig.size);
+        if (logConfig.count) updateConfig("count", logConfig.count);
+        if (logConfig.background !== undefined) updateConfig("background", logConfig.background);
+        message.success("已将该图片的生成操作恢复到工作台");
+    };
+
     // 结果图片勾选与批量操作
     const successImageResults = results.filter((result) => result.status === "success" && result.image);
     const allImagesSelected = Boolean(successImageResults.length) && selectedImageIds.length === successImageResults.length;
@@ -418,18 +424,31 @@ export default function ImagePage() {
         // 同步删除包含这些图片的生成记录并回收 blob，与「删除记录」行为对称
         const relatedLogs = logs.filter((log) => log.images.some((image) => selectedImageIds.includes(image.id)));
         const imageKeys = relatedLogs.flatMap((log) => log.images.map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
+        // 同步删除本地已落盘文件（localPath 记录于生成时；旧数据无路径则忽略，本地文件不存在时主进程静默忽略）
+        const localPaths = [...new Set(relatedLogs.flatMap((log) => log.images.map((image) => image.localPath).filter((path): path is string => Boolean(path))))];
         // 被删记录的全部图片 blob 已回收，结果区中同记录的其它未勾选图片也一并移除，避免破图
         const deletedImageIds = new Set(relatedLogs.flatMap((log) => log.images.map((image) => image.id)));
         void Promise.all([deleteStoredImages(imageKeys), ...relatedLogs.map((log) => logStore.removeItem(log.id))]).then(refreshLogs).catch(() => undefined);
+        if (localPaths.length && window.lySpaceDesktop) {
+            void window.lySpaceDesktop.deleteGeneratedFiles(localPaths).catch(() => undefined);
+        }
         setResults((value) => value.filter((result) => !(result.image && deletedImageIds.has(result.image.id))));
         setSelectedImageIds([]);
     };
 
-    const deleteFailedLogs = () => {
+    const clearFailedResults = () => {
+        const failedCards = results.filter((result) => result.status === "failed");
         const failedIds = logs.filter((log) => log.status === "失败").map((log) => log.id);
-        if (!failedIds.length) return;
-        setSelectedLogIds(failedIds);
-        setDeleteConfirmOpen(true);
+        if (!failedCards.length && !failedIds.length) {
+            message.info("没有需要清除的失败项");
+            return;
+        }
+        if (failedCards.length) setResults((value) => value.filter((result) => result.status !== "failed"));
+        // 失败记录不含结果图 blob，直接删除记录即可；同步刷新日志列表
+        if (failedIds.length) {
+            void Promise.all(failedIds.map((id) => logStore.removeItem(id))).then(refreshLogs).catch(() => undefined);
+        }
+        message.success("已清除失败的生成项");
     };
 
     const buildRequestSnapshot = () => {
@@ -456,7 +475,7 @@ export default function ImagePage() {
             const image = result[0];
             if (!image) throw new Error("接口没有返回图片");
             const meta = await readImageMeta(image.dataUrl);
-            const nextImage = { id: image.id, dataUrl: image.dataUrl, durationMs: performance.now() - itemStartedAt, width: meta.width, height: meta.height, bytes: getDataUrlByteSize(image.dataUrl) };
+            const nextImage: GeneratedImage = { id: image.id, dataUrl: image.dataUrl, durationMs: performance.now() - itemStartedAt, width: meta.width, height: meta.height, bytes: getDataUrlByteSize(image.dataUrl), localPath: image.localPath };
             if (controller.signal.aborted) return null;
             setResults((value) => updateResultById(value, id, { status: "success", image: nextImage }));
             return nextImage;
@@ -622,8 +641,8 @@ export default function ImagePage() {
                         </div>
 
                         <div className="mt-auto pt-6">
-                            <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running} onClick={() => void generate()}>
-                                开始生成
+                            <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} disabled={!canGenerate} onClick={() => void generate()}>
+                                {running ? "追加生成" : "开始生成"}
                             </Button>
                         </div>
                     </div>
@@ -635,30 +654,20 @@ export default function ImagePage() {
                             </div>
                             <div className="flex flex-wrap items-center justify-end gap-2">
                                 {running ? <Tag className="m-0 px-2 py-1">等待 {formatDuration(elapsedMs)}</Tag> : null}
-                                {selectedImageIds.length ? (
-                                    <>
-                                        <Tag color="blue" className="m-0">
-                                            已选 {selectedImageIds.length} 张
-                                        </Tag>
-                                        <Button size="small" icon={<Download className="size-3.5" />} onClick={() => void downloadSelected()}>
-                                            下载选中
-                                        </Button>
-                                        <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => void addSelectedToAssets()}>
-                                            添加资产
-                                        </Button>
-                                        <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={deleteSelectedImages}>
-                                            删除选中
-                                        </Button>
-                                    </>
-                                ) : null}
+                                <Button size="small" icon={<Download className="size-3.5" />} disabled={!selectedImageIds.length} onClick={() => void downloadSelected()}>
+                                    下载选中
+                                </Button>
+                                <Button size="small" icon={<FolderPlus className="size-3.5" />} disabled={!selectedImageIds.length} onClick={() => void addSelectedToAssets()}>
+                                    添加资产
+                                </Button>
                                 <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!successImageResults.length} onClick={toggleAllImages}>
                                     {allImagesSelected ? "取消全选" : "全选"}
                                 </Button>
-                                <Button size="small" icon={<XCircle className="size-3.5" />} disabled={!logs.some((log) => log.status === "失败")} onClick={deleteFailedLogs}>
+                                <Button size="small" icon={<XCircle className="size-3.5" />} onClick={clearFailedResults}>
                                     清除失败
                                 </Button>
-                                <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedLogIds.length} onClick={() => setDeleteConfirmOpen(true)}>
-                                    删除
+                                <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedImageIds.length} onClick={deleteSelectedImages}>
+                                    {selectedImageIds.length ? `删除选中 (${selectedImageIds.length})` : "删除"}
                                 </Button>
                             </div>
                         </div>
@@ -676,6 +685,7 @@ export default function ImagePage() {
                                             onDownload={downloadImage}
                                             onSaveAsset={saveResultToAssets}
                                             onViewDetail={openResultDetail}
+                                            onReEdit={restoreToWorkbench}
                                         />
                                     ) : result.status === "failed" ? (
                                         <FailedImageCard key={result.id} error={result.error || "生成失败"} onRetry={() => retryResult(index)} />
@@ -713,9 +723,6 @@ export default function ImagePage() {
             </Drawer>
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
             <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
-            <Modal title="删除生成记录" open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText="删除" okButtonProps={{ danger: true }} cancelText="取消">
-                确定删除选中的 {selectedLogIds.length} 条生成记录吗？
-            </Modal>
             <Modal title="生成详情" open={Boolean(detailLog)} onCancel={() => setDetailLog(null)} footer={null} width={760} destroyOnHidden>
                 {detailLog ? <LogDetail log={detailLog} storageSettings={storageSettings} /> : null}
             </Modal>
@@ -748,6 +755,7 @@ function ResultImageCard({
     onDownload,
     onSaveAsset,
     onViewDetail,
+    onReEdit,
 }: {
     image: GeneratedImage;
     index: number;
@@ -757,6 +765,7 @@ function ResultImageCard({
     onDownload: (image: GeneratedImage, index: number) => void;
     onSaveAsset: (image: GeneratedImage, index: number) => void;
     onViewDetail: (image: GeneratedImage) => void;
+    onReEdit: (image: GeneratedImage) => void;
 }) {
     return (
         <Dropdown
@@ -764,11 +773,13 @@ function ResultImageCard({
             menu={{
                 items: [
                     { key: "detail", label: "查看详情", icon: <Eye className="size-3.5" /> },
+                    { key: "re-edit", label: "重新编辑", icon: <RotateCcw className="size-3.5" /> },
                     { type: "divider" },
                     { key: "download", label: "下载", icon: <Download className="size-3.5" /> },
                 ],
                 onClick: ({ key }) => {
                     if (key === "detail") onViewDetail(image);
+                    else if (key === "re-edit") onReEdit(image);
                     else if (key === "download") onDownload(image, index);
                 },
             }}

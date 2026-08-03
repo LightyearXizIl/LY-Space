@@ -1,0 +1,58 @@
+---
+title: 新会话交接
+description: 新 AI 会话接手前的快速上手指南（项目现状、关键决策与坑）
+---
+
+# 新会话交接文档
+
+> 用途：新 AI 会话接手前的快速上手指南。代码优先遵守 `AGENTS.md`，本文补充项目现状、关键决策与坑。
+
+## 1. 项目概况
+
+- **桌面 AI 创作工作台**：画布、生图工作台、视频创作台、精修工作台、提示词库、我的素材、配置
+- **技术栈**：Electron（`desktop/main.cjs` 主进程 + `preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由**渲染进程直连** OpenAI 兼容接口（无后端）
+- **代码结构**：`desktop/main.cjs`（主进程：存储、IPC、更新）、`desktop/renderer/src/`（页面 `pages/`、组件 `components/`、全局状态 `stores/`、服务 `services/`、画布 `pages/canvas/`）
+- **当前版本**：v0.1.9（`VERSION` 文件，tag `v0.1.9`）
+
+## 2. 数据存储（v0.1.9 起的最终形态）
+
+| 项 | 默认位置 | 说明 |
+|---|---|---|
+| 生成结果文件 | `安装目录\Result\`（Picture/Video/text/Audio 四文件夹） | 生成后立即自动落盘 |
+| 数据缓存（IndexedDB） | `安装目录\Data cache\` | 生成记录、结果、配置缓存；`sessionData` 指向它 |
+| 存储配置 | `%APPDATA%\LY Space\app-data\storage-settings.json` | 用户可改 resultRoot/cacheRoot |
+
+- **数据默认跟随安装目录**：换目录安装自动迁移（`migrateFromSource` + `updateStoragePathsAfterMigration`）
+- **E 盘旧数据**（`E:\Software\LY Space\Result`、`Data cache`）在 `isLegacyDefaultResultRoot/CacheRoot` 候选内，首次启动自动迁回安装目录
+- **升级保护**：`desktop/build/nsis-custom.nsh` 的 `customRemoveFiles` 宏（CopyFiles 跨卷安全）保证覆盖升级/自动更新时 `Data cache`、`Result` 不被 NSIS 卸载器清空
+
+## 3. 关键链路与已修复的坑
+
+- **落盘链路**：API 返回 → `persistGeneratedImages`（`services/api/image.ts`）→ `fetchImageBlob`（浏览器 fetch 失败回退主进程 `lyspace:fetch-url`，绕过 CORS）→ `saveGeneratedBlob` → 主进程 `writeGeneratedOutput` 写文件。**三条**走 blob 的路径（落盘/uploadImage 转存/下载）都必须用 fetchImageBlob 回退，别漏
+- **IPC**：`lyspace:fetch-url`（主进程下载，30s 超时 + image/ 类型校验）、`lyspace:save-file-dialog`（保存对话框）、`lyspace:write-generated-output` 等，均需 main.cjs + preload.cjs + `types/desktop.d.ts` 三端同步
+- **生图工作台**（`pages/image/index.tsx`）：结果图右键详情（logs 按 image.id 匹配 + `lastBatchRef` 兜底）、左上角复选框批量操作（下载选中/添加资产/删除选中，删除与记录对称回收 blob）、尺寸「自动」= 不传 size（Agnes 渠道不再回退 1:1）
+- **升级丢数据的历史根因**：NSIS 升级会清空安装目录 → 数据曾放 E 盘（v0.1.5）→ 用户改回跟随安装目录（v0.1.9）+ NSIS 宏保护。**不要再把默认目录改回 E 盘**
+- **CI 坑**：`git add -u` 不含新文件——新增文件（如 NSIS 宏）必须显式 `git add`，否则 CI 打包报 "cannot find specified resource"
+
+## 4. 发版本流程（每次用户要求"更新版本"时）
+
+1. `CHANGELOG.md`：Unreleased 整理成 `## vX.Y.Z - 日期`，保留空 Unreleased
+2. `VERSION` → vX.Y.Z；`desktop/package.json`、`desktop/renderer/package.json` version 同步
+3. `node scripts/verify-release-version.cjs vX.Y.Z` 校验
+4. `git add -u`（**新文件要显式 add**）+ commit + `git tag vX.Y.Z`
+5. `git push origin main` + `git push origin vX.Y.Z` —— tag 推送自动触发 CI（`publish-desktop.yml`）构建并上传 GitHub Release（draft → 正式）
+6. 用 `git credential fill` 取 token 验证 CI `completed/success` + release 资产（exe/blockmap/latest.yml 齐全）
+7. 本地 `pnpm --dir desktop run pack:win` 留存一份安装包到 `release/`（用户习惯）
+
+## 5. 待办与待测
+
+- `docs/content/docs/progress/todo.mdx`：画布插件稳定性、图像/视频/音频渠道兼容性
+- `docs/content/docs/progress/pending-test.mdx`：v0.1.9 待测项——auto 宽高比、数据跟随安装目录、升级保留、NSIS 保护、落盘、取消消失、复选框批量操作
+- 用户当前在实测 v0.1.9；新报问题优先从"存储/落盘/升级"和"生图工作台交互"两个方向排查
+
+## 6. 用户偏好
+
+- 中文交流；代码注释/文案用中文
+- 直接修复确认的 bug（不要只报告）；低风险问题修完一起说
+- 每次功能修复完成后用户通常要求发版本 + 推送源码和安装包 + 本地留存
+- 遵循 `AGENTS.md`（最小改动、不重构、文档规范、不执行编译除非要求）

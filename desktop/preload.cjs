@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld("lySpaceDesktop", {
     fetchUrl: (url) => ipcRenderer.invoke("lyspace:fetch-url", url),
     saveFileDialog: (payload) => ipcRenderer.invoke("lyspace:save-file-dialog", payload),
     writeGeneratedOutput: (payload) => ipcRenderer.invoke("lyspace:write-generated-output", payload),
+    deleteGeneratedFiles: (paths) => ipcRenderer.invoke("lyspace:delete-generated-files", paths),
     persistenceFlushed: () => ipcRenderer.invoke("lyspace:persistence-flushed"),
     relaunchAfterFlush: () => ipcRenderer.invoke("lyspace:relaunch-after-flush"),
     onFlushPersistence: (listener) => {

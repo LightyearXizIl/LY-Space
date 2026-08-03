@@ -324,19 +324,22 @@ async function requestGrsaiImages(config: AiConfig, prompt: string, images: stri
     return persistGeneratedImages((await Promise.all(requests)).flat());
 }
 
-async function persistGeneratedImages<T extends { dataUrl: string }>(images: T[]) {
-    await Promise.all(
-        images.map(async (image) => {
+async function persistGeneratedImages<T extends { dataUrl: string }>(images: T[]): Promise<Array<T & { localPath?: string }>> {
+    const persisted = await Promise.all(
+        images.map(async (image): Promise<T & { localPath?: string }> => {
             try {
                 // 浏览器 fetch 失败（远程 URL 跨域）时回退主进程下载，保证落盘成功
-                await saveGeneratedBlob("image", await fetchImageBlob(image.dataUrl));
+                const saved = await saveGeneratedBlob("image", await fetchImageBlob(image.dataUrl));
+                // 记录本地落盘路径，删除结果图时同步删除本地文件
+                return saved ? { ...image, localPath: saved.path } : image;
             } catch (error) {
                 // 结果仍会被工作台缓存；本地目录写入失败（含远程 URL 拉取失败）通过全局提示告知用户。
                 notifyStorageError(error);
+                return image;
             }
         }),
     );
-    return images;
+    return persisted;
 }
 
 async function persistGeneratedText(text: string) {

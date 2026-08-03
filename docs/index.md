@@ -32,6 +32,7 @@
 - [更新日志](/docs/progress/changelog)
 - [待测试](/docs/progress/pending-test)
 - [TODO](/docs/progress/todo)
+- [新会话交接](/docs/progress/handoff)
 
 ## 说明
 

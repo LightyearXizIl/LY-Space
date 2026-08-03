@@ -5,14 +5,16 @@ export function isDesktopStorageAvailable() {
 }
 
 export async function saveGeneratedBlob(kind: Exclude<StorageKind, "text">, blob: Blob) {
-    if (!window.lySpaceDesktop) return;
+    if (!window.lySpaceDesktop) return undefined;
     const extension = extensionForBlob(blob, kind);
     const write = window.lySpaceDesktop.writeGeneratedOutput({ kind, extension, bytes: await blob.arrayBuffer() });
     trackWrite(write);
     try {
-        await write;
+        // 返回本地落盘路径（{ path, name }），供删除结果时同步删除本地文件
+        return await write;
     } catch (error) {
         notifyStorageError(error);
+        return undefined;
     }
 }
 

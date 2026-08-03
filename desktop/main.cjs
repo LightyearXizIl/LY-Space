@@ -576,6 +576,25 @@ app.whenReady().then(async () => {
         return { canceled: false, path: selected.filePath };
     });
     ipcMain.handle("lyspace:write-generated-output", (_event, payload) => writeGeneratedOutput(payload));
+    // 删除已落盘的生成文件；路径限定在 resultRoot 内，本地文件不存在（ENOENT）时静默忽略
+    ipcMain.handle("lyspace:delete-generated-files", async (_event, paths) => {
+        if (!Array.isArray(paths)) return { deleted: 0, missing: 0 };
+        const root = path.resolve(storageSettings.resultRoot);
+        let deleted = 0;
+        let missing = 0;
+        for (const rawPath of paths) {
+            if (typeof rawPath !== "string") continue;
+            const target = path.resolve(rawPath);
+            if (target !== root && !target.startsWith(root + path.sep)) continue;
+            try {
+                await fs.promises.unlink(target);
+                deleted += 1;
+            } catch (error) {
+                if (error?.code === "ENOENT") missing += 1;
+            }
+        }
+        return { deleted, missing };
+    });
     ipcMain.handle("lyspace:persistence-flushed", () => {
         if (!mainWindow || allowWindowClose) return;
         if (closingTimer) clearTimeout(closingTimer);

@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { saveGeneratedBlob } from "@/services/desktop-storage";
+import { hostReferenceImage } from "@/services/image-hosting";
 import { imageToDataUrl, imageToFile } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
@@ -56,6 +57,15 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
     throw new Error("视频生成超时，请稍后重试");
 }
 
+// Agnes 只接受公网 HTTPS 参考图：把本地（blob/base64）参考图自动托管为公网 URL（OSS 优先，未配置时免费图床兜底）
+async function ensurePublicReferenceUrlsForRequest(refs: ReferenceImage[]): Promise<ReferenceImage[]> {
+    const localRefs = refs.filter((item) => !/^https:\/\//i.test(item.url || item.dataUrl || ""));
+    if (!localRefs.length) return refs;
+    const hosted = await Promise.all(localRefs.map(hostReferenceImage));
+    const hostedById = new Map(hosted.map((item) => [item.id, item]));
+    return refs.map((item) => hostedById.get(item.id) || item);
+}
+
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationTask> {
     const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
@@ -65,7 +75,11 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     if (isSeedanceVideoConfig(requestConfig)) {
         return createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     }
-    if (requestConfig.apiFormat === "agnes") return createAgnesVideoTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
+    if (requestConfig.apiFormat === "agnes") {
+        // Agnes 只接受公网 HTTPS 参考图：本地图片自动托管（OSS 优先，未配置时免费图床兜底），覆盖页面/画布/重试所有路径
+        const publicReferences = await ensurePublicReferenceUrlsForRequest(references);
+        return createAgnesVideoTask(requestConfig, selectedModel, prompt, publicReferences, videoReferences, audioReferences, options);
+    }
     if (videoReferences.length || audioReferences.length) {
         throw new Error("当前视频接口不支持参考视频或参考音频，请切换到 Seedance 2.0 / 火山 Agent Plan 模型，或移除参考资产");
     }
@@ -185,8 +199,17 @@ export async function storeGeneratedVideo(result: VideoGenerationResult): Promis
         try {
             const stored = await uploadMediaFile(result.url, "video");
             try {
-                const blob = await (await fetch(result.url)).blob();
-                await saveGeneratedBlob("video", blob);
+                let blob: Blob | null = null;
+                try {
+                    blob = await (await fetch(result.url)).blob();
+                } catch {
+                    // 浏览器 fetch 跨域失败时回退主进程下载，保证本地落盘（与生图工作台同款）
+                    if (window.lySpaceDesktop) {
+                        const fetched = await window.lySpaceDesktop.fetchUrl(result.url);
+                        blob = new Blob([fetched.bytes], { type: fetched.mimeType || "video/mp4" });
+                    }
+                }
+                if (blob) await saveGeneratedBlob("video", blob);
             } catch {
                 // 远端地址仍可作为缓存媒体使用；桌面副本失败不应丢失已生成的视频。
             }

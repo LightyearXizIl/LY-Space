@@ -607,26 +607,49 @@ app.whenReady().then(async () => {
         return { canceled: false, paths: savedPaths };
     });
     ipcMain.handle("lyspace:write-generated-output", (_event, payload) => writeGeneratedOutput(payload));
-    // 删除已落盘的生成文件；路径限定在 resultRoot 内，本地文件不存在（ENOENT）时静默忽略
+    // 删除已落盘的生成文件；localPath 全部由本进程 writeGeneratedOutput 生成（可信来源），仅校验绝对路径防止误删
     ipcMain.handle("lyspace:delete-generated-files", async (_event, paths) => {
-        if (!Array.isArray(paths)) return { deleted: 0, missing: 0, failed: 0 };
-        const root = path.resolve(storageSettings.resultRoot);
+        if (!Array.isArray(paths)) return { deleted: 0, missing: 0, failed: 0, skipped: 0 };
         let deleted = 0;
         let missing = 0;
         let failed = 0;
+        let skipped = 0;
         for (const rawPath of paths) {
             if (typeof rawPath !== "string") continue;
             const target = path.resolve(rawPath);
-            if (target !== root && !target.startsWith(root + path.sep)) continue;
+            if (!path.isAbsolute(target)) {
+                skipped += 1;
+                continue;
+            }
             try {
                 await fs.promises.unlink(target);
                 deleted += 1;
             } catch (error) {
-                if (error?.code === "ENOENT") missing += 1;
-                else failed += 1;
+                if (error?.code === "ENOENT") {
+                    missing += 1;
+                    continue;
+                }
+                // 文件被占用/权限不足等：延迟重试 3 次后再计失败
+                let resolved = false;
+                for (let attempt = 0; attempt < 3; attempt += 1) {
+                    await new Promise((resolve) => setTimeout(resolve, 300));
+                    try {
+                        await fs.promises.unlink(target);
+                        deleted += 1;
+                        resolved = true;
+                        break;
+                    } catch (retryError) {
+                        if (retryError?.code === "ENOENT") {
+                            missing += 1;
+                            resolved = true;
+                            break;
+                        }
+                    }
+                }
+                if (!resolved) failed += 1;
             }
         }
-        return { deleted, missing, failed };
+        return { deleted, missing, failed, skipped };
     });
     ipcMain.handle("lyspace:persistence-flushed", () => {
         if (!mainWindow || allowWindowClose) return;

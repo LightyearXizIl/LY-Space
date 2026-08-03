@@ -525,31 +525,48 @@ export default function ImagePage() {
         setSelectedImageIds([]);
     };
     const deleteSelectedImages = async () => {
-        // 同步删除包含这些图片的生成记录并回收 blob，与「删除记录」行为对称
-        const relatedLogs = logs.filter((log) => log.images.some((image) => selectedImageIds.includes(image.id)));
-        const imageKeys = relatedLogs.flatMap((log) => log.images.map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
-        // 同步删除本地已落盘文件（localPath 记录于生成时；本地文件不存在时主进程静默忽略）
-        const relatedImages = relatedLogs.flatMap((log) => log.images);
-        const localPaths = [...new Set(relatedImages.map((image) => image.localPath).filter((path): path is string => Boolean(path)))];
-        const skippedLocalCount = relatedImages.filter((image) => !image.localPath).length;
-        // 被删记录的全部图片 blob 已回收，结果区中同记录的其它未勾选图片也一并移除，避免破图
-        const deletedImageIds = new Set(relatedImages.map((image) => image.id));
-        void Promise.all([deleteStoredImages(imageKeys), ...relatedLogs.map((log) => logStore.removeItem(log.id))]).then(refreshLogs).catch(() => undefined);
+        // 只删除勾选的图片：所在记录中移除被删图片（记录无剩余图片时删除记录），不波及其他图片
+        const selectedIds = new Set(selectedImageIds);
+        const relatedLogs = logs.filter((log) => log.images.some((image) => selectedIds.has(image.id)));
+        const selectedImagesInLogs = relatedLogs.flatMap((log) => log.images).filter((image) => selectedIds.has(image.id));
+        // 只回收被删图片的 blob 与本地文件，同记录的其它图片保留
+        const imageKeys = selectedImagesInLogs.map((image) => image.storageKey).filter((key): key is string => Boolean(key));
+        const localPaths = [...new Set(selectedImagesInLogs.map((image) => image.localPath).filter((path): path is string => Boolean(path)))];
+        const missingPathCount = selectedImagesInLogs.filter((image) => !image.localPath).length;
+        void Promise.all([
+            deleteStoredImages(imageKeys),
+            ...relatedLogs.map(async (log) => {
+                const remaining = log.images.filter((image) => !selectedIds.has(image.id));
+                if (remaining.length) {
+                    await logStore.setItem(log.id, serializeLog({ ...log, images: remaining, thumbnails: remaining.map((image) => image.dataUrl).filter(Boolean) }));
+                } else {
+                    await logStore.removeItem(log.id);
+                }
+            }),
+        ]).then(refreshLogs).catch(() => undefined);
         if (localPaths.length && window.lySpaceDesktop) {
             try {
-                const { deleted, missing, failed } = await window.lySpaceDesktop.deleteGeneratedFiles(localPaths);
-                if (failed) message.warning(`有 ${failed} 个本地文件删除失败（可能被占用或权限不足），其余 ${deleted} 个已删除`);
-                else if (deleted === 0 && missing === localPaths.length) message.info("本地文件不存在，已忽略");
+                const { deleted, missing, failed, skipped } = await window.lySpaceDesktop.deleteGeneratedFiles(localPaths);
+                if (failed) {
+                    message.warning(`有 ${failed} 个本地文件删除失败（可能被占用或权限不足），已删除 ${deleted} 个`);
+                } else if (skipped) {
+                    message.warning(`${skipped} 个文件路径不在存储目录内已跳过（可能存储目录已变更）`);
+                } else if (deleted > 0) {
+                    message.success(`已删除 ${deleted} 张图片，本地文件已同步删除`);
+                } else if (missing === localPaths.length) {
+                    message.info("本地文件不存在，已忽略");
+                }
             } catch {
                 message.warning("本地文件删除失败");
             }
         }
-        if (skippedLocalCount) message.info(`${skippedLocalCount} 张图片没有本地文件记录（旧版本生成），已跳过本地删除`);
+        // 有生成记录但缺少本地路径（旧版本生成/落盘失败）的图片如实提示，便于区分定位
+        if (missingPathCount) message.info(`${missingPathCount} 张图片有生成记录但缺少本地路径（旧版本生成），已跳过本地删除`);
         // 同步清理任务表中对应的已完成任务，避免被挂载 sync 重新合并复活
         activeImageTasks.forEach((task, id) => {
-            if (task.status !== "pending" && (task.image && deletedImageIds.has(task.image.id))) activeImageTasks.delete(id);
+            if (task.status !== "pending" && task.image && selectedIds.has(task.image.id)) activeImageTasks.delete(id);
         });
-        setResults((value) => value.filter((result) => !(result.image && deletedImageIds.has(result.image.id))));
+        setResults((value) => value.filter((result) => !(result.image && selectedIds.has(result.image.id))));
         setSelectedImageIds([]);
     };
 

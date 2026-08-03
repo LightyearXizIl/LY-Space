@@ -1,6 +1,6 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, LoaderCircle, Music2, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, LoaderCircle, Music2, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon, Wand2 } from "lucide-react";
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
-import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Typography } from "antd";
+import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
 import localforage from "localforage";
 import { nanoid } from "nanoid";
 import { saveAs } from "file-saver";
@@ -15,6 +15,7 @@ import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceRefe
 import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
+import { requestImageQuestion } from "@/services/api/image";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -24,6 +25,7 @@ import { loadWorkbenchSession, saveWorkbenchSession } from "@/services/workbench
 import { trackWrite } from "@/services/desktop-storage";
 import { acknowledgeReferenceHandoff, getReferenceHandoffs } from "@/services/reference-handoff";
 import { hostImageOnOss, loadOssHostingConfig, saveOssHostingConfig, type OssHostingConfig } from "@/services/oss-hosting";
+import { hostReferenceImage } from "@/services/image-hosting";
 
 type GeneratedVideo = {
     id: string;
@@ -105,6 +107,7 @@ export default function VideoPage() {
     const [running, setRunning] = useState(false);
     const [logsOpen, setLogsOpen] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
+    const [optimizingPrompt, setOptimizingPrompt] = useState(false);
     const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [startedAt, setStartedAt] = useState(0);
@@ -282,24 +285,49 @@ export default function VideoPage() {
             message.error("剪切板里没有可读取的图片");
         }
     };
-    // Agnes 等渠道只接受公网 HTTPS 参考图：把本地（blob/base64）参考图自动上传 OSS，未配置 OSS 时明确报错
+    // Agnes 等渠道只接受公网 HTTPS 参考图：本地参考图自动托管（OSS 优先，未配置时免费图床兜底）
     const ensurePublicReferenceUrls = async (refs: ReferenceImage[]) => {
         const localRefs = refs.filter((item) => !/^https:\/\//i.test(item.dataUrl || item.url || ""));
         if (!localRefs.length) return refs;
-        if (!ossConfig.signatureEndpoint || !ossConfig.publicBaseUrl) {
-            setOssSettingsOpen(true);
-            throw new Error(`Agnes 视频只接受公网 HTTPS 参考图片：${localRefs.length} 张本地图片需先完成 OSS 设置，或改用「添加公网 URL」`);
-        }
-        const hosted = await Promise.all(
-            localRefs.map(async (item) => {
-                const response = await fetch(item.dataUrl);
-                if (!response.ok) throw new Error("无法读取本地参考图片");
-                const url = await hostImageOnOss(await response.blob(), item.name, ossConfig);
-                return { ...item, url, dataUrl: url };
-            }),
-        );
+        const hosted = await Promise.all(localRefs.map(hostReferenceImage));
         const hostedById = new Map(hosted.map((item) => [item.id, item]));
         return refs.map((item) => hostedById.get(item.id) || item);
+    };
+
+    // 优化提示词：调用所选文本模型（默认 defaultConfig.textModel = gpt-5.5）流式优化并回填
+    const optimizePrompt = async () => {
+        const text = prompt.trim();
+        if (!text) {
+            message.warning("请先输入提示词");
+            return;
+        }
+        if (!isAiConfigReady(effectiveConfig, model)) {
+            message.warning("请先完成配置");
+            openConfigDialog(true);
+            return;
+        }
+        setOptimizingPrompt(true);
+        try {
+            let streamed = "";
+            const textConfig = { ...effectiveConfig, model: effectiveConfig.textModel || effectiveConfig.model };
+            const answer = await requestImageQuestion(
+                textConfig,
+                [
+                    { role: "system", content: "你是专业的视频生成提示词优化专家。请优化用户给出的提示词，使其更具体、生动、可控（可补充镜头运动、主体动作、场景氛围、画面风格、时长节奏等描述），只输出优化后的提示词本身，不要解释、不要引号、不要多余内容。" },
+                    { role: "user", content: text },
+                ],
+                (delta) => {
+                    streamed += delta;
+                    setPrompt(streamed);
+                },
+            );
+            setPrompt(answer || streamed);
+            message.success("提示词已优化");
+        } catch (error) {
+            message.error(error instanceof Error ? `提示词优化失败：${error.message}` : "提示词优化失败");
+        } finally {
+            setOptimizingPrompt(false);
+        }
     };
 
     const generate = async () => {
@@ -317,7 +345,7 @@ export default function VideoPage() {
             if (publicReferences.length > snapshot.references.length || publicReferences.some((item, index) => item.dataUrl !== snapshot.references[index]?.dataUrl)) {
                 const hostedCount = publicReferences.filter((item, index) => item.dataUrl !== snapshot.references[index]?.dataUrl).length;
                 setReferences(publicReferences);
-                message.success(`已自动上传 ${hostedCount} 张本地参考图到 OSS`);
+                message.success(`已自动上传 ${hostedCount} 张本地参考图`);
             }
             const task = await createVideoGenerationTask(snapshot.config, snapshot.text, publicReferences, snapshot.videoReferences, snapshot.audioReferences);
             const log = buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: publicReferences, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: 0, status: "生成中", task });
@@ -533,7 +561,21 @@ export default function VideoPage() {
                                         </Button>
                                     </div>
                                 </div>
-                                <Input.TextArea value={prompt} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setPrompt(event.target.value)} rows={7} placeholder="描述镜头运动、主体动作、场景氛围和画面风格" />
+                                <div>
+                                    <Input.TextArea value={prompt} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setPrompt(event.target.value)} rows={7} placeholder="描述镜头运动、主体动作、场景氛围和画面风格" />
+                                    <div className="mt-2 flex items-center justify-end gap-1.5">
+                                        <ModelPicker
+                                            config={effectiveConfig}
+                                            value={effectiveConfig.textModel || effectiveConfig.model}
+                                            onChange={(value) => updateConfig("textModel", value)}
+                                            capability="text"
+                                            className="!h-6 !min-w-[7rem] !px-2 !text-xs"
+                                        />
+                                        <Tooltip title="优化提示词">
+                                            <Button type="text" size="small" className="!h-6 !w-6" icon={<Wand2 className="size-4" />} loading={optimizingPrompt} onClick={() => void optimizePrompt()} />
+                                        </Tooltip>
+                                    </div>
+                                </div>
                             </div>
 
                             <div className="min-w-0">
@@ -578,17 +620,19 @@ export default function VideoPage() {
                                     onDragLeave={handleReferenceDragLeave}
                                     onDrop={handleReferenceDrop}
                                 >
-                                    {references.map((item, index) => (
-                                        <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
-                                            <img src={item.dataUrl} alt={item.name} className="size-full object-cover" />
-                                            <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{seedanceReferenceLabel("image", index)}</span>
-                                            <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
-                                            {!/^https:\/\//i.test(item.url || item.dataUrl) ? <button type="button" className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white" onClick={() => void hostReferenceOnOss(item)}>托管 OSS</button> : null}
-                                            <button type="button" className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex" onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))} aria-label="移除参考图">
-                                                <Trash2 className="size-3.5" />
-                                            </button>
-                                        </div>
-                                    ))}
+                                    <Image.PreviewGroup>
+                                        {references.map((item, index) => (
+                                            <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
+                                                <Image src={item.dataUrl} alt={item.name} className="size-full object-cover" />
+                                                <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{seedanceReferenceLabel("image", index)}</span>
+                                                <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
+                                                {!/^https:\/\//i.test(item.url || item.dataUrl) ? <button type="button" className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white" onClick={() => void hostReferenceOnOss(item)}>托管 OSS</button> : null}
+                                                <button type="button" className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex" onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))} aria-label="移除参考图">
+                                                    <Trash2 className="size-3.5" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </Image.PreviewGroup>
                                     {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{referenceDragTarget === "image" ? "松开即可上传参考资产" : "暂无参考图，可拖入文件，最多 9 张"}</div> : null}
                                 </div>
                             </div>

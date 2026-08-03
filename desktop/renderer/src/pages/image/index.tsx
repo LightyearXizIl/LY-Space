@@ -277,12 +277,19 @@ export default function ImagePage() {
     const cancelResult = (id: string) => {
         const task = activeImageTasks.get(id);
         const controller = task?.controller || generationControllersRef.current.get(id);
-        if (!controller || controller.signal.aborted) return;
+        if (!controller || controller.signal.aborted) {
+            // 兜底：任务表/ref 中找不到可用控制器时仍移除卡片并提示，避免"点了没反应"
+            activeImageTasks.delete(id);
+            setResults((value) => value.filter((result) => result.id !== id));
+            message.info("已取消生成");
+            return;
+        }
         controller.abort();
         activeImageTasks.delete(id);
         emitImageTasks();
         // 取消后直接移除该槽位，卡片从结果区消失（cancelCount 统计由 runGenerationSlot 返回 null 决定）
         setResults((value) => value.filter((result) => result.id !== id));
+        message.info("已取消生成");
     };
 
     const generate = async () => {
@@ -727,9 +734,9 @@ export default function ImagePage() {
                                         </Button>
                                     </div>
                                 </div>
-                                <div className="relative">
+                                <div>
                                     <Input.TextArea value={prompt} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setPrompt(event.target.value)} rows={7} placeholder="描述画面主体、风格、构图、光线和用途" />
-                                    <div className="absolute bottom-2 right-2 z-10 flex items-center gap-1.5">
+                                    <div className="mt-2 flex items-center justify-end gap-1.5">
                                         <ModelPicker
                                             config={effectiveConfig}
                                             value={effectiveConfig.textModel || effectiveConfig.model}
@@ -1005,7 +1012,12 @@ function ResultImageCard({
 function PendingImageCard({ onCancel }: { onCancel: () => void }) {
     return (
         <Dropdown menu={{ items: [{ key: "cancel", danger: true, label: "取消生成", onClick: onCancel }] }} trigger={["contextMenu"]}>
-            <div className="relative aspect-square overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
+            <div
+                className="group relative aspect-square cursor-pointer overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 transition-colors hover:border-red-300 dark:border-stone-700 dark:bg-stone-900 dark:hover:border-red-800"
+                onClick={onCancel}
+                role="button"
+                aria-label="点击取消生成"
+            >
                 <div
                     className="absolute inset-0 opacity-60"
                     style={{
@@ -1015,7 +1027,8 @@ function PendingImageCard({ onCancel }: { onCancel: () => void }) {
                 />
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-stone-500 dark:text-stone-400">
                     <LoaderCircle className="size-6 animate-spin" />
-                    <span>生成中</span>
+                    <span className="group-hover:hidden">生成中</span>
+                    <span className="hidden text-red-500 group-hover:block">点击取消</span>
                 </div>
             </div>
         </Dropdown>

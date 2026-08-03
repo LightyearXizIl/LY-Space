@@ -282,6 +282,26 @@ export default function VideoPage() {
             message.error("剪切板里没有可读取的图片");
         }
     };
+    // Agnes 等渠道只接受公网 HTTPS 参考图：把本地（blob/base64）参考图自动上传 OSS，未配置 OSS 时明确报错
+    const ensurePublicReferenceUrls = async (refs: ReferenceImage[]) => {
+        const localRefs = refs.filter((item) => !/^https:\/\//i.test(item.dataUrl || item.url || ""));
+        if (!localRefs.length) return refs;
+        if (!ossConfig.signatureEndpoint || !ossConfig.publicBaseUrl) {
+            setOssSettingsOpen(true);
+            throw new Error(`Agnes 视频只接受公网 HTTPS 参考图片：${localRefs.length} 张本地图片需先完成 OSS 设置，或改用「添加公网 URL」`);
+        }
+        const hosted = await Promise.all(
+            localRefs.map(async (item) => {
+                const response = await fetch(item.dataUrl);
+                if (!response.ok) throw new Error("无法读取本地参考图片");
+                const url = await hostImageOnOss(await response.blob(), item.name, ossConfig);
+                return { ...item, url, dataUrl: url };
+            }),
+        );
+        const hostedById = new Map(hosted.map((item) => [item.id, item]));
+        return refs.map((item) => hostedById.get(item.id) || item);
+    };
+
     const generate = async () => {
         const snapshot = buildRequestSnapshot();
         if (!snapshot) return;
@@ -292,8 +312,15 @@ export default function VideoPage() {
         const batchStartedAt = performance.now();
         setStartedAt(batchStartedAt);
         try {
-            const task = await createVideoGenerationTask(snapshot.config, snapshot.text, snapshot.references, snapshot.videoReferences, snapshot.audioReferences);
-            const log = buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: 0, status: "生成中", task });
+            // Agnes 等渠道只接受公网 HTTPS 参考图：自动把本地参考图（blob/base64）上传 OSS 后提交
+            const publicReferences = await ensurePublicReferenceUrls(snapshot.references);
+            if (publicReferences.length > snapshot.references.length || publicReferences.some((item, index) => item.dataUrl !== snapshot.references[index]?.dataUrl)) {
+                const hostedCount = publicReferences.filter((item, index) => item.dataUrl !== snapshot.references[index]?.dataUrl).length;
+                setReferences(publicReferences);
+                message.success(`已自动上传 ${hostedCount} 张本地参考图到 OSS`);
+            }
+            const task = await createVideoGenerationTask(snapshot.config, snapshot.text, publicReferences, snapshot.videoReferences, snapshot.audioReferences);
+            const log = buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: publicReferences, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: 0, status: "生成中", task });
             await saveLog(log, false);
             void pollGenerationLog(log, snapshot.config);
         } catch (error) {

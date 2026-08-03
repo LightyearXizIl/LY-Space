@@ -79,7 +79,8 @@ jobs:
         run: |
           # 从 CHANGELOG.md 提取本版本段落作为 Release 说明（保持与更新日志一致）
           $tag = $env:GITHUB_REF_NAME
-          $changelog = Get-Content "..\CHANGELOG.md" -Raw -Encoding UTF8
+          $changelogPath = Join-Path $env:GITHUB_WORKSPACE "CHANGELOG.md"
+          $changelog = Get-Content $changelogPath -Raw -Encoding UTF8
           $pattern = "(?ms)^## $tag .*?(?=^## v|\z)"
           $notes = [regex]::Match($changelog, $pattern).Value.Trim()
           if (-not $notes) { $notes = "LY Space $tag" }

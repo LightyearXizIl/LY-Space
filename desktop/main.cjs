@@ -19,8 +19,6 @@ let downloadCancellation = null;
 let updateState = { status: "idle", version: "", releaseDate: "", releaseNotes: "", progress: null, error: "", supported: false };
 
 const RESULT_FOLDERS = { image: "Picture", video: "Video", audio: "Audio", text: "text" };
-const DEFAULT_RESULT_ROOT = "E:/Software/LY Space/Result";
-const DEFAULT_CACHE_ROOT = "E:/Software/LY Space/Data cache";
 
 function displayVersion(version) {
     const value = String(version || "").trim().replace(/^v/i, "");
@@ -118,22 +116,24 @@ function storageBaseDirectory() {
 }
 
 function defaultStorageSettings() {
-    return { resultRoot: DEFAULT_RESULT_ROOT, cacheRoot: DEFAULT_CACHE_ROOT, defaultResultRoot: DEFAULT_RESULT_ROOT, defaultCacheRoot: DEFAULT_CACHE_ROOT };
+    // 数据默认跟随安装目录：Result 与 Data cache 位于安装目录下，换目录安装自动迁移
+    const base = storageBaseDirectory();
+    return { resultRoot: path.join(base, "Result"), cacheRoot: path.join(base, "Data cache"), defaultResultRoot: path.join(base, "Result"), defaultCacheRoot: path.join(base, "Data cache") };
 }
 
-/** 是否为历史默认结果目录（安装目录/Result、documents/LY Space/Result），命中则切换为新默认。 */
+/** 是否为历史默认结果目录（E 盘固定目录、documents/LY Space/Result），命中则切换为新默认（安装目录/Result）。 */
 function isLegacyDefaultResultRoot(value) {
     if (!value) return false;
     const resolved = path.resolve(value);
-    const candidates = [path.join(storageBaseDirectory(), "Result"), path.join(app.getPath("documents"), "LY Space", "Result")];
+    const candidates = ["E:/Software/LY Space/Result", path.join(app.getPath("documents"), "LY Space", "Result")];
     return candidates.some((candidate) => path.resolve(candidate) === resolved);
 }
 
-/** 是否为历史默认缓存目录（安装目录/Data cache、userData/app-data/Data cache、documents/LY Space/Data cache），命中则切换为新默认。 */
+/** 是否为历史默认缓存目录（E 盘固定目录、userData/app-data/Data cache、documents/LY Space/Data cache），命中则切换为新默认（安装目录/Data cache）。 */
 function isLegacyDefaultCacheRoot(value) {
     if (!value) return false;
     const resolved = path.resolve(value);
-    const candidates = [path.join(storageBaseDirectory(), "Data cache"), path.join(app.getPath("userData"), "app-data", "Data cache"), path.join(app.getPath("documents"), "LY Space", "Data cache")];
+    const candidates = ["E:/Software/LY Space/Data cache", path.join(app.getPath("userData"), "app-data", "Data cache"), path.join(app.getPath("documents"), "LY Space", "Data cache")];
     return candidates.some((candidate) => path.resolve(candidate) === resolved);
 }
 
@@ -296,7 +296,7 @@ function configureStorageBeforeReady() {
     migrateLegacyResultIfNeeded();
     // 旧默认缓存目录（IndexedDB/localStorage）迁移到新默认目录，必须在 sessionData 指向新目录之前完成
     migrateLegacyCacheIfNeeded();
-    // sessionData（IndexedDB/localStorage）指向缓存目录（默认 E:/Software/LY Space/Data cache）
+    // sessionData（IndexedDB/localStorage）指向缓存目录（默认跟随安装目录：安装目录/Data cache）
     app.setPath("sessionData", storageSettings.cacheRoot);
     app.setPath("cache", path.join(storageSettings.cacheRoot, "Cache"));
 }
@@ -327,8 +327,8 @@ function migrateDataToCurrentInstall() {
 }
 
 function migrateFromSource(source, currentInstallDir) {
-    // 数据默认固定在 E 盘；仅当结果/缓存目录位于安装目录体系内（当前或旧安装目录）时才迁移，
-    // 避免默认 E 盘配置下把旧目录数据复制到安装目录
+    // 数据默认跟随安装目录；仅当结果/缓存目录位于安装目录体系内（当前或旧安装目录）时才迁移，
+    // 避免默认安装目录配置外（如用户自定义路径）时把旧目录数据复制到安装目录
     const currentResult = path.join(currentInstallDir, "Result");
     const legacyResult = path.join(source, "Result");
     const resultIsInstallDir = path.resolve(storageSettings.resultRoot) === path.resolve(currentResult) || path.resolve(storageSettings.resultRoot) === path.resolve(legacyResult);

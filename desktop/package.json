@@ -1,6 +1,6 @@
 {
   "name": "ly-space-desktop",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "LY Space desktop creative workspace",
   "author": "LY Space",
   "private": true,
@@ -46,7 +46,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
-      "shortcutName": "LY Space"
+      "shortcutName": "LY Space",
+      "include": "build/nsis-custom.nsh"
     },
     "artifactName": "LY Space Setup ${version}.${ext}",
     "publish": [

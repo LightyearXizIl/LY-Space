@@ -908,7 +908,10 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 function agnesImageSize(config: AiConfig) {
     const resolution = normalizeImageResolution(config.imageResolution);
     if (resolution === "8k") throw new Error("Agnes Image 2.1 官方最高支持 4K，请选择 4K 或更低分辨率");
-    return resolveRequestSize(resolution, config.size) || `${resolutionEdge(resolution)}x${resolutionEdge(resolution)}`;
+    const size = config.size.trim();
+    // auto：不传 size，由接口按提示词自动决定宽高比（不再回退 1:1 正方形）
+    if (!size || size.toLowerCase() === "auto") return undefined;
+    return resolveRequestSize(resolution, size);
 }
 
 /** 目标是否为 Agnes 端点：apiFormat 为 agnes，或 baseUrl 指向 Agnes 主机（兼容以 openai 格式配置的 Agnes 渠道）。 */
@@ -923,11 +926,12 @@ function isAgnesTarget(requestConfig: AiConfig) {
 
 async function requestAgnesImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
     const images = await Promise.all(references.map(imageToDataUrl));
+    const size = agnesImageSize(config);
     const makeRequest = async () => {
         const response = await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/generations"), {
             model: config.model,
             prompt: withSystemPrompt(config, prompt),
-            size: agnesImageSize(config),
+            ...(size ? { size } : {}),
             return_base64: true,
             ...(images.length ? { image: images } : {}),
         }, { headers: aiHeaders(config, "application/json"), signal: options?.signal });

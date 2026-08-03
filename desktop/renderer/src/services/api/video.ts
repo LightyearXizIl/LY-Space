@@ -57,7 +57,7 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
     throw new Error("视频生成超时，请稍后重试");
 }
 
-// Agnes 只接受公网 HTTPS 参考图：本地图优先自动托管（OSS/免费图床），图床不可达时回退以 base64 dataURL 直接发送
+// Agnes 只接受公网 HTTPS 参考图：本地图自动托管（OSS/免费图床），托管失败时明确报错引导
 async function ensurePublicReferenceUrlsForRequest(refs: ReferenceImage[]): Promise<ReferenceImage[]> {
     const localRefs = refs.filter((item) => !/^https:\/\//i.test(item.url || item.dataUrl || ""));
     if (!localRefs.length) return refs;
@@ -65,14 +65,8 @@ async function ensurePublicReferenceUrlsForRequest(refs: ReferenceImage[]): Prom
         localRefs.map(async (item) => {
             try {
                 return await hostReferenceImage(item);
-            } catch {
-                // 图床不可达（如国内网络无法访问海外图床）：回退 base64 直发
-                try {
-                    const dataUrl = await imageToDataUrl(item);
-                    return { ...item, url: dataUrl, dataUrl };
-                } catch {
-                    throw new Error("参考图片无法处理，请改用公网 HTTPS 图片 URL");
-                }
+            } catch (error) {
+                throw new Error(error instanceof Error ? `${error.message}；Agnes 生成需参考图为公网可访问地址` : "参考图片无法托管，请改用公网 HTTPS 图片 URL");
             }
         }),
     );
@@ -119,8 +113,6 @@ function agnesFrames(seconds: string) {
 
 function agnesPublicImageUrl(image: ReferenceImage) {
     const url = image.url || image.dataUrl;
-    // 本地图片图床托管失败时以 base64 dataURL 直接发送（部分服务支持）；其余必须是公网 HTTPS URL
-    if (/^data:image\//i.test(url)) return url;
     if (!/^https:\/\//i.test(url)) throw new Error("Agnes 视频只接受公网 HTTPS 参考图片 URL。本地图片、Blob 和 Base64 无法直接发送；请先添加公网图片 URL。");
     return url;
 }
@@ -476,7 +468,9 @@ function readAxiosError(error: unknown, fallback: string) {
         return readApiErrorMessage(responseData) || statusMessage(error.response?.status, fallback);
     }
     if (error instanceof DOMException && error.name === "AbortError") return "请求已取消";
-    return error instanceof Error ? readApiErrorMessage(error.message) || error.message : fallback;
+    if (error instanceof Error) return readApiErrorMessage(error.message) || error.message;
+    // 未知异常对象也展示出来，便于定位（如请求体过大等）
+    return `${fallback}（${String(error)}）`;
 }
 
 function statusMessage(status: number | undefined, fallback: string) {

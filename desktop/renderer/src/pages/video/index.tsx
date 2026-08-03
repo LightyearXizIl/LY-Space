@@ -271,7 +271,7 @@ export default function VideoPage() {
             message.error("剪切板里没有可读取的图片");
         }
     };
-    // Agnes 等渠道只接受公网 HTTPS 参考图：本地参考图自动托管（OSS 优先，免费图床兜底），失败回退 base64 直发
+    // Agnes 等渠道只接受公网 HTTPS 参考图：本地参考图自动托管（OSS 优先，免费图床兜底），失败明确报错引导
     const ensurePublicReferenceUrls = async (refs: ReferenceImage[]) => {
         const localRefs = refs.filter((item) => !/^https:\/\//i.test(item.dataUrl || item.url || ""));
         if (!localRefs.length) return refs;
@@ -279,9 +279,8 @@ export default function VideoPage() {
             localRefs.map(async (item) => {
                 try {
                     return await hostReferenceImage(item);
-                } catch {
-                    const dataUrl = await imageToDataUrl(item);
-                    return { ...item, url: dataUrl, dataUrl };
+                } catch (error) {
+                    throw new Error(error instanceof Error ? `${error.message}；Agnes 生成需参考图为公网可访问地址` : "参考图片无法托管，请改用公网 HTTPS 图片 URL");
                 }
             }),
         );

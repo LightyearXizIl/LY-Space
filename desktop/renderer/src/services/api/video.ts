@@ -106,6 +106,38 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
     return pollOpenAIVideoTask(requestConfig, task, options);
 }
 
+// Agnes 请求：axios 优先；网络层失败（CORS/连接等，无 response）时自动回退主进程代理重试
+async function agnesRequest<T>(config: AiConfig, url: string, options: { method: "GET" | "POST"; headers: Record<string, string>; body?: string; signal?: AbortSignal }): Promise<T> {
+    if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    try {
+        const response = await axios.request<T>({
+            method: options.method,
+            url,
+            headers: options.headers,
+            data: options.body ? JSON.parse(options.body) : undefined,
+            signal: options.signal,
+        });
+        return response.data;
+    } catch (error) {
+        if (axios.isAxiosError(error) && !error.response && window.lySpaceDesktop && !options.signal?.aborted) {
+            const proxied = await window.lySpaceDesktop.proxyRequest({ method: options.method, url, headers: options.headers, body: options.body });
+            let data: unknown = proxied.data;
+            try {
+                data = JSON.parse(proxied.data);
+            } catch {
+                // 保留原始文本
+            }
+            if (proxied.status >= 400) {
+                // 构造兼容的 AxiosError，让 readAxiosError 正常提取错误信息
+                const fakeResponse = { data, status: proxied.status, statusText: "", headers: {}, config: {} } as never;
+                throw new axios.AxiosError("请求失败", String(proxied.status), undefined, undefined, fakeResponse);
+            }
+            return data as T;
+        }
+        throw error;
+    }
+}
+
 function agnesFrames(seconds: string) {
     const desired = Math.max(1, Math.min(18, Number(seconds) || 6)) * 24;
     return Math.max(9, Math.min(441, Math.round((Math.min(desired, 441) - 1) / 8) * 8 + 1));
@@ -123,15 +155,17 @@ async function createAgnesVideoTask(config: AiConfig, model: string, prompt: str
     const size = normalizeVideoSize(config.size) || "1280x720";
     const [width, height] = size.split("x").map(Number);
     try {
-        const response = await axios.post<ApiEnvelope<VideoResponse>>(aiApiUrl(config, "/videos"), {
+        const url = aiApiUrl(config, "/videos");
+        const body = JSON.stringify({
             model: modelOptionName(model),
             prompt,
             width,
             height,
             num_frames: agnesFrames(config.videoSeconds),
             ...(urls.length === 1 ? { image: urls[0] } : urls.length > 1 ? { extra_body: { image: urls, mode: "keyframes" } } : {}),
-        }, { headers: aiHeaders(config, "application/json"), signal: options?.signal });
-        const created = unwrapEnvelope(response.data, "Agnes 接口没有返回视频任务");
+        });
+        const data = await agnesRequest<ApiEnvelope<VideoResponse>>(config, url, { method: "POST", headers: aiHeaders(config, "application/json"), body, signal: options?.signal });
+        const created = unwrapEnvelope(data, "Agnes 接口没有返回视频任务");
         const videoId = created.id;
         if (!videoId) throw new Error("Agnes 接口没有返回 video_id");
         return { id: videoId, videoId, provider: "agnes", model };
@@ -143,7 +177,8 @@ async function createAgnesVideoTask(config: AiConfig, model: string, prompt: str
 async function pollAgnesVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     try {
         const url = `${config.baseUrl.replace(/\/+$/, "")}/agnesapi`;
-        const payload = (await axios.get<ApiEnvelope<VideoResponse>>(url, { params: { video_id: task.videoId || task.id, model_name: modelOptionName(task.model) }, headers: aiHeaders(config), signal: options?.signal })).data;
+        const query = `video_id=${encodeURIComponent(task.videoId || task.id)}&model_name=${encodeURIComponent(modelOptionName(task.model))}`;
+        const payload = await agnesRequest<ApiEnvelope<VideoResponse>>(config, `${url}?${query}`, { method: "GET", headers: aiHeaders(config), signal: options?.signal });
         const state = unwrapEnvelope(payload, "Agnes 接口没有返回视频任务");
         const resultUrl = videoResultUrl(state) || state.metadata?.url || state.metadata?.video_url;
         if (resultUrl) return { status: "completed", result: await videoResultFromUrl(resultUrl, options) };
@@ -465,7 +500,9 @@ function readAxiosError(error: unknown, fallback: string) {
     if (axios.isCancel(error)) return "请求已取消";
     if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; message?: string; code?: number | string }>(error)) {
         const responseData = error.response?.data;
-        return readApiErrorMessage(responseData) || statusMessage(error.response?.status, fallback);
+        if (responseData !== undefined) return readApiErrorMessage(responseData) || statusMessage(error.response?.status, fallback);
+        // 网络层失败（CORS/连接/超时等）：显示真实原因，避免被 fallback 掩盖
+        return error.message || fallback;
     }
     if (error instanceof DOMException && error.name === "AbortError") return "请求已取消";
     if (error instanceof Error) return readApiErrorMessage(error.message) || error.message;

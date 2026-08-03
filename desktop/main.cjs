@@ -725,6 +725,17 @@ app.whenReady().then(async () => {
         }
         return { deleted, missing, failed, skipped };
     });
+    // 通用请求代理：主进程 fetch 无浏览器网络限制（CORS 等），供渲染层网络层失败时回退
+    ipcMain.handle("lyspace:proxy-request", async (_event, payload) => {
+        const url = String(payload?.url || "");
+        if (!/^https:\/\//i.test(url)) throw new Error("仅支持 HTTPS 请求");
+        const method = String(payload?.method || "GET").toUpperCase();
+        const headers = payload?.headers && typeof payload.headers === "object" ? payload.headers : {};
+        const body = typeof payload?.body === "string" ? payload.body : undefined;
+        const response = await fetch(url, { method, headers, body });
+        const text = await response.text();
+        return { status: response.status, data: text };
+    });
     ipcMain.handle("lyspace:persistence-flushed", () => {
         if (!mainWindow || allowWindowClose) return;
         if (closingTimer) clearTimeout(closingTimer);

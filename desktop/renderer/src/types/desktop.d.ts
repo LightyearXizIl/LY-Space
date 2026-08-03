@@ -31,6 +31,7 @@ declare global {
             saveFilesDialog: (payload: { title?: string; files: Array<{ name: string; bytes: ArrayBuffer }>; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; paths: string[] }>;
             writeGeneratedOutput: (payload: { kind: StorageKind; extension?: string; bytes?: ArrayBuffer; text?: string }) => Promise<{ path: string; name: string }>;
             uploadFreeHost: (payload: { name?: string; mimeType?: string; bytes: ArrayBuffer }) => Promise<{ url: string }>;
+            proxyRequest: (payload: { method?: string; url: string; headers?: Record<string, string>; body?: string }) => Promise<{ status: number; data: string }>;
             deleteGeneratedFiles: (paths: string[]) => Promise<{ deleted: number; missing: number; failed: number; skipped: number }>;
             persistenceFlushed: () => Promise<void>;
             relaunchAfterFlush: () => Promise<void>;

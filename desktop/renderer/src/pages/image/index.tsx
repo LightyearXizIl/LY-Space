@@ -217,7 +217,8 @@ export default function ImagePage() {
         const controller = generationControllersRef.current.get(id);
         if (!controller || controller.signal.aborted) return;
         controller.abort();
-        setResults((value) => updateResultById(value, id, { status: "canceled", error: undefined, image: undefined }));
+        // 取消后直接移除该槽位，卡片从结果区消失（cancelCount 统计由 runGenerationSlot 返回 null 决定）
+        setResults((value) => value.filter((result) => result.id !== id));
     };
 
     const generate = async () => {

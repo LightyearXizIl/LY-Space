@@ -29,7 +29,7 @@ export async function uploadImage(input: string | Blob): Promise<UploadedImage> 
 }
 
 /** 获取图片 blob：浏览器 fetch 失败（如远程 URL 跨域被拦）时回退主进程下载，绕过 CORS 限制。 */
-async function fetchImageBlob(input: string) {
+export async function fetchImageBlob(input: string) {
     try {
         return await (await fetch(input)).blob();
     } catch (error) {

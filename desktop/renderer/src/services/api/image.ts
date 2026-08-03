@@ -5,7 +5,7 @@ import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
-import { imageToDataUrl, imageToFile } from "@/services/image-storage";
+import { fetchImageBlob, imageToDataUrl, imageToFile } from "@/services/image-storage";
 import { notifyStorageError, saveGeneratedBlob, saveGeneratedText } from "@/services/desktop-storage";
 import type { ReferenceImage } from "@/types/image";
 
@@ -328,7 +328,8 @@ async function persistGeneratedImages<T extends { dataUrl: string }>(images: T[]
     await Promise.all(
         images.map(async (image) => {
             try {
-                await saveGeneratedBlob("image", await (await fetch(image.dataUrl)).blob());
+                // 浏览器 fetch 失败（远程 URL 跨域）时回退主进程下载，保证落盘成功
+                await saveGeneratedBlob("image", await fetchImageBlob(image.dataUrl));
             } catch (error) {
                 // 结果仍会被工作台缓存；本地目录写入失败（含远程 URL 拉取失败）通过全局提示告知用户。
                 notifyStorageError(error);

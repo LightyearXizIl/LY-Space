@@ -327,10 +327,12 @@ function migrateDataToCurrentInstall() {
 }
 
 function migrateFromSource(source, currentInstallDir) {
-    // Result（生成结果图片等）
-    const legacyResult = path.join(source, "Result");
+    // 数据默认固定在 E 盘；仅当结果/缓存目录位于安装目录体系内（当前或旧安装目录）时才迁移，
+    // 避免默认 E 盘配置下把旧目录数据复制到安装目录
     const currentResult = path.join(currentInstallDir, "Result");
-    if (fs.existsSync(legacyResult) && !fs.existsSync(currentResult)) {
+    const legacyResult = path.join(source, "Result");
+    const resultIsInstallDir = path.resolve(storageSettings.resultRoot) === path.resolve(currentResult) || path.resolve(storageSettings.resultRoot) === path.resolve(legacyResult);
+    if (resultIsInstallDir && fs.existsSync(legacyResult) && !fs.existsSync(currentResult)) {
         try {
             copyDirectory(legacyResult, currentResult);
         } catch {
@@ -338,22 +340,24 @@ function migrateFromSource(source, currentInstallDir) {
         }
     }
     const currentCache = path.join(currentInstallDir, "Data cache");
-    // 旧安装目录的 Data cache（IndexedDB/localStorage/sessionData/Cache）
     const legacyCacheDir = path.join(source, "Data cache");
-    if (fs.existsSync(legacyCacheDir) && !fs.existsSync(currentCache)) {
+    const cacheIsInstallDir = path.resolve(storageSettings.cacheRoot) === path.resolve(currentCache) || path.resolve(storageSettings.cacheRoot) === path.resolve(legacyCacheDir);
+    // 旧安装目录的 Data cache（IndexedDB/localStorage/sessionData/Cache）
+    if (cacheIsInstallDir && fs.existsSync(legacyCacheDir) && !fs.existsSync(currentCache)) {
         try {
             copyDirectory(legacyCacheDir, currentCache);
         } catch {
             // 单项失败不阻塞
         }
     }
-    // userData 根目录的 Chromium web 数据（v0.0.9 的 sessionData 曾在 userData 根）
+    // userData 根目录的 Chromium web 数据（v0.0.9 的 sessionData 曾在 userData 根）→ 合并到当前生效的缓存目录
+    const targetCache = storageSettings.cacheRoot;
     for (const name of ["IndexedDB", "Local Storage", "Session Storage", "Cookies", "Preferences"]) {
         const legacyWeb = path.join(source, name);
-        const targetWeb = path.join(currentCache, name);
+        const targetWeb = path.join(targetCache, name);
         if (!fs.existsSync(legacyWeb) || fs.existsSync(targetWeb)) continue;
         try {
-            fs.mkdirSync(currentCache, { recursive: true });
+            fs.mkdirSync(targetCache, { recursive: true });
             if (fs.statSync(legacyWeb).isDirectory()) copyDirectory(legacyWeb, targetWeb);
             else fs.copyFileSync(legacyWeb, targetWeb);
         } catch {

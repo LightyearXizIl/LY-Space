@@ -111,6 +111,33 @@ function storageConfigFile() {
     return path.join(app.getPath("userData"), "app-data", "storage-settings.json");
 }
 
+function lastSaveDirectoryFile() {
+    return path.join(app.getPath("userData"), "app-data", "last-save-directory.txt");
+}
+
+// 记住用户上次保存文件的目录：下载/保存对话框默认沿用，跨重启持久化
+let lastSaveDirectory = "";
+function loadLastSaveDirectory() {
+    try {
+        lastSaveDirectory = fs.readFileSync(lastSaveDirectoryFile(), "utf8").trim();
+    } catch {
+        lastSaveDirectory = "";
+    }
+}
+function rememberSaveDirectory(directory) {
+    if (!directory) return;
+    lastSaveDirectory = directory;
+    try {
+        fs.mkdirSync(path.dirname(lastSaveDirectoryFile()), { recursive: true });
+        fs.writeFileSync(lastSaveDirectoryFile(), directory, "utf8");
+    } catch {
+        // 忽略持久化失败，内存值本次会话仍有效
+    }
+}
+function defaultSaveDirectory() {
+    return lastSaveDirectory || app.getPath("downloads");
+}
+
 function storageBaseDirectory() {
     return app.isPackaged ? path.dirname(process.execPath) : path.resolve(__dirname, "..");
 }
@@ -141,8 +168,9 @@ function readStorageSettings() {
     const defaults = defaultStorageSettings();
     try {
         const saved = JSON.parse(fs.readFileSync(storageConfigFile(), "utf8"));
-        const resultRoot = isLegacyDefaultResultRoot(saved.resultRoot) ? defaults.resultRoot : saved.resultRoot || defaults.resultRoot;
-        const cacheRoot = isLegacyDefaultCacheRoot(saved.cacheRoot) ? defaults.cacheRoot : saved.cacheRoot || defaults.cacheRoot;
+        // 以用户设置地址为准：仅首次安装（无配置）才默认跟随安装目录；用户设置过的路径（含历史 E 盘目录）一律保留
+        const resultRoot = saved.resultRoot || defaults.resultRoot;
+        const cacheRoot = saved.cacheRoot || defaults.cacheRoot;
         return { ...defaults, resultRoot, cacheRoot, pendingCacheRoot: saved.pendingCacheRoot || "", lastError: saved.lastError || "" };
     } catch {
         return { ...defaults, pendingCacheRoot: "", lastError: "" };
@@ -267,6 +295,7 @@ function isIndexedDbIntact(directory) {
 
 function configureStorageBeforeReady() {
     storageSettings = readStorageSettings();
+    loadLastSaveDirectory();
     if (storageSettings.pendingCacheRoot) {
         try {
             const nextCacheRoot = assertStoragePath(storageSettings.pendingCacheRoot, "缓存目录");
@@ -568,11 +597,12 @@ app.whenReady().then(async () => {
         const safeName = String(payload?.defaultPath || "image.png").replace(/[\\/:*?"<>|]/g, "_");
         const selected = await dialog.showSaveDialog(mainWindow, {
             title: payload?.title || "保存文件",
-            defaultPath: path.join(app.getPath("downloads"), safeName),
+            defaultPath: path.join(defaultSaveDirectory(), safeName),
             filters: payload?.filters || [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
         });
         if (selected.canceled || !selected.filePath) return { canceled: true, path: "" };
         await fs.promises.writeFile(selected.filePath, bytes);
+        rememberSaveDirectory(path.dirname(selected.filePath));
         return { canceled: false, path: selected.filePath };
     });
     // 批量保存：只弹一次保存对话框，全部文件写入所选目录（首张用所选路径，其余按传入 name 命名、重名自动加序号）
@@ -582,11 +612,12 @@ app.whenReady().then(async () => {
         const safeName = String(files[0]?.name || "image-1.png").replace(/[\\/:*?"<>|]/g, "_");
         const selected = await dialog.showSaveDialog(mainWindow, {
             title: payload?.title || "保存文件",
-            defaultPath: path.join(app.getPath("downloads"), safeName),
+            defaultPath: path.join(defaultSaveDirectory(), safeName),
             filters: payload?.filters || [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
         });
         if (selected.canceled || !selected.filePath) return { canceled: true, paths: [] };
         const directory = path.dirname(selected.filePath);
+        rememberSaveDirectory(directory);
         const savedPaths = [];
         for (let i = 0; i < files.length; i += 1) {
             const bytes = files[i]?.bytes ? Buffer.from(files[i].bytes) : null;
@@ -607,19 +638,35 @@ app.whenReady().then(async () => {
         return { canceled: false, paths: savedPaths };
     });
     ipcMain.handle("lyspace:write-generated-output", (_event, payload) => writeGeneratedOutput(payload));
-    // 免费图床（catbox）上传：主进程代理，无浏览器 CORS 限制
+    // 免费图床（tmpfiles.org 优先，catbox.moe 兜底）上传：主进程代理，无浏览器 CORS 限制
     ipcMain.handle("lyspace:upload-free-host", async (_event, payload) => {
         const name = String(payload?.name || "reference.png");
         const mimeType = String(payload?.mimeType || "application/octet-stream");
         const bytes = payload?.bytes ? Buffer.from(payload.bytes) : null;
         if (!bytes) throw new Error("没有可上传的图片内容");
-        const form = new FormData();
-        form.append("reqtype", "fileupload");
-        form.append("fileToUpload", new Blob([bytes], { type: mimeType }), name);
-        const response = await fetch("https://catbox.moe/user/api.php", { method: "POST", body: form });
-        const text = (await response.text()).trim();
-        if (!response.ok || !/^https:\/\//i.test(text)) throw new Error(`免费图床上传失败（HTTP ${response.status}）`);
-        return { url: text };
+        const uploadTmpfiles = async () => {
+            const form = new FormData();
+            form.append("file", new Blob([bytes], { type: mimeType }), name);
+            const response = await fetch("https://tmpfiles.org/api/v1/upload", { method: "POST", body: form });
+            const payloadJson = await response.json().catch(() => null);
+            const url = typeof payloadJson?.data?.url === "string" ? payloadJson.data.url : "";
+            if (!response.ok || !/^https:\/\//i.test(url)) throw new Error(`免费图床上传失败（HTTP ${response.status}）`);
+            return url.replace("/tmpfiles.org/", "/tmpfiles.org/dl/");
+        };
+        const uploadCatbox = async () => {
+            const form = new FormData();
+            form.append("reqtype", "fileupload");
+            form.append("fileToUpload", new Blob([bytes], { type: mimeType }), name);
+            const response = await fetch("https://catbox.moe/user/api.php", { method: "POST", body: form });
+            const text = (await response.text()).trim();
+            if (!response.ok || !/^https:\/\//i.test(text)) throw new Error(`免费图床上传失败（HTTP ${response.status}）`);
+            return text;
+        };
+        try {
+            return { url: await uploadTmpfiles() };
+        } catch {
+            return { url: await uploadCatbox() };
+        }
     });
     // 删除已落盘的生成文件；localPath 全部由本进程 writeGeneratedOutput 生成（可信来源），仅校验绝对路径防止误删
     ipcMain.handle("lyspace:delete-generated-files", async (_event, paths) => {

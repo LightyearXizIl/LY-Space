@@ -22,8 +22,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 | 数据缓存（IndexedDB） | `安装目录\Data cache\` | 生成记录、结果、配置缓存；`sessionData` 指向它 |
 | 存储配置 | `%APPDATA%\LY Space\app-data\storage-settings.json` | 用户可改 resultRoot/cacheRoot |
 
-- **数据默认跟随安装目录**：换目录安装自动迁移（`migrateFromSource` + `updateStoragePathsAfterMigration`）
-- **E 盘旧数据**（`E:\Software\LY Space\Result`、`Data cache`）在 `isLegacyDefaultResultRoot/CacheRoot` 候选内，首次启动自动迁回安装目录
+- **数据默认跟随安装目录**：仅首次安装（无配置）默认用安装目录；用户设置过的存储地址（含历史 E 盘目录）一律保留，换目录安装不覆盖用户设置
 - **升级保护**：`desktop/build/nsis-custom.nsh` 的 `customRemoveFiles` 宏（CopyFiles 跨卷安全）保证覆盖升级/自动更新时 `Data cache`、`Result` 不被 NSIS 卸载器清空
 
 ## 3. 关键链路与已修复的坑

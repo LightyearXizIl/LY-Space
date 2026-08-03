@@ -227,20 +227,6 @@ export default function VideoPage() {
         message.success("公网图片已添加；可用于 Agnes 视频模型");
     };
 
-    const hostReferenceOnOss = async (reference: ReferenceImage) => {
-        try {
-            if (!ossConfig.signatureEndpoint || !ossConfig.publicBaseUrl) {
-                setOssSettingsOpen(true);
-                throw new Error("请先完成 OSS 设置");
-            }
-            const response = await fetch(reference.dataUrl);
-            if (!response.ok) throw new Error("无法读取本地参考图片");
-            const url = await hostImageOnOss(await response.blob(), reference.name, ossConfig);
-            setReferences((value) => value.map((item) => item.id === reference.id ? { ...item, url, dataUrl: url } : item));
-            message.success("已上传到阿里云 OSS，可用于 Agnes 视频");
-        } catch (error) { message.error(error instanceof Error ? error.message : "OSS 上传失败"); }
-    };
-
     const persistOssConfig = async () => {
         try { await saveOssHostingConfig(ossConfig); setOssSettingsOpen(false); message.success("OSS 设置已保存"); }
         catch (error) { message.error(error instanceof Error ? error.message : "OSS 设置保存失败"); }
@@ -626,7 +612,6 @@ export default function VideoPage() {
                                                 <Image src={item.dataUrl} alt={item.name} className="size-full object-cover" />
                                                 <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{seedanceReferenceLabel("image", index)}</span>
                                                 <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
-                                                {!/^https:\/\//i.test(item.url || item.dataUrl) ? <button type="button" className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white" onClick={() => void hostReferenceOnOss(item)}>托管 OSS</button> : null}
                                                 <button type="button" className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex" onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))} aria-label="移除参考图">
                                                     <Trash2 className="size-3.5" />
                                                 </button>

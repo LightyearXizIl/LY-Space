@@ -126,7 +126,7 @@ export const defaultConfig: AiConfig = {
     models: GRSAI_DEFAULT_MODELS.map((model) => `default::${model.name}`),
     quality: "auto",
     imageResolution: "1k",
-    size: "1:1",
+    size: "auto",
     background: "",
     count: "1",
     canvasImageCount: "3",

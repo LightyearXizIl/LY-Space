@@ -2,12 +2,21 @@ import { hostImageOnOss, loadOssHostingConfig, type OssHostingConfig } from "@/s
 import type { ReferenceImage } from "@/types/image";
 
 /**
- * 免费图床上传（catbox.moe，匿名免配置）。返回公网 HTTPS 图片 URL。
- * 优先浏览器直传（catbox 支持 CORS 时），失败（CORS/网络拦截）自动回退主进程代理上传（无浏览器跨域限制）。
- * 依赖第三方服务：图片会公开到公网，国内网络可能不稳定；失败时抛错由调用方提示。
+ * 免费图床上传（tmpfiles.org 优先，catbox.moe 兜底，均匿名免配置）。返回公网 HTTPS 图片 URL。
+ * 每层图床先浏览器直传（支持 CORS 时），失败自动回退主进程代理（无跨域限制）。
+ * 依赖第三方服务：图片会公开到公网；全部失败时抛错提示配置 OSS 或使用公网 URL。
  */
 export async function uploadImageToFreeHost(input: Blob, name: string): Promise<string> {
-    const direct = async (): Promise<string> => {
+    const directTmpfiles = async (): Promise<string> => {
+        const form = new FormData();
+        form.append("file", input, name || "reference.png");
+        const response = await fetch("https://tmpfiles.org/api/v1/upload", { method: "POST", body: form });
+        const payload = await response.json().catch(() => null);
+        const url = typeof payload?.data?.url === "string" ? payload.data.url : "";
+        if (!response.ok || !/^https:\/\//i.test(url)) throw new Error(`免费图床上传失败（HTTP ${response.status}）`);
+        return url.replace("/tmpfiles.org/", "/tmpfiles.org/dl/");
+    };
+    const directCatbox = async (): Promise<string> => {
         const form = new FormData();
         form.append("reqtype", "fileupload");
         form.append("fileToUpload", input, name || "reference.png");
@@ -19,24 +28,37 @@ export async function uploadImageToFreeHost(input: Blob, name: string): Promise<
         return text;
     };
     try {
-        return await direct();
+        return await directTmpfiles();
     } catch (error) {
-        // 浏览器直传被 CORS/网络拦截时回退主进程代理（无跨域限制）
-        if (!window.lySpaceDesktop) throw error;
         try {
-            const result = await window.lySpaceDesktop.uploadFreeHost({ name: name || "reference.png", mimeType: input.type || "application/octet-stream", bytes: await input.arrayBuffer() });
-            return result.url;
+            return await directCatbox();
         } catch {
-            throw error;
+            // 浏览器直传被 CORS/网络拦截时回退主进程代理（无跨域限制，内部同样多图床兜底）
+            if (!window.lySpaceDesktop) throw error;
+            try {
+                const result = await window.lySpaceDesktop.uploadFreeHost({ name: name || "reference.png", mimeType: input.type || "application/octet-stream", bytes: await input.arrayBuffer() });
+                return result.url;
+            } catch {
+                throw new Error("免费图床上传失败（图床不可达，可能网络受限），请配置阿里云 OSS 或改用公网 HTTPS 图片 URL");
+            }
         }
     }
 }
 
 async function readReferenceBlob(item: ReferenceImage): Promise<Blob> {
     const url = item.dataUrl || item.url || "";
-    const response = await fetch(url);
-    if (!response.ok) throw new Error("无法读取本地参考图片");
-    return response.blob();
+    try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error("无法读取本地参考图片");
+        return response.blob();
+    } catch (error) {
+        // 公网图片被 CORS 拦截时回退主进程下载
+        if (window.lySpaceDesktop) {
+            const fetched = await window.lySpaceDesktop.fetchUrl(url);
+            return new Blob([fetched.bytes], { type: fetched.mimeType || "image/png" });
+        }
+        throw error;
+    }
 }
 
 /**

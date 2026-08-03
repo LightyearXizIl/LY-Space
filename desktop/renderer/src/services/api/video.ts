@@ -176,7 +176,9 @@ async function createAgnesVideoTask(config: AiConfig, model: string, prompt: str
 
 async function pollAgnesVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     try {
-        const url = `${config.baseUrl.replace(/\/+$/, "")}/agnesapi`;
+        // 文档：结果查询为 GET /agnesapi（不带 /v1）；baseUrl 可能带 /v1 尾缀，先归一化
+        const base = config.baseUrl.replace(/\/+$/, "").replace(/\/v1$/i, "");
+        const url = `${base}/agnesapi`;
         const query = `video_id=${encodeURIComponent(task.videoId || task.id)}&model_name=${encodeURIComponent(modelOptionName(task.model))}`;
         const payload = await agnesRequest<ApiEnvelope<VideoResponse>>(config, `${url}?${query}`, { method: "GET", headers: aiHeaders(config), signal: options?.signal });
         const state = unwrapEnvelope(payload, "Agnes 接口没有返回视频任务");
@@ -476,7 +478,7 @@ function readApiErrorMessage(value: unknown): string {
             if (inner === value && typeof parsed === "object" && Object.keys(parsed).length === 0) return "";
             return inner;
         } catch {
-            if (/<[a-z][\s\S]*>/i.test(value)) return `服务返回了 HTML 错误页面（${value.slice(0, 80)}...）`;
+            if (/<[a-z][\s\S]*>/i.test(value)) return `服务返回了 HTML 错误页面（${value.slice(0, 80)}...）。Base URL 可能填成了网页地址，请改为 API 地址（如 https://apihub.agnes-ai.cn）`;
             return value;
         }
     }
@@ -497,17 +499,17 @@ function readApiErrorMessage(value: unknown): string {
 }
 
 function readAxiosError(error: unknown, fallback: string) {
-    if (axios.isCancel(error)) return "请求已取消";
-    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; message?: string; code?: number | string }>(error)) {
+    let message: string;
+    if (axios.isCancel(error)) message = "请求已取消";
+    else if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; message?: string; code?: number | string }>(error)) {
         const responseData = error.response?.data;
-        if (responseData !== undefined) return readApiErrorMessage(responseData) || statusMessage(error.response?.status, fallback);
-        // 网络层失败（CORS/连接/超时等）：显示真实原因，避免被 fallback 掩盖
-        return error.message || fallback;
-    }
-    if (error instanceof DOMException && error.name === "AbortError") return "请求已取消";
-    if (error instanceof Error) return readApiErrorMessage(error.message) || error.message;
-    // 未知异常对象也展示出来，便于定位（如请求体过大等）
-    return `${fallback}（${String(error)}）`;
+        message = responseData !== undefined ? readApiErrorMessage(responseData) || statusMessage(error.response?.status, fallback) : error.message || fallback;
+    } else if (error instanceof DOMException && error.name === "AbortError") message = "请求已取消";
+    else if (error instanceof Error) message = readApiErrorMessage(error.message) || error.message;
+    else message = `${fallback}（${String(error)}）`;
+    // Agnes 服务端（litellm 网关）异常引导
+    if (/litellm|UploadFile|InternalServerError/i.test(message)) return `${message}；Agnes 服务端异常（可能正在维护），请稍后重试或检查 API 网关状态`;
+    return message;
 }
 
 function statusMessage(status: number | undefined, fallback: string) {

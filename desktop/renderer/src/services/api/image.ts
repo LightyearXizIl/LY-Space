@@ -359,7 +359,7 @@ function readApiErrorMessage(value: unknown): string {
             return inner;
         } catch {
             // 检查是否是 HTML 错误页面
-            if (/<[a-z][\s\S]*>/i.test(value)) return `服务返回了 HTML 错误页面（${value.slice(0, 80)}...）`;
+            if (/<[a-z][\s\S]*>/i.test(value)) return `服务返回了 HTML 错误页面（${value.slice(0, 80)}...）。Base URL 可能填成了网页地址，请改为 API 地址（如 https://apihub.agnes-ai.cn）`;
             return value;
         }
     }

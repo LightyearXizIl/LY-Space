@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## v0.3.1 - 2026-08-03
+
++ [修复] Agnes 视频按官方文档适配：结果查询路径正确剥离 /v1（GET /agnesapi），创建任务 /v1/videos 由代码自动补齐——中国站（api.agnes-ai.cn）与国际站（apihub.agnes-ai.com）均可正确工作。
++ [优化] 错误提示增强：响应为 HTML 时提示「Base URL 可能填成了网页地址，请改为 API 地址」；Agnes 服务端异常（litellm/UploadFile）时明确提示可能正在维护。
 ## v0.3.0 - 2026-08-03
 
 + [修复] Agnes 渠道（含中国站 apihub.agnes-ai.cn）请求网络层失败导致"任务创建失败"：新增主进程请求代理，axios 网络层失败（CORS/连接/超时）时自动回退主进程重试；失败错误显示真实原因（Network Error 等），便于定位。

@@ -76,4 +76,11 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit $env:GITHUB_REF_NAME --draft=false --latest --title "LY Space $env:GITHUB_REF_NAME"
+        run: |
+          # 从 CHANGELOG.md 提取本版本段落作为 Release 说明（保持与更新日志一致）
+          $tag = $env:GITHUB_REF_NAME
+          $changelog = Get-Content "..\CHANGELOG.md" -Raw -Encoding UTF8
+          $pattern = "(?ms)^## $tag .*?(?=^## v|\z)"
+          $notes = [regex]::Match($changelog, $pattern).Value.Trim()
+          if (-not $notes) { $notes = "LY Space $tag" }
+          gh release edit $tag --draft=false --latest --title "LY Space $tag" --notes $notes

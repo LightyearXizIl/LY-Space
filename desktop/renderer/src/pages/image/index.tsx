@@ -71,6 +71,26 @@ const RESULT_ACTION_BUTTON_CLASS = "min-w-[104px] flex-1 px-2 [&_.ant-btn-icon]:
 const MAX_REFERENCE_IMAGES = 6;
 const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
 
+// 模块级生成任务表：切换页面（组件卸载）不中断任务，返回页面时恢复状态并同步 UI
+type ActiveImageTask = {
+    controller: AbortController;
+    status: "pending" | "success" | "failed" | "canceled";
+    image?: GeneratedImage;
+    error?: string;
+    startedAt: number;
+};
+const activeImageTasks = new Map<string, ActiveImageTask>();
+const imageTaskListeners = new Set<() => void>();
+function emitImageTasks() {
+    imageTaskListeners.forEach((listener) => listener());
+}
+function subscribeImageTasks(listener: () => void) {
+    imageTaskListeners.add(listener);
+    return () => {
+        imageTaskListeners.delete(listener);
+    };
+}
+
 export default function ImagePage() {
     const { message } = App.useApp();
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -110,13 +130,39 @@ export default function ImagePage() {
         return () => window.clearInterval(timer);
     }, [running, startedAt]);
 
-    useEffect(
-        () => () => {
-            generationControllersRef.current.forEach((controller) => controller.abort());
-            generationControllersRef.current.clear();
-        },
-        [],
-    );
+    // 注意：不再在组件卸载时 abort 生成任务——切换页面任务继续在后台运行，
+    // 状态保存在模块级 activeImageTasks，返回页面时恢复。
+    // 挂载时合并模块级任务表（切页返回恢复进行中/已完成任务），并订阅任务变化同步 UI
+    useEffect(() => {
+        const sync = () => {
+            if (activeImageTasks.size) {
+                const earliest = Math.min(...[...activeImageTasks.values()].map((task) => task.startedAt));
+                setStartedAt(earliest);
+                setElapsedMs(performance.now() - earliest);
+            }
+            setRunning(activeImageTasks.size > 0);
+            const completedIds: string[] = [];
+            activeImageTasks.forEach((task, id) => {
+                if (task.status !== "pending") completedIds.push(id);
+            });
+            setResults((prev) => {
+                let next = prev;
+                activeImageTasks.forEach((task, id) => {
+                    const existing = next.find((result) => result.id === id);
+                    if (existing) {
+                        next = next.map((result) => (result.id === id ? { ...result, status: task.status, image: task.image, error: task.error } : result));
+                    } else {
+                        next = [{ id, status: task.status, image: task.image, error: task.error }, ...next];
+                    }
+                });
+                return next;
+            });
+            // 已完成任务被结果区消费后从任务表移除（防止无限增长；session 已兜底持久化）
+            if (completedIds.length) completedIds.forEach((id) => activeImageTasks.delete(id));
+        };
+        sync();
+        return subscribeImageTasks(sync);
+    }, []);
 
     useEffect(() => {
         void refreshLogs();
@@ -130,7 +176,22 @@ export default function ImagePage() {
                 if (!active || !session) return;
                 setPrompt(session.prompt || "");
                 setReferences(session.references || []);
-                setResults((session.results || []).map((result) => (result.status === "pending" ? { ...result, status: "failed", error: "上次生成已中断，可重试" } : result)));
+                setResults((prev) => {
+                    const restored = (session.results || []).map((result) => {
+                        if (result.status !== "pending") return result;
+                        // sync 已合并的最终状态（切页期间任务完成）优先保留
+                        const existing = prev.find((item) => item.id === result.id);
+                        if (existing && existing.status !== "pending") return existing;
+                        // 同会话切页：任务表中有该任务则恢复其状态（进行中/已完成）
+                        const task = activeImageTasks.get(result.id);
+                        if (task) return { ...result, status: task.status, image: task.image, error: task.error };
+                        // 真实重启/中断场景才标记为失败
+                        return { ...result, status: "failed" as const, error: "上次生成已中断，可重试" };
+                    });
+                    const restoredIds = new Set(restored.map((item) => item.id));
+                    const extra = prev.filter((item) => !restoredIds.has(item.id));
+                    return [...restored, ...extra];
+                });
                 setElapsedMs(session.elapsedMs || 0);
             })
             .catch(() => undefined)
@@ -214,9 +275,12 @@ export default function ImagePage() {
     };
 
     const cancelResult = (id: string) => {
-        const controller = generationControllersRef.current.get(id);
+        const task = activeImageTasks.get(id);
+        const controller = task?.controller || generationControllersRef.current.get(id);
         if (!controller || controller.signal.aborted) return;
         controller.abort();
+        activeImageTasks.delete(id);
+        emitImageTasks();
         // 取消后直接移除该槽位，卡片从结果区消失（cancelCount 统计由 runGenerationSlot 返回 null 决定）
         setResults((value) => value.filter((result) => result.id !== id));
     };
@@ -474,6 +538,10 @@ export default function ImagePage() {
             }
         }
         if (skippedLocalCount) message.info(`${skippedLocalCount} 张图片没有本地文件记录（旧版本生成），已跳过本地删除`);
+        // 同步清理任务表中对应的已完成任务，避免被挂载 sync 重新合并复活
+        activeImageTasks.forEach((task, id) => {
+            if (task.status !== "pending" && (task.image && deletedImageIds.has(task.image.id))) activeImageTasks.delete(id);
+        });
         setResults((value) => value.filter((result) => !(result.image && deletedImageIds.has(result.image.id))));
         setSelectedImageIds([]);
     };
@@ -485,7 +553,14 @@ export default function ImagePage() {
             message.info("没有需要清除的失败项");
             return;
         }
-        if (failedCards.length) setResults((value) => value.filter((result) => result.status !== "failed"));
+        if (failedCards.length) {
+            setResults((value) => value.filter((result) => result.status !== "failed"));
+            // 同步清理任务表中已完成的失败任务，避免被挂载 sync 重新合并复活
+            activeImageTasks.forEach((task, id) => {
+                if (task.status === "failed") activeImageTasks.delete(id);
+            });
+            emitImageTasks();
+        }
         // 失败记录不含结果图 blob，直接删除记录即可；同步刷新日志列表
         if (failedIds.length) {
             void Promise.all(failedIds.map((id) => logStore.removeItem(id))).then(refreshLogs).catch(() => undefined);
@@ -507,8 +582,10 @@ export default function ImagePage() {
         setOptimizingPrompt(true);
         try {
             let streamed = "";
+            // 使用所选文本模型（默认 defaultConfig.textModel = gpt-5.5）；requestImageQuestion 内部优先取 config.model
+            const textConfig = { ...effectiveConfig, model: effectiveConfig.textModel || effectiveConfig.model };
             const answer = await requestImageQuestion(
-                effectiveConfig,
+                textConfig,
                 [
                     { role: "system", content: "你是专业的生图提示词优化专家。请优化用户给出的提示词，使其更具体、生动、可控（可补充主体、风格、构图、光线、氛围、画质等描述），只输出优化后的提示词本身，不要解释、不要引号、不要多余内容。" },
                     { role: "user", content: text },
@@ -546,6 +623,8 @@ export default function ImagePage() {
         const itemStartedAt = performance.now();
         const controller = new AbortController();
         generationControllersRef.current.set(id, controller);
+        activeImageTasks.set(id, { controller, status: "pending", startedAt: itemStartedAt });
+        emitImageTasks();
         try {
             const requestOptions = { signal: controller.signal };
             const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references, undefined, requestOptions) : await requestGeneration(snapshot.config, snapshot.text, requestOptions);
@@ -555,13 +634,20 @@ export default function ImagePage() {
             const nextImage: GeneratedImage = { id: image.id, dataUrl: image.dataUrl, durationMs: performance.now() - itemStartedAt, width: meta.width, height: meta.height, bytes: getDataUrlByteSize(image.dataUrl), localPath: image.localPath };
             if (controller.signal.aborted) return null;
             setResults((value) => updateResultById(value, id, { status: "success", image: nextImage }));
+            // 完成状态保留在任务表，切页返回时由挂载合并消费（消费后移除）
+            activeImageTasks.set(id, { controller, status: "success", image: nextImage, startedAt: itemStartedAt });
+            emitImageTasks();
             return nextImage;
         } catch (error) {
             if (controller.signal.aborted) {
                 setResults((value) => updateResultById(value, id, { status: "canceled", error: undefined, image: undefined }));
+                activeImageTasks.delete(id);
+                emitImageTasks();
                 return null;
             }
             setResults((value) => updateResultById(value, id, { status: "failed", error: error instanceof Error ? error.message : "生成失败" }));
+            activeImageTasks.set(id, { controller, status: "failed", error: error instanceof Error ? error.message : "生成失败", startedAt: itemStartedAt });
+            emitImageTasks();
             throw error;
         } finally {
             if (generationControllersRef.current.get(id) === controller) generationControllersRef.current.delete(id);
@@ -643,9 +729,18 @@ export default function ImagePage() {
                                 </div>
                                 <div className="relative">
                                     <Input.TextArea value={prompt} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setPrompt(event.target.value)} rows={7} placeholder="描述画面主体、风格、构图、光线和用途" />
-                                    <Tooltip title="优化提示词">
-                                        <Button type="text" size="small" className="absolute bottom-2 right-2 z-10" icon={<Wand2 className="size-4" />} loading={optimizingPrompt} onClick={() => void optimizePrompt()} />
-                                    </Tooltip>
+                                    <div className="absolute bottom-2 right-2 z-10 flex items-center gap-1.5">
+                                        <ModelPicker
+                                            config={effectiveConfig}
+                                            value={effectiveConfig.textModel || effectiveConfig.model}
+                                            onChange={(value) => updateConfig("textModel", value)}
+                                            capability="text"
+                                            className="!h-6 !min-w-[7rem] !px-2 !text-xs"
+                                        />
+                                        <Tooltip title="优化提示词">
+                                            <Button type="text" size="small" className="!h-6 !w-6" icon={<Wand2 className="size-4" />} loading={optimizingPrompt} onClick={() => void optimizePrompt()} />
+                                        </Tooltip>
+                                    </div>
                                 </div>
                             </div>
 
@@ -1130,8 +1225,8 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
     if (total <= 1) return null;
     return (
         <div className="absolute inset-x-1 bottom-1 flex justify-between">
-            <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm" icon={<ArrowLeft className="size-3" />} disabled={index <= 0} onClick={() => onMove(-1)} />
-            <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm" icon={<ArrowRight className="size-3" />} disabled={index >= total - 1} onClick={() => onMove(1)} />
+            <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm dark:!bg-stone-700/90 dark:!text-stone-100 dark:!shadow-none" icon={<ArrowLeft className="size-3" />} disabled={index <= 0} onClick={() => onMove(-1)} />
+            <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm dark:!bg-stone-700/90 dark:!text-stone-100 dark:!shadow-none" icon={<ArrowRight className="size-3" />} disabled={index >= total - 1} onClick={() => onMove(1)} />
         </div>
     );
 }

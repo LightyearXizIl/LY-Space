@@ -136,9 +136,9 @@ export function AboutPanel() {
                         showIcon
                         message={`${latestVersion} 已下载完成`}
                         description={
-                            <button type="button" className="mt-2 cursor-pointer rounded-md bg-stone-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-stone-700 dark:bg-stone-100 dark:text-stone-950" onClick={() => void installDownloadedUpdate()}>
+                            <Button size="small" className="mt-2" onClick={() => void installDownloadedUpdate()}>
                                 重启并安装
-                            </button>
+                            </Button>
                         }
                     />
                 ) : null}
@@ -161,7 +161,7 @@ export function AboutPanel() {
 
                 <div className="max-h-[40vh] overflow-y-auto pr-2">
                     <Timeline
-                        items={releases.map((release) => ({
+                        items={releases.slice(0, 1).map((release) => ({
                             content: (
                                 <div>
                                     <div className="flex flex-wrap items-center gap-2">

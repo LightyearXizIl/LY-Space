@@ -72,11 +72,24 @@ const LOG_STORE_KEY = "infinite-canvas:video_generation_logs";
 const SESSION_STORE_KEY = "video-workbench:current-session";
 const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
 
+// 模块级：进行中的视频任务轮询集合（跨组件共享，防止切页返回后重复轮询同一任务）
+const activeVideoLogIds = new Set<string>();
+// 任务完成通知：切页期间任务在后台完成后通知新挂载的组件刷新日志
+const videoTaskListeners = new Set<() => void>();
+function emitVideoTaskUpdate() {
+    videoTaskListeners.forEach((listener) => listener());
+}
+function subscribeVideoTaskUpdate(listener: () => void) {
+    videoTaskListeners.add(listener);
+    return () => {
+        videoTaskListeners.delete(listener);
+    };
+}
+
 export default function VideoPage() {
     const { message } = App.useApp();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dragDepthRef = useRef(0);
-    const activeLogIdsRef = useRef<Set<string>>(new Set());
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -119,6 +132,9 @@ export default function VideoPage() {
         void refreshLogs();
         void loadOssHostingConfig().then(setOssConfig);
     }, []);
+
+    // 订阅模块级任务完成通知：切页期间任务在后台完成/失败后自动刷新日志与结果
+    useEffect(() => subscribeVideoTaskUpdate(() => void refreshLogs()), []);
 
     useEffect(() => {
         let active = true;
@@ -381,13 +397,21 @@ export default function VideoPage() {
 
     const resumePendingLogs = (items: GenerationLog[]) => {
         for (const log of items) {
-            if (log.status === "生成中" && log.task) void pollGenerationLog(log);
+            if (log.status === "生成中" && log.task) {
+                void pollGenerationLog(log);
+            } else if (log.status === "成功" && log.video) {
+                // 切页期间任务已完成：results 中的 pending 卡片更新为成功结果
+                setResults((prev) => (prev.some((result) => result.status === "pending") ? [{ id: log.video!.id, status: "success" as const, video: log.video }] : prev));
+            } else if (log.status === "失败") {
+                // 切页期间任务已失败：pending 卡片更新为失败
+                setResults((prev) => (prev.some((result) => result.status === "pending") ? [{ id: log.id, status: "failed" as const, error: log.error || "生成失败" }] : prev));
+            }
         }
     };
 
     const pollGenerationLog = async (log: GenerationLog, configOverride?: AiConfig) => {
-        if (!log.task || activeLogIdsRef.current.has(log.id)) return;
-        activeLogIdsRef.current.add(log.id);
+        if (!log.task || activeVideoLogIds.has(log.id)) return;
+        activeVideoLogIds.add(log.id);
         setRunning(true);
         setStartedAt((value) => value || performance.now());
         setResults((value) => (value.length ? value : [{ id: log.id, status: "pending" }]));
@@ -422,11 +446,13 @@ export default function VideoPage() {
             await saveLog({ ...log, status: "失败", durationMs: Date.now() - log.createdAt, error: errorMessage });
             message.error(errorMessage);
         } finally {
-            activeLogIdsRef.current.delete(log.id);
-            if (!activeLogIdsRef.current.size) {
+            activeVideoLogIds.delete(log.id);
+            if (!activeVideoLogIds.size) {
                 setRunning(false);
                 setStartedAt(0);
             }
+            // 通知新挂载的组件刷新日志（切页期间任务完成/失败后返回页面可见结果）
+            emitVideoTaskUpdate();
         }
     };
 

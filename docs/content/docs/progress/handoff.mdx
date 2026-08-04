@@ -16,7 +16,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.3.3（`VERSION` 文件，tag `v0.3.3`）
+- **当前版本**：v0.3.4（`VERSION` 文件，tag `v0.3.4`）
 
 ## 2. 数据存储
 
@@ -44,7 +44,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **任务式生成**：`createVideoGenerationTask` 提交 → `pollVideoGenerationLog` 轮询（Seedance 5s / Agnes 10s / 其他 2.5s）→ `storeGeneratedVideo` 落盘 `Result\Video`（fetch 跨域失败回退主进程 `fetchUrl`）
 - **轮询限流**：Agnes 状态查询遇 429/rate limit 返回 pending 继续轮询，不中断
 - **切换页面**：轮询闭包后台继续，`activeVideoLogIds` 模块级防重复轮询，任务完成通知（`emitVideoTaskUpdate`）刷新新挂载页面
-- **Agnes 参考图**（图生视频）：要求公网 HTTPS 图片 URL——自动托管链路：**阿里云 OSS（已配置时）→ 免费图床（uguu.se → tmpfiles.org → catbox.moe）→ 全部失败明确报错引导**；上传前统一转 PNG/JPEG + 最长边 1024 压缩；浏览器直传失败回退主进程代理（`lyspace:upload-free-host`）
+- **Agnes 参考图**（图生视频）：要求公网 HTTPS 图片 URL——自动托管链路：**阿里云 OSS（已配置时）→ 免费图床（uguu.se → tmpfiles.org → catbox.moe）→ 全部失败明确报错引导**；上传前统一转 PNG/JPEG + 最长边 1024 压缩；浏览器直传失败回退主进程代理（`lyspace:upload-free-host`）。**OSS 配置与公网 URL 入口在配置对话框「阿里云设置」Tab（v0.3.4 起，原视频页按钮已移除）**；公网 URL 经 `reference-handoff`（`url` 字段）+ `lyspace:reference-handoff-created` 事件即时加入视频创作台参考图
 - **Agnes API 路径（官方文档 agnes-video-v20）**：Base URL `https://api.agnes-ai.cn`（中国站）/ `https://apihub.agnes-ai.com`（国际站）；创建任务 `POST /v1/videos`（`buildApiUrl` 自动补 `/v1`）、结果查询 `GET /agnesapi?video_id=`（`pollAgnesVideoTask` 已剥 `/v1`）
 - **请求代理回退**（v0.3.0）：`agnesRequest` 网络层失败（CORS/连接/超时）自动回退主进程 `lyspace:proxy-request` 重试；错误提示区分：HTML 响应=Base URL 填成网页地址、litellm/UploadFile=Agnes 服务端异常（可能维护中）
 
@@ -52,7 +52,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **IPC**：`lyspace:fetch-url`、`save-file-dialog`、`save-files-dialog`（批量一次弹窗）、`write-generated-output`、`delete-generated-files`、`upload-free-host`、`proxy-request`、`storage-settings`、更新相关等——**均需 main.cjs + preload.cjs + desktop.d.ts 三端同步**
 - **自动更新**：启动自动 `checkForUpdates`（来源 `auto`）；**仅启动自动检查发现新版本时弹居中弹窗**（`UpdatePrompt`，含版本号/更新日志/下载按钮/下载进度/重启安装）；关于页手动检查（来源 `manual`）不弹窗，仅在页内显示状态与日志。来源标记：`checkForUpdate(source)` → `updateState.triggeredBy`（`update-available` 时写入，三端同步）。**CI 发布时自动把 CHANGELOG 段落写入 Release 说明**（`--notes` 从 `$env:GITHUB_WORKSPACE\CHANGELOG.md` 提取）
 - **优化提示词**（生图/视频工作台）：TextArea 下方 ModelPicker（capability=text，默认 gpt-5.5）+ Wand2 按钮，`requestImageQuestion` 流式回填
-- **参考图**：支持点击放大（Image.PreviewGroup）、左右排序（ReferenceOrderButtons）、上传/框内粘贴/公网 URL、清空按钮（各类型独立）；参考视频/音频同样有清空按钮
+- **参考图**：支持点击放大（Image.PreviewGroup）、左右排序（ReferenceOrderButtons）、上传/框内粘贴/公网 URL（阿里云设置 Tab 添加）、清空按钮（各类型独立）；参考视频/音频同样有清空按钮
 - **CI 坑**：`git add -u` 不含新文件——新增文件必须显式 `git add`；`publish-desktop.yml` 发布步骤依赖 `GITHUB_WORKSPACE` 绝对路径（勿改回相对路径）
 
 ### 3.4 v0.3.2 变更要点
@@ -67,6 +67,14 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **资产选择器双按钮**（`asset-picker-modal.tsx`）：卡片去掉整卡点击插入与 hover"插入"覆盖层，底部新增"复制"（text 复制内容 / image 复制 dataUrl / video 复制 url）与"插入"按钮。
 - **更新日志显示**（`about-panel.tsx`）：无新版本时 Timeline 显示当前版本（`APP_VERSION`）日志；检查到新版本（`hasNewVersion`）后显示最新版本日志。
 - **启动自动检查弹窗**（重新引入 `UpdatePrompt`）：`updateState.triggeredBy` 区分来源——`auto`（启动自动检查）弹居中 Modal（版本号/更新日志/下载/进度/重启安装，同版本只弹一次）；`manual`（关于页手动）不弹窗。
+
+### 3.6 v0.3.4 变更要点
+
+- **音频资产**：`AssetKind` 加 `"audio"`（`AudioAsset`：url/storageKey/bytes/mimeType/durationMs）；素材页支持音频筛选、表单上传（`uploadMediaFile(file, "audio")`）、`<audio>` 预览与下载；画布音频节点可加入资产（`saveNodeAsset` audio 分支，之前误存为图片）；资产选择器音频卡片可复制（url）与插入（画布创建音频节点）；生图/视频/精修页插入音频提示去画布使用。
+- **阿里云设置 Tab**（配置对话框「关于」左侧）：`ConfigTabKey` 加 `"oss"`；`OssSettingsPanel` 含 OSS 配置表单（`loadOssHostingConfig`/`saveOssHostingConfig`）与公网 URL"加入参考图"（`enqueueReferenceHandoff({ target: "video", url })` + `dispatchEvent("lyspace:reference-handoff-created")`）；视频页 `consumeReferenceHandoffs` 支持 `handoff.url` 直接加入并监听事件即时刷新；视频页参考图区移除"OSS 设置"/"添加公网 URL"按钮。
+- **资产选择器文本内容**：text 资产无封面时封面区直接显示 `data.content`（`line-clamp-5 break-words` 多行排版）。
+- **版本更新调整**：关于页移除"最新版本"卡片（仅当前版本）；`use-version-check` 拉取条件改为"本地 `__APP_RELEASES__` 无该版本日志才拉取"（修复更新完成后日志不显示）。
+- **Agnes 面板判断修复**：`VideoSettingsPanel` 渠道判断统一基于当前视频模型（`isSeedanceVideoConfig({ ...config, model: videoModel })`），修复原用全局 `config.model` 判断导致选择 Agnes 模型不显示高级参数的问题。
 
 ## 4. 常用命令
 

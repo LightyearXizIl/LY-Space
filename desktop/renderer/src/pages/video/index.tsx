@@ -24,7 +24,7 @@ import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { loadWorkbenchSession, saveWorkbenchSession } from "@/services/workbench-session";
 import { trackWrite } from "@/services/desktop-storage";
 import { acknowledgeReferenceHandoff, getReferenceHandoffs } from "@/services/reference-handoff";
-import { hostImageOnOss, loadOssHostingConfig, saveOssHostingConfig, type OssHostingConfig } from "@/services/oss-hosting";
+import { hostImageOnOss } from "@/services/oss-hosting";
 import { hostReferenceImage } from "@/services/image-hosting";
 
 type GeneratedVideo = {
@@ -117,10 +117,10 @@ export default function VideoPage() {
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
     const [referenceDragTarget, setReferenceDragTarget] = useState<"image" | "video" | "audio" | null>(null);
     const [sessionHydrated, setSessionHydrated] = useState(false);
-    const [publicImageUrl, setPublicImageUrl] = useState("");
-    const [publicImageUrlOpen, setPublicImageUrlOpen] = useState(false);
-    const [ossConfig, setOssConfig] = useState<OssHostingConfig>({ signatureEndpoint: "", publicBaseUrl: "", objectPrefix: "ly-space/references" });
-    const [ossSettingsOpen, setOssSettingsOpen] = useState(false);
+
+    // 供 handoff 消费函数读取最新参考图（事件触发的消费不依赖渲染闭包）
+    const referencesRef = useRef(references);
+    referencesRef.current = references;
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
     const canGenerate = Boolean(prompt.trim());
@@ -133,7 +133,6 @@ export default function VideoPage() {
 
     useEffect(() => {
         void refreshLogs();
-        void loadOssHostingConfig().then(setOssConfig);
     }, []);
 
     // 订阅模块级任务完成通知：切页期间任务在后台完成/失败后自动刷新日志与结果
@@ -160,26 +159,37 @@ export default function VideoPage() {
         void saveWorkbenchSession(SESSION_STORE_KEY, { prompt, references, videoReferences, audioReferences, results, elapsedMs });
     }, [audioReferences, elapsedMs, prompt, references, results, sessionHydrated, videoReferences]);
 
-    useEffect(() => {
-        if (!sessionHydrated) return;
-        void (async () => {
-            let nextReferences = references;
-            for (const handoff of await getReferenceHandoffs("video")) {
-                if (nextReferences.length >= SEEDANCE_REFERENCE_LIMITS.images) {
-                    message.warning("视频创作台最多保留 9 张参考图");
-                    break;
-                }
+    // 消费参考图 handoff（精修图片 / 阿里云设置添加的公网 URL），支持 url 直接加入
+    const consumeReferenceHandoffs = async () => {
+        const handoffs = await getReferenceHandoffs("video");
+        if (!handoffs.length) return;
+        let nextReferences = referencesRef.current;
+        for (const handoff of handoffs) {
+            if (nextReferences.length >= SEEDANCE_REFERENCE_LIMITS.images) {
+                message.warning("视频创作台最多保留 9 张参考图");
+                break;
+            }
+            if (handoff.url) {
+                nextReferences = [...nextReferences, { id: nanoid(), name: handoff.name, type: handoff.type || "image/png", dataUrl: handoff.url, url: handoff.url }];
+            } else {
                 const dataUrl = await resolveImageUrl(handoff.storageKey);
                 if (!dataUrl) continue;
                 nextReferences = [...nextReferences, { id: nanoid(), name: handoff.name, type: handoff.type, dataUrl, storageKey: handoff.storageKey }];
-                await saveWorkbenchSession(SESSION_STORE_KEY, { prompt, references: nextReferences, videoReferences, audioReferences, results, elapsedMs });
-                await acknowledgeReferenceHandoff(handoff.id);
             }
-            if (nextReferences !== references) {
-                setReferences(nextReferences);
-                message.success("精修图片已加入参考图");
-            }
-        })();
+            await acknowledgeReferenceHandoff(handoff.id);
+        }
+        if (nextReferences !== referencesRef.current) {
+            setReferences(nextReferences);
+            void saveWorkbenchSession(SESSION_STORE_KEY, { prompt, references: nextReferences, videoReferences, audioReferences, results, elapsedMs });
+            message.success("参考图已加入");
+        }
+    };
+
+    useEffect(() => {
+        if (!sessionHydrated) return;
+        void consumeReferenceHandoffs();
+        window.addEventListener("lyspace:reference-handoff-created", consumeReferenceHandoffs);
+        return () => window.removeEventListener("lyspace:reference-handoff-created", consumeReferenceHandoffs);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sessionHydrated]);
 
@@ -215,21 +225,6 @@ export default function VideoPage() {
         setReferences((value) => [...value, ...nextReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.images));
         setVideoReferences((value) => [...value, ...nextVideoReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.videos));
         setAudioReferences((value) => [...value, ...nextAudioReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.audios));
-    };
-
-    const addPublicImageUrl = () => {
-        const url = publicImageUrl.trim();
-        if (!/^https:\/\//i.test(url)) return message.error("请输入公网 HTTPS 图片 URL");
-        if (references.length >= SEEDANCE_REFERENCE_LIMITS.images) return message.error("视频创作台最多保留 9 张参考图");
-        setReferences((value) => [...value, { id: nanoid(), name: new URL(url).pathname.split("/").pop() || "public-image", type: "image/*", dataUrl: url, url }]);
-        setPublicImageUrl("");
-        setPublicImageUrlOpen(false);
-        message.success("公网图片已添加；可用于 Agnes 视频模型");
-    };
-
-    const persistOssConfig = async () => {
-        try { await saveOssHostingConfig(ossConfig); setOssSettingsOpen(false); message.success("OSS 设置已保存"); }
-        catch (error) { message.error(error instanceof Error ? error.message : "OSS 设置保存失败"); }
     };
 
     const handleReferenceDragEnter = (event: DragEvent<HTMLDivElement>, target: "image" | "video" | "audio") => {
@@ -392,6 +387,8 @@ export default function VideoPage() {
             setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }].slice(0, SEEDANCE_REFERENCE_LIMITS.images));
         } else if (payload.kind === "video") {
             setVideoReferences((value) => [...value, { id: nanoid(), name: payload.title, type: "video/mp4", url: payload.url, storageKey: payload.storageKey, width: payload.width, height: payload.height }].slice(0, SEEDANCE_REFERENCE_LIMITS.videos));
+        } else if (payload.kind === "audio") {
+            message.info("音频资产请在画布中使用");
         }
         setAssetPickerOpen(false);
     };
@@ -566,10 +563,6 @@ export default function VideoPage() {
                                 <div className="mb-2 flex items-center justify-between gap-3">
                                     <span className="text-base font-semibold">参考图</span>
                                     <div className="flex gap-2">
-                                        <Button size="small" onClick={() => setPublicImageUrlOpen((value) => !value)}>
-                                            添加公网 URL
-                                        </Button>
-                                        <Button size="small" onClick={() => setOssSettingsOpen((value) => !value)}>OSS 设置</Button>
                                         <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
                                             上传
                                         </Button>
@@ -578,22 +571,6 @@ export default function VideoPage() {
                                         </Button>
                                     </div>
                                 </div>
-                                {publicImageUrlOpen ? (
-                                    <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-sky-200 bg-sky-50 p-2 text-xs dark:border-sky-900 dark:bg-sky-950/30">
-                                        <Input className="min-w-[220px] flex-1" value={publicImageUrl} placeholder="https://example.com/reference.png" onChange={(event) => setPublicImageUrl(event.target.value)} onPressEnter={addPublicImageUrl} />
-                                        <Button size="small" type="primary" onClick={addPublicImageUrl}>加入参考图</Button>
-                                        <span className="text-stone-500">Agnes 图生视频仅可使用服务端可访问的 HTTPS 图片地址。</span>
-                                    </div>
-                                ) : null}
-                                {ossSettingsOpen ? (
-                                    <div className="mb-2 grid gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs dark:border-amber-900 dark:bg-amber-950/30">
-                                        <strong>阿里云 OSS 托管（安全 STS/签名直传）</strong>
-                                        <Input value={ossConfig.signatureEndpoint} placeholder="签名接口：https://api.example.com/oss/signature" onChange={(event) => setOssConfig((value) => ({ ...value, signatureEndpoint: event.target.value }))} />
-                                        <Input value={ossConfig.publicBaseUrl} placeholder="公网域名：https://bucket.oss-cn-hangzhou.aliyuncs.com" onChange={(event) => setOssConfig((value) => ({ ...value, publicBaseUrl: event.target.value }))} />
-                                        <Input value={ossConfig.objectPrefix} placeholder="对象前缀：ly-space/references" onChange={(event) => setOssConfig((value) => ({ ...value, objectPrefix: event.target.value }))} />
-                                        <div className="flex flex-wrap items-center gap-2"><Button size="small" type="primary" onClick={() => void persistOssConfig()}>保存设置</Button><span className="text-stone-500">签名接口应返回 OSS PostObject 的 host、dir、policy 与临时签名字段；请勿填写长期 AccessKey。</span></div>
-                                    </div>
-                                ) : null}
                                 <div
                                     tabIndex={0}
                                     className={`hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors focus:outline-none ${referenceDragTarget === "image" ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}

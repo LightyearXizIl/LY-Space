@@ -1584,6 +1584,20 @@ function InfiniteCanvasPage() {
                 message.success("已加入我的资产");
                 return;
             }
+            if (node.type === CanvasNodeType.Audio) {
+                if (!node.metadata?.content) return message.error("没有可保存的音频");
+                addAsset({
+                    kind: "audio",
+                    title: node.metadata?.prompt?.slice(0, 24) || "画布音频",
+                    coverUrl: "",
+                    tags: [],
+                    source: "Canvas",
+                    data: { url: node.metadata.content, storageKey: node.metadata.storageKey, bytes: node.metadata.bytes || 0, mimeType: node.metadata.mimeType || "audio/mpeg", durationMs: node.metadata.durationMs },
+                    metadata: { source: "canvas", nodeId: node.id, prompt: node.metadata?.prompt },
+                });
+                message.success("已加入我的资产");
+                return;
+            }
             if (!node.metadata?.content) return message.error("没有可保存的图片");
             const dataUrl = node.metadata.storageKey ? "" : node.metadata.content;
             addAsset({
@@ -2685,6 +2699,23 @@ function InfiniteCanvasPage() {
                         width: nextSize.width,
                         height: nextSize.height,
                         metadata: { content: payload.url, storageKey: payload.storageKey, status: NODE_STATUS_SUCCESS, naturalWidth: payload.width, naturalHeight: payload.height },
+                    },
+                ]);
+                setSelectedNodeIds(new Set([id]));
+            } else if (payload.kind === "audio") {
+                const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Audio];
+                const center = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
+                const id = `audio-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+                setNodes((prev) => [
+                    ...prev,
+                    {
+                        id,
+                        type: CanvasNodeType.Audio,
+                        title: payload.title,
+                        position: { x: center.x - spec.width / 2, y: center.y - spec.height / 2 },
+                        width: spec.width,
+                        height: spec.height,
+                        metadata: { content: payload.url, storageKey: payload.storageKey, status: NODE_STATUS_SUCCESS, mimeType: payload.mimeType || "audio/mpeg", durationMs: payload.durationMs },
                     },
                 ]);
                 setSelectedNodeIds(new Set([id]));

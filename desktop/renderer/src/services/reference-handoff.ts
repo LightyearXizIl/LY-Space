@@ -11,6 +11,8 @@ export type PendingReferenceHandoff = {
     width: number;
     height: number;
     createdAt: number;
+    /** 公网 URL 参考图：直接加入参考图，无需本地存储解析（storageKey 留空） */
+    url?: string;
 };
 
 const store = localforage.createInstance({ name: "infinite-canvas", storeName: "reference_handoffs" });

@@ -39,12 +39,14 @@ type VideoSettingsPanelProps = {
 };
 
 export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", model }: VideoSettingsPanelProps) {
-    if (isSeedanceVideoConfig(config)) {
+    // 渠道判断统一基于当前视频模型（避免被全局默认生图模型误导）
+    const videoModel = model || config.videoModel;
+    if (isSeedanceVideoConfig({ ...config, model: videoModel })) {
         return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
 
     // Agnes 渠道启用文档对齐的选项（18s 上限、1152x768 默认横屏、高级参数）；其他渠道保持现状
-    const isAgnes = resolveModelRequestConfig(config, model || config.videoModel).apiFormat === "agnes";
+    const isAgnes = resolveModelRequestConfig(config, videoModel).apiFormat === "agnes";
     const seconds = config.videoSeconds || "6";
     const size = normalizeVideoSizeValue(config.size);
     const dimensions = readSizeDimensions(size);

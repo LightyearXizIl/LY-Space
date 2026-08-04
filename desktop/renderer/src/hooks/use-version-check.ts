@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { App } from "antd";
 import { APP_VERSION } from "@/constant/env";
-import { parseChangelog, sortReleases, type ReleaseInfo } from "@/lib/release";
+import { normalizeReleaseVersion, parseChangelog, sortReleases, type ReleaseInfo } from "@/lib/release";
 
 const releaseChangelogUrl = (version: string) => `https://raw.githubusercontent.com/LightyearXizIl/LY-Space/${version.startsWith("v") ? version : `v${version}`}/CHANGELOG.md`;
 
@@ -29,7 +29,9 @@ export function useVersionCheck() {
 
     useEffect(() => {
         const version = updateState.version;
-        if (!version || version === APP_VERSION || !/^v?\d+\.\d+\.\d+$/.test(version)) return;
+        if (!version || !/^v?\d+\.\d+\.\d+$/.test(version)) return;
+        // 本地 __APP_RELEASES__ 已有该版本日志则无需拉取（含更新完成后的当前版本场景）
+        if (localReleases.some((release) => release.version === normalizeReleaseVersion(version))) return;
         let active = true;
         void fetch(releaseChangelogUrl(version))
             .then((response) => (response.ok ? response.text() : Promise.reject(new Error("更新日志读取失败"))))

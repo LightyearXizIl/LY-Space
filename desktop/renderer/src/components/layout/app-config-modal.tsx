@@ -6,6 +6,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
 import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
 import { AboutPanel } from "@/components/layout/about-panel";
+import { OssSettingsPanel } from "@/components/layout/oss-settings-panel";
 import { exportAppConfig, importAppConfig } from "@/services/config-file";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
@@ -375,6 +376,11 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                 </section>
                             </Form>
                         ),
+                    },
+                    {
+                        key: "oss",
+                        label: "阿里云设置",
+                        children: <OssSettingsPanel />,
                     },
                     {
                         key: "about",

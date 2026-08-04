@@ -107,15 +107,9 @@ export function AboutPanel() {
                         {downloading ? <Button danger onClick={() => void cancelUpdateDownload()}>取消下载</Button> : null}
                     </div>
                 </div>
-                <div className="mb-3 grid grid-cols-2 gap-3">
-                    <div className="rounded-lg border border-stone-200 p-3 dark:border-stone-800">
-                        <div className="text-xs text-stone-500 dark:text-stone-400">当前版本</div>
-                        <div className="mt-1 text-base font-semibold text-stone-950 dark:text-stone-100">{APP_VERSION}</div>
-                    </div>
-                    <div className="rounded-lg border border-stone-200 p-3 dark:border-stone-800">
-                        <div className="text-xs text-stone-500 dark:text-stone-400">最新版本</div>
-                        <div className="mt-1 text-base font-semibold text-stone-950 dark:text-stone-100">{latestVersion}</div>
-                    </div>
+                <div className="mb-3 rounded-lg border border-stone-200 p-3 dark:border-stone-800">
+                    <div className="text-xs text-stone-500 dark:text-stone-400">当前版本</div>
+                    <div className="mt-1 text-base font-semibold text-stone-950 dark:text-stone-100">{APP_VERSION}</div>
                 </div>
 
                 {!updateState.supported ? <Alert className="mb-3" type="info" showIcon message="本地开发模式不会连接正式更新服务。" /> : null}

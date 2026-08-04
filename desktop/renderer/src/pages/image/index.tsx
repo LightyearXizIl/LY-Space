@@ -754,9 +754,14 @@ export default function ImagePage() {
                             <div className="min-w-0">
                                 <div className="mb-2 flex items-center justify-between gap-3">
                                     <span className="text-base font-semibold">参考图</span>
-                                    <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
-                                        上传
-                                    </Button>
+                                    <div className="flex gap-2">
+                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
+                                            上传
+                                        </Button>
+                                        <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!references.length} onClick={() => setReferences([])}>
+                                            清空
+                                        </Button>
+                                    </div>
                                 </div>
                                 <div
                                     tabIndex={0}

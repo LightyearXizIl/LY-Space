@@ -10,7 +10,7 @@ function readLocalReleases(): ReleaseInfo[] {
 }
 
 function initialUpdateState(): AppUpdateState {
-    return { status: "idle", version: APP_VERSION, releaseDate: "", releaseNotes: "", progress: null, error: "", supported: Boolean(window.lySpaceDesktop) };
+    return { status: "idle", version: APP_VERSION, releaseDate: "", releaseNotes: "", progress: null, error: "", supported: Boolean(window.lySpaceDesktop), triggeredBy: "" };
 }
 
 export function useVersionCheck() {

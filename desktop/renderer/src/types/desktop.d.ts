@@ -10,6 +10,8 @@ declare global {
         progress: { percent: number; bytesPerSecond: number; transferred: number; total: number } | null;
         error: string;
         supported: boolean;
+        /** 检查更新的来源：启动自动检查为 "auto"（弹窗提醒），关于页手动检查为 "manual"（不弹窗） */
+        triggeredBy: "auto" | "manual" | "";
     };
     type StorageKind = "image" | "video" | "audio" | "text";
     type StorageSettings = { resultRoot: string; cacheRoot: string; defaultResultRoot: string; defaultCacheRoot: string; pendingCacheRoot?: string; lastError?: string; folders: Record<StorageKind, string> };

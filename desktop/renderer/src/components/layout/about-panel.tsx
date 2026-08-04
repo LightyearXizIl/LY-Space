@@ -33,7 +33,10 @@ function formatBytes(value?: number) {
 }
 
 export function AboutPanel() {
-    const { updateState, releases, checkUpdate, downloadUpdate, cancelUpdateDownload, installDownloadedUpdate } = useVersionCheck();
+    const { updateState, releases, hasNewVersion, checkUpdate, downloadUpdate, cancelUpdateDownload, installDownloadedUpdate } = useVersionCheck();
+    const currentVersionReleases = releases.filter((release) => release.version === APP_VERSION);
+    // 发现新版本时显示最新（新版本）日志；否则显示当前版本日志（无当前版本日志时回退最新一条）
+    const displayedReleases = hasNewVersion || !currentVersionReleases.length ? releases.slice(0, 1) : currentVersionReleases;
     const checking = updateState.status === "checking";
     const downloading = updateState.status === "downloading";
     const downloaded = updateState.status === "downloaded";
@@ -173,7 +176,7 @@ export function AboutPanel() {
 
                 <div className="max-h-[40vh] overflow-y-auto pr-2">
                     <Timeline
-                        items={releases.slice(0, 1).map((release) => ({
+                        items={displayedReleases.map((release) => ({
                             content: (
                                 <div>
                                     <div className="flex flex-wrap items-center gap-2">

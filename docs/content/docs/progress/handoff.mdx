@@ -16,7 +16,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.3.2（`VERSION` 文件，tag `v0.3.2`）
+- **当前版本**：v0.3.3（`VERSION` 文件，tag `v0.3.3`）
 
 ## 2. 数据存储
 
@@ -50,17 +50,23 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ### 3.3 公共设施
 - **IPC**：`lyspace:fetch-url`、`save-file-dialog`、`save-files-dialog`（批量一次弹窗）、`write-generated-output`、`delete-generated-files`、`upload-free-host`、`proxy-request`、`storage-settings`、更新相关等——**均需 main.cjs + preload.cjs + desktop.d.ts 三端同步**
-- **自动更新**：主进程启动自动 `checkForUpdates`；`UpdatePrompt`（全局组件）发现新版本弹窗一键下载/重启安装；**CI 发布时自动把 CHANGELOG 段落写入 Release 说明**（`--notes` 从 `$env:GITHUB_WORKSPACE\CHANGELOG.md` 提取）
+- **自动更新**：启动自动 `checkForUpdates`（来源 `auto`）；**仅启动自动检查发现新版本时弹居中弹窗**（`UpdatePrompt`，含版本号/更新日志/下载按钮/下载进度/重启安装）；关于页手动检查（来源 `manual`）不弹窗，仅在页内显示状态与日志。来源标记：`checkForUpdate(source)` → `updateState.triggeredBy`（`update-available` 时写入，三端同步）。**CI 发布时自动把 CHANGELOG 段落写入 Release 说明**（`--notes` 从 `$env:GITHUB_WORKSPACE\CHANGELOG.md` 提取）
 - **优化提示词**（生图/视频工作台）：TextArea 下方 ModelPicker（capability=text，默认 gpt-5.5）+ Wand2 按钮，`requestImageQuestion` 流式回填
-- **参考图**：支持点击放大（Image.PreviewGroup）、左右排序（ReferenceOrderButtons）、上传/剪切板/公网 URL
+- **参考图**：支持点击放大（Image.PreviewGroup）、左右排序（ReferenceOrderButtons）、上传/框内粘贴/公网 URL、清空按钮（各类型独立）；参考视频/音频同样有清空按钮
 - **CI 坑**：`git add -u` 不含新文件——新增文件必须显式 `git add`；`publish-desktop.yml` 发布步骤依赖 `GITHUB_WORKSPACE` 绝对路径（勿改回相对路径）
 
 ### 3.4 v0.3.2 变更要点
 
-- **提示词库个人词库**：特殊内置来源 `PERSONAL_SOURCE_ID = "personal"`（`prompt-source-presets.ts` 首位），本地 localforage（`infinite-canvas` / storeName `personal_prompts`，`services/api/personal-prompts.ts`）。`prompts.ts` 用 `isPersonalSource` 分支：`getSourcePrompts` 直读本地、`refreshSourceRecord` 返回本地条数、`refreshAllSources`/`refreshDueSources`（定时调度）跳过、`fetchPromptSourceStatuses` 返回本地条数。UI 在 `pages/prompts/index.tsx`（新增/编辑/删除/一键加入，保存后 invalidate `prompts`/`side-panel-prompts`/`prompt-source-statuses`）；编辑器 `pages/prompts/components/personal-prompt-editor-dialog.tsx`。**坑**：个人来源无 URL，任何远程拉取路径都要先判 `isPersonalSource` 跳过，否则报"JSON URL 不能为空"。
 - **渠道启用/关闭开关**（配置页渠道列表最左侧 Switch）：`ModelChannel.enabled?: boolean`（缺省视为启用）。**坑**：persist merge 走 `createModelChannel`（显式对象构造会丢弃未列出的字段），新增渠道字段必须同步加进 `createModelChannel`（`enabled: channel?.enabled !== false`）。禁用生效点：`selectableModelsByCapability`/`selectableImageModelsByFeature` 过滤禁用渠道、`resolveModelChannel` 回退第一个启用渠道、`finishConfig` ready 只统计启用渠道。
 - **参考图框内粘贴**：image/video 工作台移除"剪切板"按钮；参考图容器 `tabIndex + onMouseEnter focus + onPaste`，`addReferencesFromPaste` 从 `clipboardData.items` 提取 image/* 文件（无需权限弹窗），无图静默忽略；`addReferences` 参数放宽为 `FileList | readonly File[]`。
-- **检查更新改造**：主进程 `checkAndDownloadUpdate` → `checkForUpdate`（只检查不自动下载）+ `downloadUpdate`（手动下载），IPC 通道 `lyspace:check-update` / `lyspace:download-update`（原 `check-and-download-update` 已删，preload/desktop.d.ts 三端同步改名）；删除 `downloadRequested` 机制与 `UpdatePrompt` 组件（不再弹窗）；`about-panel.tsx` available 时 Alert + "下载更新"按钮；更新日志远程 CHANGELOG 拉取失败回退 `updateState.releaseNotes`。
+- **Agnes 视频对齐官方文档**：高级参数（帧率/种子/推理步数/负面提示词）仅 Agnes 渠道面板显示；请求补发 `frame_rate`/`seed`/`negative_prompt`/`num_inference_steps`/顶层 `mode`；`video_id` 优先查询；`auto` 尺寸不发宽高；帧数按帧率联动（8n+1/≤441）；秒数上限 18、默认横屏 1152x768。
+
+### 3.5 v0.3.3 变更要点
+
+- **移除个人词库**：`PERSONAL_SOURCE_ID`、`personal-prompts.ts`、`personal-prompt-editor-dialog.tsx` 及相关 UI（新增/编辑/删除/一键加入）全部删除，提示词库恢复纯远程来源。
+- **资产选择器双按钮**（`asset-picker-modal.tsx`）：卡片去掉整卡点击插入与 hover"插入"覆盖层，底部新增"复制"（text 复制内容 / image 复制 dataUrl / video 复制 url）与"插入"按钮。
+- **更新日志显示**（`about-panel.tsx`）：无新版本时 Timeline 显示当前版本（`APP_VERSION`）日志；检查到新版本（`hasNewVersion`）后显示最新版本日志。
+- **启动自动检查弹窗**（重新引入 `UpdatePrompt`）：`updateState.triggeredBy` 区分来源——`auto`（启动自动检查）弹居中 Modal（版本号/更新日志/下载/进度/重启安装，同版本只弹一次）；`manual`（关于页手动）不弹窗。
 
 ## 4. 常用命令
 

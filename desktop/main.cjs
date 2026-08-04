@@ -15,7 +15,8 @@ let allowWindowClose = false;
 let closingTimer = null;
 let installDownloadedUpdate = false;
 let downloadCancellation = null;
-let updateState = { status: "idle", version: "", releaseDate: "", releaseNotes: "", progress: null, error: "", supported: false };
+let lastCheckSource = "manual";
+let updateState = { status: "idle", version: "", releaseDate: "", releaseNotes: "", progress: null, error: "", supported: false, triggeredBy: "" };
 
 const RESULT_FOLDERS = { image: "Picture", video: "Video", audio: "Audio", text: "text" };
 
@@ -35,7 +36,7 @@ function updateError(error) {
 }
 
 function configureAutoUpdater() {
-    updateState = { status: "idle", version: displayVersion(app.getVersion()), releaseDate: "", releaseNotes: "", progress: null, error: "", supported: app.isPackaged };
+    updateState = { status: "idle", version: displayVersion(app.getVersion()), releaseDate: "", releaseNotes: "", progress: null, error: "", supported: app.isPackaged, triggeredBy: "" };
     if (!app.isPackaged) return;
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = false;
@@ -43,7 +44,7 @@ function configureAutoUpdater() {
     autoUpdater.allowPrerelease = false;
     autoUpdater.on("checking-for-update", () => updateSnapshot({ status: "checking", progress: null, error: "" }));
     autoUpdater.on("update-available", (info) => {
-        updateSnapshot({ status: "available", version: displayVersion(info.version), releaseDate: info.releaseDate || "", releaseNotes: typeof info.releaseNotes === "string" ? info.releaseNotes : "", progress: null, error: "" });
+        updateSnapshot({ status: "available", version: displayVersion(info.version), releaseDate: info.releaseDate || "", releaseNotes: typeof info.releaseNotes === "string" ? info.releaseNotes : "", progress: null, error: "", triggeredBy: lastCheckSource });
     });
     autoUpdater.on("update-not-available", (info) => {
         updateSnapshot({ status: "upToDate", version: displayVersion(info.version || app.getVersion()), releaseDate: info.releaseDate || "", progress: null, error: "" });
@@ -80,9 +81,10 @@ function cancelUpdateDownload() {
     return updateState;
 }
 
-async function checkForUpdate() {
+async function checkForUpdate(source = "manual") {
     if (!app.isPackaged) return updateSnapshot({ status: "idle", error: "", supported: false });
     if (updateState.status === "downloaded" || updateState.status === "downloading") return updateState;
+    lastCheckSource = source;
     try {
         await autoUpdater.checkForUpdates();
     } catch (error) {
@@ -746,6 +748,6 @@ app.whenReady().then(async () => {
         app.quit();
     });
     createWindow();
-    if (app.isPackaged) void autoUpdater.checkForUpdates().catch(updateError);
+    if (app.isPackaged) void checkForUpdate("auto");
 });
 app.on("window-all-closed", () => app.quit());

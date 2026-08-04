@@ -1,29 +1,21 @@
-import { BookmarkPlus, FolderPlus, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { FolderPlus, Search } from "lucide-react";
 import { type ReactNode, type UIEvent, useEffect, useState } from "react";
 import { App, Button, Empty, Input, Spin, Tag } from "antd";
-import { useQueryClient } from "@tanstack/react-query";
 
 import { PromptCard } from "@/components/prompts/prompt-card";
 import { usePromptList } from "@/components/prompts/use-prompt-list";
 import { PromptDetailDialog } from "./components/prompt-detail-dialog";
-import { PersonalPromptEditorDialog } from "./components/personal-prompt-editor-dialog";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { cn } from "@/lib/utils";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { ALL_PROMPTS_OPTION, type Prompt } from "@/services/api/prompts";
-import { createPersonalPrompt, fetchPersonalPrompts, removePersonalPrompt, savePersonalPrompt } from "@/services/api/personal-prompts";
-import { PERSONAL_SOURCE_ID } from "@/services/api/prompt-source-presets";
-import type { RawPrompt } from "@/services/api/prompt-source-runtime";
 
 export default function PromptsPage() {
-    const { message, modal } = App.useApp();
-    const queryClient = useQueryClient();
+    const { message } = App.useApp();
     const [titleKeyword, setTitleKeyword] = useState("");
     const [selectedTags, setSelectedTags] = useState<string[]>([]);
     const [selectedCategory, setSelectedCategory] = useState(ALL_PROMPTS_OPTION);
     const [selectedPrompt, setSelectedPrompt] = useState<Prompt | null>(null);
-    const [editorOpen, setEditorOpen] = useState(false);
-    const [editingPrompt, setEditingPrompt] = useState<RawPrompt | null>(null);
     const addAsset = useAssetStore((state) => state.addAsset);
     const copyText = useCopyText();
     const { query, items: promptItems, tags: promptTags, categories: promptCategoryOptions, total: totalPrompts } = usePromptList({ keyword: titleKeyword, tags: selectedTags, category: selectedCategory });
@@ -40,74 +32,6 @@ export default function PromptsPage() {
     const savePromptAsset = (item: Prompt) => {
         addAsset({ kind: "text", title: item.title, coverUrl: item.coverUrl, tags: item.tags, source: item.category, data: { content: item.prompt }, metadata: { source: "prompt-library", promptId: item.id, githubUrl: item.githubUrl } });
         message.success("已加入我的资产");
-    };
-
-    const invalidatePrompts = async () => {
-        await Promise.all([
-            queryClient.invalidateQueries({ queryKey: ["prompts"] }),
-            queryClient.invalidateQueries({ queryKey: ["side-panel-prompts"] }),
-            queryClient.invalidateQueries({ queryKey: ["prompt-source-statuses"] }),
-        ]);
-    };
-
-    const openEditor = (item: Prompt | null) => {
-        setEditingPrompt(item);
-        setEditorOpen(true);
-    };
-
-    const handleEditorSaved = async () => {
-        setEditorOpen(false);
-        await invalidatePrompts();
-        message.success("已保存到个人词库");
-    };
-
-    const addToPersonal = async (item: Prompt) => {
-        const existing = await fetchPersonalPrompts();
-        if (existing.some((prompt) => prompt.title === item.title && prompt.prompt === item.prompt)) {
-            message.info("该提示词已在个人词库");
-            return;
-        }
-        await savePersonalPrompt(createPersonalPrompt({ title: item.title, prompt: item.prompt, description: item.description, tags: item.tags, coverUrl: item.coverUrl, referenceImageUrls: item.referenceImageUrls }));
-        await invalidatePrompts();
-        message.success("已加入个人词库");
-    };
-
-    const deletePersonalPrompt = (item: Prompt) => {
-        modal.confirm({
-            title: `删除「${item.title}」？`,
-            content: "删除后不可恢复。",
-            okText: "删除",
-            okButtonProps: { danger: true },
-            cancelText: "取消",
-            onOk: async () => {
-                await removePersonalPrompt(item.id);
-                await invalidatePrompts();
-                message.success("已从个人词库删除");
-            },
-        });
-    };
-
-    const renderActions = (item: Prompt) => {
-        if (item.sourceId === PERSONAL_SOURCE_ID) {
-            return (
-                <div className="flex gap-2">
-                    <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => openEditor(item)}>
-                        编辑
-                    </Button>
-                    <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={() => deletePersonalPrompt(item)} />
-                </div>
-            );
-        }
-        return (
-            <div className="flex gap-2">
-                <Button size="small" icon={<BookmarkPlus className="size-3.5" />} onClick={() => void addToPersonal(item)}>
-                    加入我的词库
-                </Button>
-                <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => savePromptAsset(item)}>
-                    加入资产
-                </Button>
-            </div>
-        );
     };
 
     const handleListScroll = (event: UIEvent<HTMLDivElement>) => {
@@ -137,29 +61,16 @@ export default function PromptsPage() {
                             </div>
                         </aside>
                         <section className="min-w-0">
-                            <div className="flex items-center gap-2">
-                                <Input size="large" prefix={<Search className="size-4 text-stone-400" />} value={titleKeyword} placeholder="搜索标题、内容或标签" onChange={(event) => setTitleKeyword(event.target.value)} />
-                                <Button type="primary" icon={<Plus className="size-4" />} onClick={() => openEditor(null)}>
-                                    新增提示词
-                                </Button>
-                            </div>
+                            <Input size="large" prefix={<Search className="size-4 text-stone-400" />} value={titleKeyword} placeholder="搜索标题、内容或标签" onChange={(event) => setTitleKeyword(event.target.value)} />
                             {query.isLoading ? <div className="flex h-60 items-center justify-center"><Spin /></div> : null}
-                            {!query.isLoading ? <div className="mt-5"><PromptGrid items={promptItems} onOpen={setSelectedPrompt} renderActions={renderActions} onCopy={(item) => copyText(item.prompt, "提示词已复制")} emptyText="没有找到匹配的提示词" /></div> : null}
+                            {!query.isLoading ? <div className="mt-5"><PromptGrid items={promptItems} onOpen={setSelectedPrompt} renderActions={(item) => <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => savePromptAsset(item)}>加入资产</Button>} onCopy={(item) => copyText(item.prompt, "提示词已复制")} emptyText="没有找到匹配的提示词" /></div> : null}
                             <div className="mt-6 text-center text-xs text-stone-500 dark:text-stone-400">{query.isFetchingNextPage ? "加载中..." : query.hasNextPage ? "继续向下滚动加载更多" : promptItems.length > 0 ? "已经到底了" : null}</div>
                         </section>
                     </div>
                 </div>
             </main>
 
-            <PromptDetailDialog
-                prompt={selectedPrompt}
-                onClose={() => setSelectedPrompt(null)}
-                onCopy={(prompt) => copyText(prompt, "提示词已复制")}
-                onSaveAsset={savePromptAsset}
-                onEditPersonal={selectedPrompt?.sourceId === PERSONAL_SOURCE_ID ? (item) => openEditor(item) : undefined}
-                onAddToPersonal={selectedPrompt?.sourceId === PERSONAL_SOURCE_ID ? undefined : (item) => void addToPersonal(item)}
-            />
-            <PersonalPromptEditorDialog open={editorOpen} prompt={editingPrompt} onClose={() => setEditorOpen(false)} onSaved={() => void handleEditorSaved()} />
+            <PromptDetailDialog prompt={selectedPrompt} onClose={() => setSelectedPrompt(null)} onCopy={(prompt) => copyText(prompt, "提示词已复制")} onSaveAsset={savePromptAsset} />
         </div>
     );
 }
@@ -171,4 +82,3 @@ function PromptFilter({ label, options, selected, onChange }: { label: string; o
 function PromptGrid({ items, onOpen, onCopy, renderActions, emptyText }: { items: Prompt[]; onOpen: (item: Prompt) => void; onCopy: (item: Prompt) => void; renderActions: (item: Prompt) => ReactNode; emptyText: string }) {
     return <div><div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{items.map((item) => <PromptCard key={`${item.sourceId}:${item.id}`} item={item} onOpen={() => onOpen(item)} onCopy={() => onCopy(item)} extraAction={renderActions(item)} />)}</div>{items.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyText} className="py-16" /> : null}</div>;
 }
-

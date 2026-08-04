@@ -11,7 +11,7 @@ import { runModelPlugin } from "./model-plugin";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
-type VideoResponse = { id: string; status?: string; error?: { message?: string }; url?: string; result_url?: string; video_url?: string; metadata?: { url?: string; video_url?: string; duration?: number; width?: number; height?: number } | null; content?: { video_url?: string; url?: string } | null };
+type VideoResponse = { id: string; video_id?: string; task_id?: string; status?: string; error?: { message?: string }; url?: string; result_url?: string; video_url?: string; metadata?: { url?: string; video_url?: string; duration?: number; width?: number; height?: number } | null; content?: { video_url?: string; url?: string } | null };
 type ApiVideoResponse = VideoResponse | { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
 type SeedanceTask = {
     id: string;
@@ -138,8 +138,9 @@ async function agnesRequest<T>(config: AiConfig, url: string, options: { method:
     }
 }
 
-function agnesFrames(seconds: string) {
-    const desired = Math.max(1, Math.min(18, Number(seconds) || 6)) * 24;
+function agnesFrames(seconds: string, frameRate = 24) {
+    const fps = Math.max(1, Math.min(60, Number(frameRate) || 24));
+    const desired = Math.max(1, Math.min(18, Number(seconds) || 6)) * fps;
     return Math.max(9, Math.min(441, Math.round((Math.min(desired, 441) - 1) / 8) * 8 + 1));
 }
 
@@ -152,21 +153,34 @@ function agnesPublicImageUrl(image: ReferenceImage) {
 async function createAgnesVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
     if (videoReferences.length || audioReferences.length) throw new Error("Agnes Video 当前不支持参考视频或参考音频，请移除这些参考资产后生成。");
     const urls = references.map(agnesPublicImageUrl);
-    const size = normalizeVideoSize(config.size) || "1280x720";
-    const [width, height] = size.split("x").map(Number);
+    const frameRate = Math.max(1, Math.min(60, Number(config.videoFrameRate) || 24));
+    const numFrames = agnesFrames(config.videoSeconds, frameRate);
+    // size 为 auto 时不发送 width/height（文档参数可选，由服务端按默认规格处理）
+    const size = normalizeVideoSize(config.size);
+    const [width, height] = size && size !== "auto" ? size.split("x").map(Number) : [undefined, undefined];
+    const hasSize = Boolean(size && size !== "auto" && width && height && width > 0 && height > 0);
+    const seed = (config.videoSeed || "").trim();
+    const seedNumber = Number(seed);
+    const negativePrompt = (config.videoNegativePrompt || "").trim();
+    const steps = (config.videoNumInferenceSteps || "").trim();
+    const stepsNumber = Number(steps);
     try {
         const url = aiApiUrl(config, "/videos");
         const body = JSON.stringify({
             model: modelOptionName(model),
             prompt,
-            width,
-            height,
-            num_frames: agnesFrames(config.videoSeconds),
-            ...(urls.length === 1 ? { image: urls[0] } : urls.length > 1 ? { extra_body: { image: urls, mode: "keyframes" } } : {}),
+            ...(hasSize ? { width, height } : {}),
+            num_frames: numFrames,
+            frame_rate: frameRate,
+            ...(seed && Number.isInteger(seedNumber) ? { seed: seedNumber } : {}),
+            ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
+            ...(steps && Number.isInteger(stepsNumber) && stepsNumber > 0 ? { num_inference_steps: stepsNumber } : {}),
+            ...(urls.length === 1 ? { image: urls[0] } : urls.length > 1 ? { mode: "keyframes", extra_body: { image: urls, mode: "keyframes" } } : {}),
         });
         const data = await agnesRequest<ApiEnvelope<VideoResponse>>(config, url, { method: "POST", headers: aiHeaders(config, "application/json"), body, signal: options?.signal });
         const created = unwrapEnvelope(data, "Agnes 接口没有返回视频任务");
-        const videoId = created.id;
+        // 文档推荐用 video_id 查询结果；旧接口可能只返回 id，回退兼容
+        const videoId = created.video_id || created.id;
         if (!videoId) throw new Error("Agnes 接口没有返回 video_id");
         return { id: videoId, videoId, provider: "agnes", model };
     } catch (error) {

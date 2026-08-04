@@ -17,7 +17,7 @@ import { imageToDataUrl, resolveImageUrl, uploadImage } from "@/services/image-s
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { requestImageQuestion } from "@/services/api/image";
 import { useAssetStore } from "@/stores/use-asset-store";
-import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionLabel, resolveModelRequestConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -573,6 +573,9 @@ export default function VideoPage() {
                                         <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
                                             上传
                                         </Button>
+                                        <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!references.length} onClick={() => setReferences([])}>
+                                            清空
+                                        </Button>
                                     </div>
                                 </div>
                                 {publicImageUrlOpen ? (
@@ -623,9 +626,14 @@ export default function VideoPage() {
                             <div className="min-w-0">
                                 <div className="mb-2 flex items-center justify-between gap-3">
                                     <span className="text-base font-semibold">参考视频</span>
-                                    <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
-                                        上传
-                                    </Button>
+                                    <div className="flex gap-2">
+                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
+                                            上传
+                                        </Button>
+                                        <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!videoReferences.length} onClick={() => setVideoReferences([])}>
+                                            清空
+                                        </Button>
+                                    </div>
                                 </div>
                                 <div
                                     className={`hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors ${referenceDragTarget === "video" ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
@@ -654,9 +662,14 @@ export default function VideoPage() {
                             <div className="min-w-0">
                                 <div className="mb-2 flex items-center justify-between gap-3">
                                     <span className="text-base font-semibold">参考音频</span>
-                                    <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
-                                        上传
-                                    </Button>
+                                    <div className="flex gap-2">
+                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
+                                            上传
+                                        </Button>
+                                        <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!audioReferences.length} onClick={() => setAudioReferences([])}>
+                                            清空
+                                        </Button>
+                                    </div>
                                 </div>
                                 <div
                                     className={`hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors ${referenceDragTarget === "audio" ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
@@ -763,7 +776,7 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
                 <ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} />
             </label>
             <div className="col-span-2">
-                <VideoSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
+                <VideoSettingsPanel config={config} model={model} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
             </div>
         </>
     );
@@ -1050,22 +1063,42 @@ function buildLog({ prompt, model, config, references, videoReferences, audioRef
 
 function buildVideoConfig(config: AiConfig, model: string): AiConfig {
     const seedance = isSeedanceVideoConfig({ ...config, model });
+    const agnes = resolveModelRequestConfig({ ...config, model }, model).apiFormat === "agnes";
     return {
         ...config,
         model,
         videoModel: model,
         size: seedance ? normalizeSeedanceRatio(config.size) : normalizeVideoSize(config.size),
-        videoSeconds: normalizeVideoSeconds(config.videoSeconds),
+        videoSeconds: normalizeVideoSeconds(config.videoSeconds, agnes),
         vquality: normalizeResolution(config.vquality),
         videoGenerateAudio: String(boolConfig(config.videoGenerateAudio, true)),
         videoWatermark: String(boolConfig(config.videoWatermark, false)),
+        videoFrameRate: normalizeVideoFrameRate(config.videoFrameRate),
+        videoSeed: normalizeVideoSeed(config.videoSeed),
+        videoNumInferenceSteps: normalizeVideoInferenceSteps(config.videoNumInferenceSteps),
     };
 }
 
-function normalizeVideoSeconds(value: string) {
+function normalizeVideoSeconds(value: string, agnes = false) {
     if (String(value).trim() === "-1") return "-1";
     const seconds = Math.floor(Number(value) || 6);
-    return String(Math.max(1, Math.min(20, seconds)));
+    // Agnes 文档最大 18 秒；其他渠道保持原有 20 秒上限
+    return String(Math.max(1, Math.min(agnes ? 18 : 20, seconds)));
+}
+
+function normalizeVideoFrameRate(value: string) {
+    const rate = Math.floor(Number(value) || 24);
+    return String(Math.max(1, Math.min(60, rate)));
+}
+
+function normalizeVideoSeed(value: string) {
+    const seed = Number((value || "").trim());
+    return Number.isInteger(seed) ? String(seed) : "";
+}
+
+function normalizeVideoInferenceSteps(value: string) {
+    const steps = Number((value || "").trim());
+    return Number.isInteger(steps) && steps > 0 ? String(steps) : "";
 }
 
 function normalizeVideoSize(value: string) {

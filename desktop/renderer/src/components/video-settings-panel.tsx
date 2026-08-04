@@ -4,7 +4,9 @@ import { Switch } from "antd";
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { type AiConfig } from "@/stores/use-config-store";
+import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+
+export type VideoSettingKey = "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoFrameRate" | "videoSeed" | "videoNegativePrompt" | "videoNumInferenceSteps";
 
 const resolutionOptions = [
     { value: "720", label: "720p" },
@@ -28,21 +30,28 @@ export const videoSecondOptions = secondOptions.map((value) => String(value));
 
 type VideoSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark", value: string) => void;
+    onConfigChange: (key: VideoSettingKey, value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
+    /** 当前选中的视频模型，用于判断渠道；缺省用 config.videoModel */
+    model?: string;
 };
 
-export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
+export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", model }: VideoSettingsPanelProps) {
     if (isSeedanceVideoConfig(config)) {
         return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
 
+    // Agnes 渠道启用文档对齐的选项（18s 上限、1152x768 默认横屏、高级参数）；其他渠道保持现状
+    const isAgnes = resolveModelRequestConfig(config, model || config.videoModel).apiFormat === "agnes";
     const seconds = config.videoSeconds || "6";
     const size = normalizeVideoSizeValue(config.size);
     const dimensions = readSizeDimensions(size);
     const resolution = normalizeVideoResolutionValue(config.vquality);
+    const secondsOptions = isAgnes ? [6, 10, 12, 16, 18] : secondOptions;
+    const maxSeconds = isAgnes ? 18 : 20;
+    const channelSizeOptions = isAgnes ? sizeOptions.map((item) => (item.value === "1280x720" ? { ...item, value: "1152x768", width: 1152, height: 768 } : item)) : sizeOptions;
     const updateDimension = (key: "width" | "height", value: number | null) => {
         const next = Math.max(1, Math.floor(value || dimensions[key] || 720));
         onConfigChange("size", `${key === "width" ? next : dimensions.width}x${key === "height" ? next : dimensions.height}`);
@@ -69,7 +78,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         <DimensionInput prefix="H" value={dimensions.height} disabled={size === "auto"} theme={theme} onChange={(value) => updateDimension("height", value)} />
                     </div>
                     <div className="grid grid-cols-3 gap-2.5">
-                        {sizeOptions.map((item) => (
+                        {channelSizeOptions.map((item) => (
                             <button
                                 key={item.value}
                                 type="button"
@@ -91,14 +100,47 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </SettingGroup>
                 <SettingGroup title="秒数" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
-                        {secondOptions.map((value) => (
+                        {secondsOptions.map((value) => (
                             <OptionPill key={value} selected={seconds === String(value)} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
                                 {value}s
                             </OptionPill>
                         ))}
-                        <NumberInput value={seconds} min={1} max={20} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
+                        <NumberInput value={seconds} min={1} max={maxSeconds} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
                     </div>
                 </SettingGroup>
+                {isAgnes ? (
+                    <SettingGroup title="高级参数" color={theme.node.muted}>
+                        <div className="space-y-2.5">
+                            <div className="flex items-center gap-2">
+                                <span className="w-14 shrink-0 text-xs" style={{ color: theme.node.muted }}>
+                                    帧率
+                                </span>
+                                <NumberInput value={config.videoFrameRate || "24"} min={1} max={60} theme={theme} onChange={(value) => onConfigChange("videoFrameRate", value)} />
+                                <span className="text-xs opacity-55" style={{ color: theme.node.muted }}>
+                                    fps
+                                </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span className="w-14 shrink-0 text-xs" style={{ color: theme.node.muted }}>
+                                    种子
+                                </span>
+                                <NumberInput value={config.videoSeed || ""} min={0} theme={theme} onChange={(value) => onConfigChange("videoSeed", value)} />
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span className="w-14 shrink-0 text-xs" style={{ color: theme.node.muted }}>
+                                    推理步数
+                                </span>
+                                <NumberInput value={config.videoNumInferenceSteps || ""} min={1} theme={theme} onChange={(value) => onConfigChange("videoNumInferenceSteps", value)} />
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span className="w-14 shrink-0 text-xs" style={{ color: theme.node.muted }}>
+                                    负面提示词
+                                </span>
+                                <TextInput value={config.videoNegativePrompt || ""} placeholder="可选，描述要避免的内容" theme={theme} onChange={(value) => onConfigChange("videoNegativePrompt", value)} />
+                            </div>
+                        </div>
+                    </SettingGroup>
+                ) : null}
             </div>
         </ImageSettingsTheme>
     );
@@ -233,8 +275,12 @@ function DimensionInput({ prefix, value, disabled, theme, onChange }: { prefix: 
     );
 }
 
-function NumberInput({ value, min, max, theme, onChange }: { value: string; min: number; max: number; theme: CanvasTheme; onChange: (value: string) => void }) {
+function NumberInput({ value, min, max, theme, onChange }: { value: string; min: number; max?: number; theme: CanvasTheme; onChange: (value: string) => void }) {
     return <input type="number" min={min} max={max} className="h-9 rounded-full border bg-transparent px-3 text-center text-sm outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" style={{ borderColor: theme.node.stroke, color: theme.node.text, WebkitTextFillColor: theme.node.text }} value={value} onChange={(event) => onChange(event.target.value)} onMouseDown={(event) => event.stopPropagation()} />;
+}
+
+function TextInput({ value, placeholder, theme, onChange }: { value: string; placeholder?: string; theme: CanvasTheme; onChange: (value: string) => void }) {
+    return <input type="text" placeholder={placeholder} className="min-w-0 flex-1 rounded-full border bg-transparent px-3 text-sm outline-none" style={{ borderColor: theme.node.stroke, color: theme.node.text, WebkitTextFillColor: theme.node.text }} value={value} onChange={(event) => onChange(event.target.value)} onMouseDown={(event) => event.stopPropagation()} />;
 }
 
 function SizePreview({ width, height, color }: { width: number; height: number; color: string }) {

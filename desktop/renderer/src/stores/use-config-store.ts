@@ -45,6 +45,11 @@ export type AiConfig = {
     vquality: string;
     videoGenerateAudio: string;
     videoWatermark: string;
+    /** Agnes 视频高级参数（仅 Agnes 渠道使用）：帧率 1-60、随机种子、负面提示词、推理步数 */
+    videoFrameRate: string;
+    videoSeed: string;
+    videoNegativePrompt: string;
+    videoNumInferenceSteps: string;
     systemPrompt: string;
     reasoningEffort: ReasoningEffort;
     models: string[];
@@ -123,6 +128,10 @@ export const defaultConfig: AiConfig = {
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",
+    videoFrameRate: "24",
+    videoSeed: "",
+    videoNegativePrompt: "",
+    videoNumInferenceSteps: "",
     systemPrompt: "",
     reasoningEffort: "auto",
     models: GRSAI_DEFAULT_MODELS.map((model) => `default::${model.name}`),
@@ -296,6 +305,10 @@ export const useConfigStore = create<ConfigStore>()(
                         vquality: config.vquality || "720",
                         videoGenerateAudio: config.videoGenerateAudio || "true",
                         videoWatermark: config.videoWatermark || "false",
+                        videoFrameRate: config.videoFrameRate || "24",
+                        videoSeed: config.videoSeed || "",
+                        videoNegativePrompt: config.videoNegativePrompt || "",
+                        videoNumInferenceSteps: config.videoNumInferenceSteps || "",
                         canvasImageCount: config.canvasImageCount || "3",
                         imageResolution: normalizeImageResolution(config.imageResolution, config.quality, config.size),
                     },

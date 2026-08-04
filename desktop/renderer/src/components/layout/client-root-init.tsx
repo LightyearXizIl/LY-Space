@@ -5,6 +5,7 @@ import { App } from "antd";
 import { createModelChannel, useConfigStore } from "@/stores/use-config-store";
 import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
 import { flushPendingStorageWrites } from "@/services/desktop-storage";
+import { UpdatePrompt } from "@/components/layout/update-prompt";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
     const { message } = App.useApp();
@@ -70,6 +71,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     return (
         <>
             {children}
+            <UpdatePrompt />
         </>
     );
 }

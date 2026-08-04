@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Empty, Input, Modal, Pagination, Tag } from "antd";
-import { Search } from "lucide-react";
+import { Button, Empty, Input, Modal, Pagination, Tag } from "antd";
+import { Copy, Plus, Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
+import { useCopyText } from "@/hooks/use-copy-text";
 
 export type InsertAssetPayload = { kind: "text"; content: string; title: string } | { kind: "image"; dataUrl: string; title: string; storageKey?: string } | { kind: "video"; url: string; title: string; storageKey?: string; width?: number; height?: number };
 
@@ -31,13 +32,9 @@ const kindOptions = [
     { label: "视频", value: "video" },
 ];
 
-function PickerCard({ title, kind, cover, onClick }: { title: string; kind: string; cover: string; onClick: () => void }) {
+function PickerCard({ title, kind, cover, onCopy, onInsert }: { title: string; kind: string; cover: string; onCopy: () => void; onInsert: () => void }) {
     return (
-        <button
-            type="button"
-            className="group relative cursor-pointer overflow-hidden rounded-lg border border-stone-200 bg-white text-left transition hover:border-stone-400 hover:shadow-md dark:border-stone-700 dark:bg-stone-900 dark:hover:border-stone-500"
-            onClick={onClick}
-        >
+        <div className="group overflow-hidden rounded-lg border border-stone-200 bg-white transition hover:border-stone-400 hover:shadow-md dark:border-stone-700 dark:bg-stone-900 dark:hover:border-stone-500">
             {cover ? (
                 <img src={cover} alt={title} className="aspect-[4/3] w-full object-cover" />
             ) : (
@@ -48,14 +45,22 @@ function PickerCard({ title, kind, cover, onClick }: { title: string; kind: stri
                     <span className="line-clamp-1 text-xs font-medium text-stone-800 dark:text-stone-200">{title}</span>
                     <Tag className="m-0 shrink-0 text-[10px]">{kind === "image" ? "图片" : kind === "video" ? "视频" : "文本"}</Tag>
                 </div>
+                <div className="mt-2 flex gap-1.5">
+                    <Button size="small" block icon={<Copy className="size-3" />} onClick={onCopy}>
+                        复制
+                    </Button>
+                    <Button size="small" block type="primary" icon={<Plus className="size-3" />} onClick={onInsert}>
+                        插入
+                    </Button>
+                </div>
             </div>
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-stone-950/0 text-sm font-medium text-white opacity-0 transition group-hover:bg-stone-950/55 group-hover:opacity-100">插入</div>
-        </button>
+        </div>
     );
 }
 
 function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => void }) {
     const assets = useAssetStore((state) => state.assets);
+    const copyText = useCopyText();
     const [keyword, setKeyword] = useState("");
     const [kindFilter, setKindFilter] = useState("all");
     const [page, setPage] = useState(1);
@@ -74,6 +79,11 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
         const maxPage = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
         setPage((v) => Math.min(v, maxPage));
     }, [filtered.length]);
+
+    const copyAsset = (asset: Asset) => {
+        const content = asset.kind === "text" ? asset.data.content : asset.kind === "video" ? asset.data.url : asset.data.dataUrl;
+        copyText(content, "资产内容已复制");
+    };
 
     const handleInsert = (asset: Asset) => {
         if (asset.kind === "text") {
@@ -118,7 +128,7 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
             {visible.length ? (
                 <div className="grid grid-cols-4 gap-3">
                     {visible.map((asset) => (
-                        <PickerCard key={asset.id} title={asset.title} kind={asset.kind} cover={asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "")} onClick={() => handleInsert(asset)} />
+                        <PickerCard key={asset.id} title={asset.title} kind={asset.kind} cover={asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "")} onCopy={() => copyAsset(asset)} onInsert={() => handleInsert(asset)} />
                     ))}
                 </div>
             ) : (

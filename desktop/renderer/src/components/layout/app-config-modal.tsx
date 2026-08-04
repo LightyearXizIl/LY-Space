@@ -1,6 +1,7 @@
 import { App, Button, Form, Input, Modal, Progress, Select, Switch, Tabs } from "antd";
 import { Cloud, Download, FolderOpen, Pencil, Plus, RefreshCw, RotateCcw, Trash2, Upload, Wifi } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useDraftInput } from "@/hooks/use-draft-input";
 
 import { ModelPicker } from "@/components/model-picker";
 import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
@@ -71,6 +72,15 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
     const clearPromptContinue = useConfigStore((state) => state.clearPromptContinue);
     const webdavReady = Boolean(webdav.url.trim());
+    // 输入框本地草稿:失焦才提交到全局 store(避免每键触发全量 persist 序列化与订阅者重渲染)
+    const canvasImageCountDraft = useDraftInput(config.canvasImageCount);
+    const audioSpeedDraft = useDraftInput(config.audioSpeed);
+    const audioInstructionsDraft = useDraftInput(config.audioInstructions);
+    const systemPromptDraft = useDraftInput(config.systemPrompt);
+    const webdavUrlDraft = useDraftInput(webdav.url);
+    const webdavDirectoryDraft = useDraftInput(webdav.directory);
+    const webdavUsernameDraft = useDraftInput(webdav.username);
+    const webdavPasswordDraft = useDraftInput(webdav.password);
     const editingChannel = config.channels.find((channel) => channel.id === editingChannelId) || null;
     useEffect(() => setActiveTab(initialTab), [initialTab]);
     useEffect(() => {
@@ -282,9 +292,9 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                             type="number"
                                             min={1}
                                             max={15}
-                                            value={config.canvasImageCount}
-                                            onChange={(event) => updateConfig("canvasImageCount", event.target.value)}
-                                            onBlur={(event) => updateConfig("canvasImageCount", normalizeImageCount(event.target.value))}
+                                            value={canvasImageCountDraft.value}
+                                            onChange={canvasImageCountDraft.onChange}
+                                            onBlur={() => updateConfig("canvasImageCount", normalizeImageCount(canvasImageCountDraft.value))}
                                         />
                                     </Form.Item>
                                     <Form.Item label="默认音频声音" className="mb-4">
@@ -299,17 +309,17 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                             min={0.25}
                                             max={4}
                                             step={0.05}
-                                            value={config.audioSpeed}
-                                            onChange={(event) => updateConfig("audioSpeed", event.target.value)}
-                                            onBlur={(event) => updateConfig("audioSpeed", normalizeAudioSpeedValue(event.target.value))}
+                                            value={audioSpeedDraft.value}
+                                            onChange={audioSpeedDraft.onChange}
+                                            onBlur={() => updateConfig("audioSpeed", normalizeAudioSpeedValue(audioSpeedDraft.value))}
                                         />
                                     </Form.Item>
                                 </div>
                                 <Form.Item label="默认音频指令" className="mb-4">
-                                    <Input.TextArea rows={2} value={config.audioInstructions} placeholder="例如：自然、温暖、适合旁白。" onChange={(event) => updateConfig("audioInstructions", event.target.value)} />
+                                    <Input.TextArea rows={2} value={audioInstructionsDraft.value} placeholder="例如：自然、温暖、适合旁白。" onChange={audioInstructionsDraft.onChange} onBlur={() => updateConfig("audioInstructions", audioInstructionsDraft.value)} />
                                 </Form.Item>
                                 <Form.Item label="系统提示词" className="mb-0">
-                                    <Input.TextArea rows={4} value={config.systemPrompt} placeholder="例如：你是一位擅长电影感写实摄影的视觉导演。" onChange={(event) => updateConfig("systemPrompt", event.target.value)} />
+                                    <Input.TextArea rows={4} value={systemPromptDraft.value} placeholder="例如：你是一位擅长电影感写实摄影的视觉导演。" onChange={systemPromptDraft.onChange} onBlur={() => updateConfig("systemPrompt", systemPromptDraft.value)} />
                                 </Form.Item>
                             </Form>
                         ),
@@ -351,16 +361,16 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                     </div>
                                     <div className="grid gap-4 md:grid-cols-2">
                                         <Form.Item label="WebDAV 地址" className="mb-4">
-                                            <Input value={webdav.url} placeholder="https://nas.example.com/webdav" onChange={(event) => updateWebdavConfig("url", event.target.value)} />
+                                            <Input value={webdavUrlDraft.value} placeholder="https://nas.example.com/webdav" onChange={webdavUrlDraft.onChange} onBlur={() => updateWebdavConfig("url", webdavUrlDraft.value)} />
                                         </Form.Item>
                                         <Form.Item label="远程目录" extra={`会在该目录下分业务目录保存，每个目录包含 ${WEBDAV_MANIFEST_FILE_NAME} 和 files/`} className="mb-4">
-                                            <Input value={webdav.directory} placeholder="infinite-canvas" onChange={(event) => updateWebdavConfig("directory", event.target.value)} />
+                                            <Input value={webdavDirectoryDraft.value} placeholder="infinite-canvas" onChange={webdavDirectoryDraft.onChange} onBlur={() => updateWebdavConfig("directory", webdavDirectoryDraft.value)} />
                                         </Form.Item>
                                         <Form.Item label="用户名" className="mb-0">
-                                            <Input value={webdav.username} autoComplete="username" onChange={(event) => updateWebdavConfig("username", event.target.value)} />
+                                            <Input value={webdavUsernameDraft.value} autoComplete="username" onChange={webdavUsernameDraft.onChange} onBlur={() => updateWebdavConfig("username", webdavUsernameDraft.value)} />
                                         </Form.Item>
                                         <Form.Item label="密码 / 应用密码" className="mb-0">
-                                            <Input.Password value={webdav.password} autoComplete="current-password" onChange={(event) => updateWebdavConfig("password", event.target.value)} />
+                                            <Input.Password value={webdavPasswordDraft.value} autoComplete="current-password" onChange={webdavPasswordDraft.onChange} onBlur={() => updateWebdavConfig("password", webdavPasswordDraft.value)} />
                                         </Form.Item>
                                     </div>
                                     <div className="mt-4 flex flex-wrap items-center gap-2">

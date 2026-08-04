@@ -1,10 +1,11 @@
 import { Copy, FileText } from "lucide-react";
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { Button, Card, Tag } from "antd";
 
 import { formatPromptDate, type Prompt } from "@/services/api/prompts";
 
-export function PromptCard({
+// memo:列表滚动加载/筛选时 item 未变的卡片不重渲染(onOpen/onCopy/extraAction 需传稳定引用)
+export const PromptCard = memo(function PromptCard({
     item,
     onOpen,
     onCopy,
@@ -14,12 +15,12 @@ export function PromptCard({
     extraAction,
 }: {
     item: Prompt;
-    onOpen: () => void;
-    onCopy: () => void;
+    onOpen: (item: Prompt) => void;
+    onCopy: (item: Prompt) => void;
     actionLabel?: string;
     actionIcon?: ReactNode;
     actionType?: "text" | "primary";
-    extraAction?: ReactNode;
+    extraAction?: (item: Prompt) => ReactNode;
 }) {
     return (
         <Card
@@ -27,12 +28,12 @@ export function PromptCard({
             className="overflow-hidden"
             styles={{ body: { padding: 0 } }}
             cover={
-                <button type="button" className="block w-full text-left" onClick={onOpen}>
+                <button type="button" className="block w-full text-left" onClick={() => onOpen(item)}>
                     {item.coverUrl ? <img src={item.coverUrl} alt={item.title} className="aspect-[4/3] w-full object-cover" loading="lazy" /> : <span className="grid aspect-[4/3] w-full place-items-center bg-stone-100 text-stone-400 dark:bg-stone-900 dark:text-stone-600"><FileText className="size-8" /></span>}
                 </button>
             }
         >
-            <button type="button" className="block w-full text-left" onClick={onOpen}>
+            <button type="button" className="block w-full text-left" onClick={() => onOpen(item)}>
                 <div className="p-4">
                     <div className="flex items-start justify-between gap-3">
                         <h2 className="line-clamp-1 text-sm font-semibold text-stone-950 dark:text-stone-100">{item.title}</h2>
@@ -49,11 +50,11 @@ export function PromptCard({
                 </div>
             </button>
             <div className="flex items-center gap-2 px-4 pb-4">
-                <Button block={actionType === "primary"} type={actionType} size="small" icon={actionIcon} onClick={onCopy}>
+                <Button block={actionType === "primary"} type={actionType} size="small" icon={actionIcon} onClick={() => onCopy(item)}>
                     {actionLabel}
                 </Button>
-                {extraAction}
+                {extraAction?.(item)}
             </div>
         </Card>
     );
-}
+});

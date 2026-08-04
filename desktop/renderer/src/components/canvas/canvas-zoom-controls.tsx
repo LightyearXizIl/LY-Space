@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Compass, Focus, HelpCircle } from "lucide-react";
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Button, Modal, Tooltip } from "antd";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -14,7 +14,7 @@ type CanvasZoomControlsProps = {
     onToggleMiniMap: () => void;
 };
 
-export function CanvasZoomControls({ scale, onScaleChange, onReset, isMiniMapOpen, onToggleMiniMap }: CanvasZoomControlsProps) {
+export const CanvasZoomControls = memo(function CanvasZoomControls({ scale, onScaleChange, onReset, isMiniMapOpen, onToggleMiniMap }: CanvasZoomControlsProps) {
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
     const colorTheme = useThemeStore((state) => state.theme);
     const theme = canvasThemes[colorTheme];
@@ -69,7 +69,7 @@ export function CanvasZoomControls({ scale, onScaleChange, onReset, isMiniMapOpe
             </Modal>
         </div>
     );
-}
+});
 
 function Shortcut({ label, value }: { label: ReactNode; value: string }) {
     return (

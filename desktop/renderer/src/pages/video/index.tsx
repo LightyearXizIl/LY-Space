@@ -118,6 +118,12 @@ export default function VideoPage() {
     const [referenceDragTarget, setReferenceDragTarget] = useState<"image" | "video" | "audio" | null>(null);
     const [sessionHydrated, setSessionHydrated] = useState(false);
 
+    // 轮询闭包在页面卸载后仍后台继续(保存日志/通知新页面),但不再更新已卸载组件的 UI 状态
+    const mountedRef = useRef(true);
+    useEffect(() => () => {
+        mountedRef.current = false;
+    }, []);
+
     // 供 handoff 消费函数读取最新参考图（事件触发的消费不依赖渲染闭包）
     const referencesRef = useRef(references);
     referencesRef.current = references;
@@ -154,10 +160,12 @@ export default function VideoPage() {
         };
     }, []);
 
+    // 生成期间每秒的 elapsedMs 变化不触发保存，避免每秒把整个 session(含参考图 dataUrl)写入 IndexedDB；
+    // 每次结果/输入变化(含生成结束的最终状态)仍会保存，保存时闭包中的 elapsedMs 为最新渲染值。
     useEffect(() => {
         if (!sessionHydrated) return;
         void saveWorkbenchSession(SESSION_STORE_KEY, { prompt, references, videoReferences, audioReferences, results, elapsedMs });
-    }, [audioReferences, elapsedMs, prompt, references, results, sessionHydrated, videoReferences]);
+    }, [audioReferences, prompt, references, results, sessionHydrated, videoReferences]);
 
     // 消费参考图 handoff（精修图片 / 阿里云设置添加的公网 URL），支持 url 直接加入
     const consumeReferenceHandoffs = async () => {
@@ -448,9 +456,11 @@ export default function VideoPage() {
     const pollGenerationLog = async (log: GenerationLog, configOverride?: AiConfig) => {
         if (!log.task || activeVideoLogIds.has(log.id)) return;
         activeVideoLogIds.add(log.id);
-        setRunning(true);
-        setStartedAt((value) => value || performance.now());
-        setResults((value) => (value.length ? value : [{ id: log.id, status: "pending" }]));
+        if (mountedRef.current) {
+            setRunning(true);
+            setStartedAt((value) => value || performance.now());
+            setResults((value) => (value.length ? value : [{ id: log.id, status: "pending" }]));
+        }
         const taskConfig = buildVideoConfig({ ...effectiveConfig, ...log.config }, log.task.model || log.model);
         try {
             for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -467,7 +477,7 @@ export default function VideoPage() {
                         bytes: stored.bytes,
                         mimeType: stored.mimeType,
                     };
-                    setResults([{ id: nextVideo.id, status: "success", video: nextVideo }]);
+                    if (mountedRef.current) setResults([{ id: nextVideo.id, status: "success", video: nextVideo }]);
                     await saveLog({ ...log, status: "成功", durationMs: nextVideo.durationMs, video: nextVideo, error: undefined });
                     message.success("视频已生成");
                     return;
@@ -478,12 +488,12 @@ export default function VideoPage() {
             }
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "生成失败";
-            setResults([{ id: log.id, status: "failed", error: errorMessage }]);
+            if (mountedRef.current) setResults([{ id: log.id, status: "failed", error: errorMessage }]);
             await saveLog({ ...log, status: "失败", durationMs: Date.now() - log.createdAt, error: errorMessage });
             message.error(errorMessage);
         } finally {
             activeVideoLogIds.delete(log.id);
-            if (!activeVideoLogIds.size) {
+            if (mountedRef.current && !activeVideoLogIds.size) {
                 setRunning(false);
                 setStartedAt(0);
             }

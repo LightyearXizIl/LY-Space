@@ -46,6 +46,9 @@ export default function RefinePage() {
     const [history, setHistory] = useState<EditState[]>([]);
     const [historyIndex, setHistoryIndex] = useState(-1);
     const lutInputRef = useRef<HTMLInputElement>(null);
+    const sessionSnapshotRef = useRef<RefineSession | null>(null);
+    const sessionSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const previewFrameRef = useRef<number | null>(null);
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const [aiMode, setAiMode] = useState<"repair" | "upscale">("repair");
@@ -72,11 +75,35 @@ export default function RefinePage() {
         };
     }, []);
 
+    // 渲染期同步最新会话快照(供防抖落盘与卸载落盘读取最新值)
+    sessionSnapshotRef.current = { source, crop, ratioPreset, resolution, customWidth, customHeight, format, quality, edits, history, historyIndex } satisfies RefineSession;
+
+    // 会话保存:trailing 防抖 500ms(拖动调色等高频编辑时避免每秒数十次全量写库,会话含大图 dataUrl)
     useEffect(() => {
         if (!hydrated) return;
-        void saveWorkbenchSession(SESSION_KEY, { source, crop, ratioPreset, resolution, customWidth, customHeight, format, quality, edits, history, historyIndex } satisfies RefineSession);
+        if (sessionSaveTimerRef.current) clearTimeout(sessionSaveTimerRef.current);
+        sessionSaveTimerRef.current = setTimeout(() => {
+            sessionSaveTimerRef.current = null;
+            if (sessionSnapshotRef.current) void saveWorkbenchSession(SESSION_KEY, sessionSnapshotRef.current);
+        }, 500);
+        return () => {
+            if (sessionSaveTimerRef.current) {
+                clearTimeout(sessionSaveTimerRef.current);
+                sessionSaveTimerRef.current = null;
+            }
+        };
     }, [crop, customHeight, customWidth, edits, format, history, historyIndex, hydrated, quality, ratioPreset, resolution, source]);
 
+    // 卸载/切换时立即落盘防抖窗口内未保存的编辑
+    useEffect(() => () => {
+        if (sessionSaveTimerRef.current) {
+            clearTimeout(sessionSaveTimerRef.current);
+            sessionSaveTimerRef.current = null;
+            if (sessionSnapshotRef.current) void saveWorkbenchSession(SESSION_KEY, sessionSnapshotRef.current);
+        }
+    }, []);
+
+    // 预览重绘 rAF 合并:拖动调色滑杆等高频 edits 变化时每帧最多一次全量 canvas 重绘
     useEffect(() => {
         if (!source) {
             setPreviewUrl("");
@@ -84,16 +111,26 @@ export default function RefinePage() {
         }
         let active = true;
         let url = "";
-        void renderRefinedImage(source.dataUrl, source, crop, cropPixelSize(source, crop), "png", .92, edits).then((blob) => {
+        if (previewFrameRef.current) cancelAnimationFrame(previewFrameRef.current);
+        previewFrameRef.current = requestAnimationFrame(() => {
+            previewFrameRef.current = null;
             if (!active) return;
-            url = URL.createObjectURL(blob);
-            setPreviewUrl(url);
-        }).catch(() => active && setPreviewUrl(source.dataUrl));
+            void renderRefinedImage(source.dataUrl, source, crop, cropPixelSize(source, crop), "png", .92, edits).then((blob) => {
+                if (!active) return;
+                url = URL.createObjectURL(blob);
+                setPreviewUrl(url);
+            }).catch(() => active && setPreviewUrl(source.dataUrl));
+        });
         return () => {
             active = false;
             if (url) URL.revokeObjectURL(url);
         };
     }, [crop, edits, source]);
+
+    // 卸载时取消挂起的预览帧
+    useEffect(() => () => {
+        if (previewFrameRef.current) cancelAnimationFrame(previewFrameRef.current);
+    }, []);
 
     const dimensions = source ? resolveRefineDimensions(source, crop, resolution, customWidth, customHeight) : null;
     const cropSize = source ? cropPixelSize(source, crop) : null;
@@ -158,7 +195,7 @@ export default function RefinePage() {
     };
 
     const commitEdits = (next: EditState) => { const nextHistory = [...history.slice(0, historyIndex + 1), edits]; setHistory(nextHistory); setHistoryIndex(nextHistory.length - 1); setEdits(next); };
-    const updateAdjustment = (key: keyof RefineAdjustments, value: number) => commitEdits({ ...edits, adjustments: { ...edits.adjustments, [key]: value } });
+    const updateAdjustmentPreview = (key: keyof RefineAdjustments, value: number) => setEdits({ ...edits, adjustments: { ...edits.adjustments, [key]: value } });
     const undo = () => { if (historyIndex < 0) return; const previous = history[historyIndex]; setEdits(previous); setHistoryIndex(historyIndex - 1); };
     const importLut = async (file?: File) => { if (!file) return; try { commitEdits({ ...edits, lut: await parseRefineLut(file) }); message.success("LUT 已导入"); } catch (error) { message.error(error instanceof Error ? error.message : "LUT 导入失败"); } };
 
@@ -233,8 +270,8 @@ export default function RefinePage() {
                     </section>
                     <aside className="space-y-5 rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800">
                         <section><div className="mb-2 flex items-center justify-between"><h2 className="font-medium">裁切与变换</h2><Button size="small" icon={<Crop className="size-4" />} disabled={!source} onClick={() => setCropOpen(true)}>自定义裁切</Button></div><div className="flex gap-1"><Button size="small" icon={<Undo2 />} onClick={undo} disabled={historyIndex < 0} /><Button size="small" icon={<RotateCcw />} onClick={() => commitEdits({ ...edits, transform: { ...edits.transform, rotation: edits.transform.rotation - 90 } })} /><Button size="small" icon={<RotateCw />} onClick={() => commitEdits({ ...edits, transform: { ...edits.transform, rotation: edits.transform.rotation + 90 } })} /><Button size="small" onClick={() => commitEdits({ ...edits, transform: { ...edits.transform, flipX: !edits.transform.flipX } })}>水平翻转</Button><Button size="small" onClick={() => commitEdits({ ...edits, transform: { ...edits.transform, flipY: !edits.transform.flipY } })}>垂直翻转</Button></div><Slider min={-45} max={45} value={edits.transform.rotation} onChange={(value) => setEdits({ ...edits, transform: { ...edits.transform, rotation: Number(value) } })} onChangeComplete={(value) => commitEdits({ ...edits, transform: { ...edits.transform, rotation: Number(value) } })} /><div className="text-xs text-stone-500">{cropSize ? `裁切区域 ${cropSize.width} × ${cropSize.height}` : "载入图片后可裁切"}</div></section>
-                        <section><h2 className="mb-2 font-medium">滤镜与调色</h2><div className="grid grid-cols-4 gap-1">{(["original", "vivid", "cinema", "warm", "cool", "vintage", "mono", "contrast"] as RefineFilter[]).map((key) => <Button key={key} size="small" type={edits.filter === key ? "primary" : "default"} onClick={() => commitEdits({ ...edits, filter: key })}>{{ original: "原图", vivid: "鲜艳", cinema: "电影", warm: "暖色", cool: "冷色", vintage: "复古", mono: "黑白", contrast: "高对比" }[key]}</Button>)}</div>{(["exposure", "contrast", "highlights", "shadows", "saturation", "temperature", "tint", "sharpen", "vignette"] as Array<keyof RefineAdjustments>).map((key) => <div key={key} className="mt-2"><div className="flex justify-between text-xs"><span>{{ exposure: "曝光", contrast: "对比度", highlights: "高光", shadows: "阴影", saturation: "饱和度", temperature: "色温", tint: "色调", sharpen: "锐化", vignette: "暗角" }[key]}</span><span>{edits.adjustments[key]}</span></div><Slider min={-100} max={100} value={edits.adjustments[key]} onChange={(value) => updateAdjustment(key, value)} /></div>)}</section>
-                        <section><h2 className="mb-2 font-medium">LUT</h2><div className="flex gap-2"><Button size="small" onClick={() => lutInputRef.current?.click()}>导入 .cube/.3dl</Button>{edits.lut ? <Button size="small" danger onClick={() => commitEdits({ ...edits, lut: null })}>移除 {edits.lut.name}</Button> : null}</div>{edits.lut ? <Slider min={0} max={100} value={edits.lut.intensity} onChange={(value) => commitEdits({ ...edits, lut: { ...edits.lut!, intensity: value } })} /> : null}</section>
+                        <section><h2 className="mb-2 font-medium">滤镜与调色</h2><div className="grid grid-cols-4 gap-1">{(["original", "vivid", "cinema", "warm", "cool", "vintage", "mono", "contrast"] as RefineFilter[]).map((key) => <Button key={key} size="small" type={edits.filter === key ? "primary" : "default"} onClick={() => commitEdits({ ...edits, filter: key })}>{{ original: "原图", vivid: "鲜艳", cinema: "电影", warm: "暖色", cool: "冷色", vintage: "复古", mono: "黑白", contrast: "高对比" }[key]}</Button>)}</div>{(["exposure", "contrast", "highlights", "shadows", "saturation", "temperature", "tint", "sharpen", "vignette"] as Array<keyof RefineAdjustments>).map((key) => <div key={key} className="mt-2"><div className="flex justify-between text-xs"><span>{{ exposure: "曝光", contrast: "对比度", highlights: "高光", shadows: "阴影", saturation: "饱和度", temperature: "色温", tint: "色调", sharpen: "锐化", vignette: "暗角" }[key]}</span><span>{edits.adjustments[key]}</span></div><Slider min={-100} max={100} value={edits.adjustments[key]} onChange={(value) => updateAdjustmentPreview(key, Number(value))} onChangeComplete={(value) => commitEdits({ ...edits, adjustments: { ...edits.adjustments, [key]: Number(value) } })} /></div>)}</section>
+                        <section><h2 className="mb-2 font-medium">LUT</h2><div className="flex gap-2"><Button size="small" onClick={() => lutInputRef.current?.click()}>导入 .cube/.3dl</Button>{edits.lut ? <Button size="small" danger onClick={() => commitEdits({ ...edits, lut: null })}>移除 {edits.lut.name}</Button> : null}</div>{edits.lut ? <Slider min={0} max={100} value={edits.lut.intensity} onChange={(value) => setEdits({ ...edits, lut: { ...edits.lut!, intensity: Number(value) } })} onChangeComplete={(value) => commitEdits({ ...edits, lut: { ...edits.lut!, intensity: Number(value) } })} /> : null}</section>
                         <section><h2 className="mb-2 font-medium">AI 工具</h2><Segmented block value={aiMode} options={[{ label: "全图修复", value: "repair" }, { label: "生成式高清", value: "upscale" }]} onChange={(value) => setAiMode(value as "repair" | "upscale")} /><Input className="mt-2" value={aiPrompt} placeholder={aiMode === "upscale" ? "可补充高清要求" : "可补充修复要求"} onChange={(event) => setAiPrompt(event.target.value)} /><Button className="mt-2" block loading={busy} disabled={!source} onClick={() => void runAiTool()}>{aiMode === "upscale" ? "生成式高清（2x）" : "执行全图修复"}</Button><p className="mt-1 text-xs text-stone-500">AI 操作生成新版本，原图与本地编辑参数会保留。</p></section>
                         <section><h2 className="mb-2 font-medium">导出分辨率</h2><Segmented block size="small" disabled={!source} value={resolution} options={refineResolutionOptions} onChange={(value: string | number) => setResolution(value as RefineResolution)} />{resolution === "custom" ? <div className="mt-3 grid grid-cols-2 gap-2"><Input value={customWidth} inputMode="numeric" prefix="宽" onChange={(event: ChangeEvent<HTMLInputElement>) => updateCustomWidth(event.target.value)} /><Input value={customHeight} inputMode="numeric" prefix="高" onChange={(event: ChangeEvent<HTMLInputElement>) => updateCustomHeight(event.target.value)} /></div> : null}<p className={`mt-2 text-xs ${dimensions?.disabled ? "text-red-500" : "text-stone-500"}`}>{dimensions ? `${dimensions.width} × ${dimensions.height}${dimensions.disabled ? ` · ${dimensions.reason}` : ""}` : ""}</p></section>
                         <section><h2 className="mb-2 font-medium">文件格式</h2><Segmented block size="small" value={format} options={[{ label: "PNG", value: "png" }, { label: "JPEG", value: "jpeg" }, { label: "WebP", value: "webp" }]} onChange={(value: string | number) => setFormat(value as RefineFormat)} />{format !== "png" ? <div className="mt-3"><div className="mb-1 flex justify-between text-xs text-stone-500"><span>质量</span><span>{quality}</span></div><Slider min={1} max={100} value={quality} onChange={setQuality} /></div> : null}</section>

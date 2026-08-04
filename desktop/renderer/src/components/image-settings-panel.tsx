@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { ConfigProvider, Switch } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
@@ -226,6 +226,9 @@ function DimensionInput({ prefix, value, disabled, theme, alignToStep, onChange 
 }
 
 function CountInput({ value, max, theme, onChange }: { value: number; max: number; theme: CanvasTheme; onChange: (value: number | null) => void }) {
+    // 本地草稿 + 失焦提交:避免每键同步全局 store
+    const [draft, setDraft] = useState(value ? String(value) : "");
+    useEffect(() => setDraft(value ? String(value) : ""), [value]);
     return (
         <label className="col-span-2 flex h-9 overflow-hidden rounded-full border text-sm" style={{ borderColor: theme.node.stroke, color: theme.node.text }}>
             <input
@@ -234,8 +237,12 @@ function CountInput({ value, max, theme, onChange }: { value: number; max: numbe
                 max={max}
                 className="min-w-0 flex-1 bg-transparent px-3 text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 style={{ color: theme.node.text, WebkitTextFillColor: theme.node.text }}
-                value={value || ""}
-                onChange={(event) => onChange(Number(event.target.value) || null)}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onBlur={() => onChange(Number(draft) || null)}
+                onKeyDown={(event) => {
+                    if (event.key === "Enter") event.currentTarget.blur();
+                }}
                 onMouseDown={(event) => event.stopPropagation()}
             />
         </label>

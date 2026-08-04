@@ -7,6 +7,8 @@ import { formatBytes } from "@/lib/image-utils";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { useCanvasViewportStore } from "@/stores/canvas/use-canvas-viewport-store";
+import { getThumbnailUrl, THUMBNAIL_MAX_SIDE } from "@/services/thumbnail";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
 import type { CanvasNodeContext, CanvasPluginHost } from "@/types/canvas-plugin";
@@ -17,7 +19,6 @@ const selectionBlue = "#2f80ff";
 
 type CanvasNodeProps = {
     data: CanvasNodeData;
-    scale: number;
     isSelected: boolean;
     isRelated: boolean;
     isFocusRelated: boolean;
@@ -79,7 +80,6 @@ type NodeContentRendererProps = {
 
 export const CanvasNode = React.memo(function CanvasNode({
     data,
-    scale,
     isSelected,
     isRelated,
     isFocusRelated,
@@ -118,7 +118,8 @@ export const CanvasNode = React.memo(function CanvasNode({
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [hovered, setHovered] = useState(false);
     const definition = getNodeDefinition(data.type);
-    const pluginContext = useMemo<CanvasNodeContext | null>(() => (pluginHost ? buildNodeContext(pluginHost, data, theme, scale, isSelected) : null), [pluginHost, data, theme, scale, isSelected]);
+    // scale 不再经 props 传入(缩放会击穿 memo 导致全部节点重渲染),需要时经 viewport store 读取最新值
+    const pluginContext = useMemo<CanvasNodeContext | null>(() => (pluginHost ? buildNodeContext(pluginHost, data, theme, useCanvasViewportStore.getState().viewport.k, isSelected) : null), [pluginHost, data, theme, isSelected]);
     const [isEditingContent, setIsEditingContent] = useState(false);
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [titleDraft, setTitleDraft] = useState(data.title || "");
@@ -150,6 +151,7 @@ export const CanvasNode = React.memo(function CanvasNode({
         startHeight: 0,
         keepRatio: false,
         ratio: 1,
+        scale: 1,
     });
 
     useEffect(() => {
@@ -220,8 +222,8 @@ export const CanvasNode = React.memo(function CanvasNode({
         (event: MouseEvent) => {
             if (!resizeRef.current.isResizing) return;
 
-            const dx = (event.clientX - resizeRef.current.startX) / scale;
-            const dy = (event.clientY - resizeRef.current.startY) / scale;
+            const dx = (event.clientX - resizeRef.current.startX) / resizeRef.current.scale;
+            const dy = (event.clientY - resizeRef.current.startY) / resizeRef.current.scale;
             const minWidth = 220;
             const minHeight = 160;
             const startRight = resizeRef.current.startLeft + resizeRef.current.startWidth;
@@ -254,7 +256,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 y: fromTop ? startBottom - height : resizeRef.current.startTop,
             });
         },
-        [data.id, onResize, scale],
+        [data.id, onResize],
     );
 
     const handleResizeUp = useCallback(() => {
@@ -277,6 +279,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             startHeight: data.height,
             keepRatio: (data.type === CanvasNodeType.Image && !data.metadata?.freeResize) || data.type === CanvasNodeType.Video || Boolean(definition?.keepAspectRatio?.(data)),
             ratio: (data.metadata?.naturalWidth || data.width) / (data.metadata?.naturalHeight || data.height || 1),
+            scale: useCanvasViewportStore.getState().viewport.k,
         };
         window.addEventListener("mousemove", handleResizeMove);
         window.addEventListener("mouseup", handleResizeUp);
@@ -668,14 +671,35 @@ function ImageContent({
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const isBatchChild = Boolean(node.metadata?.batchRootId);
+    const source = node.metadata?.content || "";
+    // 订阅缩放(仅本子组件重渲染,CanvasNode 外壳的 memo 不受影响):显示尺寸超过缩略图能力时切回原图,避免放大模糊
+    const viewportK = useCanvasViewportStore((state) => state.viewport.k);
+    const useOriginal = node.width * viewportK > THUMBNAIL_MAX_SIDE * 1.2;
+    const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+    useEffect(() => {
+        if (!source) return;
+        if (useOriginal) {
+            setThumbUrl(null);
+            return;
+        }
+        let active = true;
+        void getThumbnailUrl(source).then((url) => {
+            if (active) setThumbUrl(url);
+        });
+        return () => {
+            active = false;
+        };
+    }, [source, useOriginal]);
+    const imgSrc = !useOriginal && thumbUrl ? thumbUrl : source;
 
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>
             <div className="h-full w-full overflow-hidden rounded-3xl">
                 <img
-                    src={node.metadata!.content!}
+                    src={imgSrc}
                     alt={node.title}
                     draggable={false}
+                    decoding="async"
                     onDragStart={(event) => event.preventDefault()}
                     className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
                 />

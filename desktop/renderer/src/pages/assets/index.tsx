@@ -7,6 +7,7 @@ import { useCopyText } from "@/hooks/use-copy-text";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
+import { getThumbnailUrl } from "@/services/thumbnail";
 import { cn } from "@/lib/utils";
 import { useAssetStore, type Asset, type AssetKind, type AudioAsset, type ImageAsset } from "@/stores/use-asset-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
@@ -453,6 +454,19 @@ export default function AssetsPage() {
 
 function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: Asset; onOpen: () => void; onEdit: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void; onDelete: () => void }) {
     const cover = asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "");
+    // 缩略图:卡片显示尺寸小,避免直接解码原图;生成失败回退原图
+    const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+    useEffect(() => {
+        if (!cover) return;
+        let active = true;
+        void getThumbnailUrl(cover).then((url) => {
+            if (active) setThumbUrl(url);
+        });
+        return () => {
+            active = false;
+        };
+    }, [cover]);
+    const imgSrc = thumbUrl || cover;
     const summary = assetSummary(asset);
     return (
         <Card
@@ -462,7 +476,7 @@ function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { as
             cover={
                 <button type="button" className="block w-full text-left" onClick={onOpen}>
                     {cover ? (
-                        <img src={cover} alt={asset.title} className="aspect-[4/3] w-full object-cover" />
+                        <img src={imgSrc} alt={asset.title} loading="lazy" decoding="async" className="aspect-[4/3] w-full object-cover" />
                     ) : (
                         <div className="flex aspect-[4/3] items-center justify-center gap-2 bg-stone-100 p-5 text-center text-sm leading-6 text-stone-600 dark:bg-stone-900 dark:text-stone-300">
                             {asset.kind === "text" ? (

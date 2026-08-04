@@ -16,7 +16,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.3.1（`VERSION` 文件，tag `v0.3.1`）
+- **当前版本**：v0.3.2（`VERSION` 文件，tag `v0.3.2`）
 
 ## 2. 数据存储
 
@@ -55,6 +55,13 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **参考图**：支持点击放大（Image.PreviewGroup）、左右排序（ReferenceOrderButtons）、上传/剪切板/公网 URL
 - **CI 坑**：`git add -u` 不含新文件——新增文件必须显式 `git add`；`publish-desktop.yml` 发布步骤依赖 `GITHUB_WORKSPACE` 绝对路径（勿改回相对路径）
 
+### 3.4 v0.3.2 变更要点
+
+- **提示词库个人词库**：特殊内置来源 `PERSONAL_SOURCE_ID = "personal"`（`prompt-source-presets.ts` 首位），本地 localforage（`infinite-canvas` / storeName `personal_prompts`，`services/api/personal-prompts.ts`）。`prompts.ts` 用 `isPersonalSource` 分支：`getSourcePrompts` 直读本地、`refreshSourceRecord` 返回本地条数、`refreshAllSources`/`refreshDueSources`（定时调度）跳过、`fetchPromptSourceStatuses` 返回本地条数。UI 在 `pages/prompts/index.tsx`（新增/编辑/删除/一键加入，保存后 invalidate `prompts`/`side-panel-prompts`/`prompt-source-statuses`）；编辑器 `pages/prompts/components/personal-prompt-editor-dialog.tsx`。**坑**：个人来源无 URL，任何远程拉取路径都要先判 `isPersonalSource` 跳过，否则报"JSON URL 不能为空"。
+- **渠道启用/关闭开关**（配置页渠道列表最左侧 Switch）：`ModelChannel.enabled?: boolean`（缺省视为启用）。**坑**：persist merge 走 `createModelChannel`（显式对象构造会丢弃未列出的字段），新增渠道字段必须同步加进 `createModelChannel`（`enabled: channel?.enabled !== false`）。禁用生效点：`selectableModelsByCapability`/`selectableImageModelsByFeature` 过滤禁用渠道、`resolveModelChannel` 回退第一个启用渠道、`finishConfig` ready 只统计启用渠道。
+- **参考图框内粘贴**：image/video 工作台移除"剪切板"按钮；参考图容器 `tabIndex + onMouseEnter focus + onPaste`，`addReferencesFromPaste` 从 `clipboardData.items` 提取 image/* 文件（无需权限弹窗），无图静默忽略；`addReferences` 参数放宽为 `FileList | readonly File[]`。
+- **检查更新改造**：主进程 `checkAndDownloadUpdate` → `checkForUpdate`（只检查不自动下载）+ `downloadUpdate`（手动下载），IPC 通道 `lyspace:check-update` / `lyspace:download-update`（原 `check-and-download-update` 已删，preload/desktop.d.ts 三端同步改名）；删除 `downloadRequested` 机制与 `UpdatePrompt` 组件（不再弹窗）；`about-panel.tsx` available 时 Alert + "下载更新"按钮；更新日志远程 CHANGELOG 拉取失败回退 `updateState.releaseNotes`。
+
 ## 4. 常用命令
 
 | 命令 | 用途 |
@@ -66,14 +73,15 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 5. 发版本流程（用户要求"更新版本/发版本"时）
 
-1. `CHANGELOG.md`：Unreleased 整理成 `## vX.Y.Z - 日期`，保留空 Unreleased
-2. `VERSION` → vX.Y.Z；`desktop/package.json`、`desktop/renderer/package.json` version 同步
-3. `node desktop/scripts/verify-release-version.cjs vX.Y.Z` 校验
-4. `git add -u`（**新文件要显式 add**）+ commit `release: vX.Y.Z` + `git tag vX.Y.Z`
-5. `git push origin main` + `git push origin vX.Y.Z` —— tag 触发 CI（`publish-desktop.yml`），自动构建上传并**写入 Release 日志**
-6. 用 `git credential fill` 取 token 验证 CI `completed/success` + release 资产（exe/blockmap/latest.yml 齐全 + body 非空）
-7. 本地 `pnpm --dir desktop run pack:win` 留存安装包到 `release/`（用户习惯）
-8. 注意：改版本号重发需删旧 tag/release（force push main + tag），参考 v0.2.0/v0.3.0 处理
+1. **更新交接文档**（本节）：版本号改 vX.Y.Z；新增小节记录 vX.Y.Z 变更要点与坑；用户偏好按需补充
+2. `CHANGELOG.md`：Unreleased 整理成 `## vX.Y.Z - 日期`，保留空 Unreleased
+3. `VERSION` → vX.Y.Z；`desktop/package.json`、`desktop/renderer/package.json` version 同步
+4. `node desktop/scripts/verify-release-version.cjs vX.Y.Z` 校验
+5. `git add -u`（**新文件要显式 add**）+ commit `release: vX.Y.Z` + `git tag vX.Y.Z`
+6. `git push origin main` + `git push origin vX.Y.Z` —— tag 触发 CI（`publish-desktop.yml`），自动构建上传并**写入 Release 日志**
+7. 用 `git credential fill` 取 token 验证 CI `completed/success` + release 资产（exe/blockmap/latest.yml 齐全 + body 非空）
+8. 本地 `pnpm --dir desktop run pack:win` 留存安装包到 `release/`（用户习惯）
+9. 注意：改版本号重发需删旧 tag/release（force push main + tag），参考 v0.2.0/v0.3.0 处理
 
 ## 6. 待办与待测
 
@@ -86,5 +94,6 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - 中文交流；代码注释/文案用中文
 - 直接修复确认的 bug（不要只报告）；低风险问题修完一起说
 - 每次功能修复完成后用户通常要求发版本 + 推送源码和安装包 + 本地留存
+- **每次发布新版本都要更新交接文档**：版本号、vX.Y.Z 变更要点与坑（见第 5 节发版流程第 1 步）
 - 遵循 `AGENTS.md`（最小改动、不重构、文档规范、不执行编译除非要求）
 - 重要外部信息：Agnes 平台中国站 `platform.agnes-ai.cn`（密钥页 `/settings/apiKeys`）、官方文档 `www.agnes-ai.cn/zh-Hans/docs/agnes-video-v20`（Mintlify，支持 `.md` 后缀抓取）

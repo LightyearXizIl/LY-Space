@@ -33,12 +33,13 @@ function formatBytes(value?: number) {
 }
 
 export function AboutPanel() {
-    const { updateState, releases, hasNewVersion, checkUpdate, downloadUpdate, cancelUpdateDownload, installDownloadedUpdate } = useVersionCheck();
+    const { updateState, releases, hasNewVersion, checkUpdate, downloadUpdate, pauseUpdateDownload, installDownloadedUpdate } = useVersionCheck();
     const currentVersionReleases = releases.filter((release) => release.version === APP_VERSION);
     // 发现新版本时显示最新（新版本）日志；否则显示当前版本日志（无当前版本日志时回退最新一条）
     const displayedReleases = hasNewVersion || !currentVersionReleases.length ? releases.slice(0, 1) : currentVersionReleases;
     const checking = updateState.status === "checking";
     const downloading = updateState.status === "downloading";
+    const paused = updateState.status === "paused";
     const downloaded = updateState.status === "downloaded";
     const progress = updateState.progress;
     const latestVersion = updateState.version || APP_VERSION;
@@ -101,10 +102,11 @@ export function AboutPanel() {
                 <div className="mb-3 flex items-center justify-between gap-3">
                     <div className="text-sm font-semibold">版本更新</div>
                     <div className="flex items-center gap-2">
-                        <Button icon={<RefreshCw className="size-4" />} disabled={!updateState.supported || checking || downloading || downloaded} onClick={() => void checkUpdate()}>
-                            {checking ? "检查中..." : downloading ? "正在下载..." : downloaded ? "已下载" : "检查更新"}
+                        <Button icon={<RefreshCw className="size-4" />} disabled={!updateState.supported || checking || downloading || paused || downloaded} onClick={() => void checkUpdate()}>
+                            {checking ? "检查中..." : downloading ? "正在下载..." : paused ? "已暂停" : downloaded ? "已下载" : "检查更新"}
                         </Button>
-                        {downloading ? <Button danger onClick={() => void cancelUpdateDownload()}>取消下载</Button> : null}
+                        {downloading ? <Button danger onClick={() => void pauseUpdateDownload()}>暂停</Button> : null}
+                        {paused ? <Button type="primary" onClick={() => void downloadUpdate()}>继续下载</Button> : null}
                     </div>
                 </div>
                 <div className="mb-3 rounded-lg border border-stone-200 p-3 dark:border-stone-800">
@@ -127,12 +129,13 @@ export function AboutPanel() {
                         }
                     />
                 ) : null}
-                {downloading ? (
+                {downloading || paused ? (
                     <div className="mb-3 rounded-lg border border-stone-200 p-3 dark:border-stone-800">
                         <div className="mb-2 flex justify-between text-xs text-stone-500 dark:text-stone-400">
-                            <span>正在下载 {latestVersion}</span>
+                            <span>{downloading ? `正在下载 ${latestVersion}` : `已暂停 ${latestVersion}`}</span>
                             <span>
-                                {formatBytes(progress?.transferred)} / {formatBytes(progress?.total)} · {formatBytes(progress?.bytesPerSecond)}/s
+                                {formatBytes(progress?.transferred)} / {formatBytes(progress?.total)}
+                                {downloading ? ` · ${formatBytes(progress?.bytesPerSecond)}/s` : ""}
                             </span>
                         </div>
                         <Progress percent={Math.round(progress?.percent || 0)} size="small" />

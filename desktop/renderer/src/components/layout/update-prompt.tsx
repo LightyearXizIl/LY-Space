@@ -19,7 +19,7 @@ function formatBytes(value?: number) {
     return `${(value / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
 }
 
-// 启动自动检查发现新版本时弹窗提醒（正中心，含更新日志，可直接下载）；关于页手动检查（triggeredBy=manual）不弹窗
+// 启动自动检查发现新版本时弹窗提醒（正中心，含更新日志，可直接下载/暂停/继续）；关于页手动检查（triggeredBy=manual）不弹窗
 export function UpdatePrompt() {
     const [state, setState] = useState<AppUpdateState | null>(null);
     const [release, setRelease] = useState<ReleaseInfo | null>(null);
@@ -45,18 +45,25 @@ export function UpdatePrompt() {
         return window.lySpaceDesktop.onUpdateStateChanged(handleState);
     }, []);
 
-    const visible = Boolean(state && state.status === "available" && state.triggeredBy === "auto" && release);
-    const downloading = state?.status === "downloading";
-    const downloaded = state?.status === "downloaded";
+    // 下载中/已暂停/已下载/出错均保持弹窗驻留，仅「稍后」可关闭
+    const status = state?.status;
+    const visible = Boolean(state && release && state.triggeredBy === "auto" && ["available", "downloading", "paused", "downloaded", "error"].includes(status || ""));
+    const downloading = status === "downloading";
+    const paused = status === "paused";
+    const downloaded = status === "downloaded";
+    const failed = status === "error";
     const progress = state?.progress;
 
     return (
         <Modal
             title="发现新版本"
-            open={visible || (downloading && Boolean(release)) || (downloaded && Boolean(release))}
+            open={visible}
             footer={null}
             onCancel={() => setRelease(null)}
-            centered
+            maskClosable={false}
+            keyboard={false}
+            // 强制正中心（flex 布局，内容变化也不偏移）
+            styles={{ wrapper: { display: "flex", alignItems: "center", justifyContent: "center" } }}
             width={520}
         >
             {release ? (
@@ -76,15 +83,21 @@ export function UpdatePrompt() {
                             </div>
                         ))}
                     </div>
-                    {downloading ? (
+                    {downloading || paused ? (
                         <div className="rounded-lg border border-stone-200 p-3 dark:border-stone-700">
                             <div className="mb-2 flex justify-between text-xs text-stone-500">
-                                <span>正在下载 {state?.version}</span>
+                                <span>{downloading ? `正在下载 ${state?.version}` : `已暂停 ${state?.version}`}</span>
                                 <span>
-                                    {formatBytes(progress?.transferred)} / {formatBytes(progress?.total)} · {formatBytes(progress?.bytesPerSecond)}/s
+                                    {formatBytes(progress?.transferred)} / {formatBytes(progress?.total)}
+                                    {downloading ? ` · ${formatBytes(progress?.bytesPerSecond)}/s` : ""}
                                 </span>
                             </div>
                             <Progress percent={Math.round(progress?.percent || 0)} size="small" />
+                        </div>
+                    ) : null}
+                    {failed ? (
+                        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600 dark:border-red-900 dark:bg-red-950 dark:text-red-400">
+                            下载失败：{state?.error || "未知错误"}
                         </div>
                     ) : null}
                     <div className="flex justify-end gap-2">
@@ -92,11 +105,13 @@ export function UpdatePrompt() {
                             <Button type="primary" onClick={() => void window.lySpaceDesktop?.installDownloadedUpdate()}>
                                 重启并安装
                             </Button>
+                        ) : downloading ? (
+                            <Button onClick={() => void window.lySpaceDesktop?.pauseUpdateDownload()}>暂停</Button>
                         ) : (
                             <>
                                 <Button onClick={() => setRelease(null)}>稍后</Button>
                                 <Button type="primary" loading={downloading} disabled={downloading} onClick={() => void window.lySpaceDesktop?.downloadUpdate()}>
-                                    下载更新
+                                    {paused ? "继续下载" : failed ? "重试" : "下载更新"}
                                 </Button>
                             </>
                         )}

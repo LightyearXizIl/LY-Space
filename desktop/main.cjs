@@ -1,8 +1,9 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, net: electronNet, protocol, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net: electronNet, protocol, shell, Tray } = require("electron");
 const { autoUpdater } = require("electron-updater");
-const { CancellationToken } = require("builder-util-runtime");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const { spawn } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 
 protocol.registerSchemesAsPrivileged([
@@ -10,11 +11,14 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow = null;
+let tray = null; // 系统托盘（模块级引用防 GC）
 let storageSettings = null;
 let allowWindowClose = false;
-let closingTimer = null;
 let installDownloadedUpdate = false;
-let downloadCancellation = null;
+let updateFileInfo = null; // update-available 携带的安装包信息（files[0]: url/sha512/size）
+let updateDownloadRequest = null; // 自研断点续传下载的进行中请求
+let updateDownloadWriteStream = null;
+let updateDownloadAborted = false; // 用户暂停/中止下载标记
 let lastCheckSource = "manual";
 let updateState = { status: "idle", version: "", releaseDate: "", releaseNotes: "", progress: null, error: "", supported: false, triggeredBy: "" };
 
@@ -35,6 +39,39 @@ function updateError(error) {
     updateSnapshot({ status: "error", progress: null, error: error instanceof Error ? error.message : String(error || "更新失败") });
 }
 
+const UPDATE_OWNER = "LightyearXizIl";
+const UPDATE_REPO = "LY-Space";
+
+function updateDownloadsDir() {
+    return path.join(app.getPath("userData"), "updates");
+}
+
+function updateDownloadBaseUrl(version) {
+    return `https://github.com/${UPDATE_OWNER}/${UPDATE_REPO}/releases/download/${displayVersion(version)}`;
+}
+
+function updateFileName() {
+    return updateFileInfo?.url || `LY-Space-Setup-${displayVersion(updateState.version).replace(/^v/, "")}.exe`;
+}
+
+function updatePartPath() {
+    return path.join(updateDownloadsDir(), `${updateFileName()}.part`);
+}
+
+function updateExePath() {
+    return path.join(updateDownloadsDir(), updateFileName());
+}
+
+function hashFileBase64(filePath, algorithm = "sha512") {
+    return new Promise((resolve, reject) => {
+        const hash = crypto.createHash(algorithm);
+        const stream = fs.createReadStream(filePath);
+        stream.on("data", (chunk) => hash.update(chunk));
+        stream.on("end", () => resolve(hash.digest("base64")));
+        stream.on("error", reject);
+    });
+}
+
 function configureAutoUpdater() {
     updateState = { status: "idle", version: displayVersion(app.getVersion()), releaseDate: "", releaseNotes: "", progress: null, error: "", supported: app.isPackaged, triggeredBy: "" };
     if (!app.isPackaged) return;
@@ -44,40 +81,146 @@ function configureAutoUpdater() {
     autoUpdater.allowPrerelease = false;
     autoUpdater.on("checking-for-update", () => updateSnapshot({ status: "checking", progress: null, error: "" }));
     autoUpdater.on("update-available", (info) => {
+        updateFileInfo = info.files && info.files.length ? info.files[0] : null;
         updateSnapshot({ status: "available", version: displayVersion(info.version), releaseDate: info.releaseDate || "", releaseNotes: typeof info.releaseNotes === "string" ? info.releaseNotes : "", progress: null, error: "", triggeredBy: lastCheckSource });
     });
     autoUpdater.on("update-not-available", (info) => {
         updateSnapshot({ status: "upToDate", version: displayVersion(info.version || app.getVersion()), releaseDate: info.releaseDate || "", progress: null, error: "" });
     });
-    autoUpdater.on("download-progress", (progress) => updateSnapshot({ status: "downloading", progress: { percent: progress.percent, bytesPerSecond: progress.bytesPerSecond, transferred: progress.transferred, total: progress.total }, error: "" }));
-    autoUpdater.on("update-downloaded", (info) => updateSnapshot({ status: "downloaded", version: displayVersion(info.version), releaseDate: info.releaseDate || "", releaseNotes: typeof info.releaseNotes === "string" ? info.releaseNotes : "", progress: { percent: 100, bytesPerSecond: 0, transferred: 0, total: 0 }, error: "" }));
     autoUpdater.on("error", updateError);
 }
 
+// 自研断点续传下载：保留 electron-updater 的版本检查（files[0].url/sha512），
+// 下载用 net.request + Range 续传写 .part，完成后 sha512 校验并改名为 .exe；
+// 暂停（pauseUpdateDownload）保留 .part 已下载字节，再次下载自动从断点继续。
 async function downloadUpdate() {
-    if (!app.isPackaged || updateState.status === "downloading" || updateState.status === "downloaded") return updateState;
-    updateSnapshot({ status: "downloading", progress: { percent: 0, bytesPerSecond: 0, transferred: 0, total: 0 }, error: "" });
-    const cancellation = new CancellationToken();
-    downloadCancellation = cancellation;
+    if (!app.isPackaged) return updateState;
+    if (updateState.status === "downloading" || updateState.status === "downloaded") return updateState;
+    if (!updateFileInfo || !updateState.version) return updateState;
+
+    const dir = updateDownloadsDir();
+    fs.mkdirSync(dir, { recursive: true });
+    // 清理其它版本的残留安装包（不影响当前版本的 .part 续传）
+    const currentName = updateFileName();
+    for (const name of fs.readdirSync(dir)) {
+        if (name !== currentName && name !== `${currentName}.part`) fs.rmSync(path.join(dir, name), { force: true });
+    }
+
+    const partPath = updatePartPath();
+    const exePath = updateExePath();
+    const total = Number(updateFileInfo.size) || 0;
+    if (fs.existsSync(exePath)) {
+        // 已下载完整安装包：直接进入 downloaded
+        updateSnapshot({ status: "downloaded", progress: { percent: 100, bytesPerSecond: 0, transferred: total, total }, error: "" });
+        return updateState;
+    }
+
+    let existing = 0;
     try {
-        await autoUpdater.downloadUpdate(cancellation);
-    } catch (error) {
-        if (cancellation.cancelled) {
-            // 用户主动取消下载：恢复到可重新检查的状态，不显示错误
-            updateSnapshot({ status: "idle", version: updateState.version, releaseDate: updateState.releaseDate, releaseNotes: updateState.releaseNotes, progress: null, error: "" });
-        } else {
+        existing = fs.statSync(partPath).size;
+    } catch {
+        existing = 0;
+    }
+    const url = `${updateDownloadBaseUrl(updateState.version)}/${updateFileName()}`;
+    const headers = existing > 0 ? { Range: `bytes=${existing}-` } : {};
+    updateDownloadAborted = false;
+
+    const request = electronNet.request({ url, headers });
+    updateDownloadRequest = request;
+    const stream = fs.createWriteStream(partPath, { flags: existing > 0 ? "a" : "w" });
+    updateDownloadWriteStream = stream;
+
+    let received = 0;
+    let lastTransferred = existing;
+    let lastTime = Date.now();
+    let effectiveTotal = total;
+
+    const emitProgress = () => {
+        const transferred = existing + received;
+        const now = Date.now();
+        const elapsed = Math.max(now - lastTime, 1);
+        const bytesPerSecond = transferred >= lastTransferred ? ((transferred - lastTransferred) / elapsed) * 1000 : 0;
+        lastTransferred = transferred;
+        lastTime = now;
+        updateSnapshot({ status: "downloading", progress: { percent: effectiveTotal > 0 ? (transferred / effectiveTotal) * 100 : 0, bytesPerSecond, transferred, total: effectiveTotal }, error: "" });
+    };
+
+    const finishDownload = async () => {
+        updateDownloadRequest = null;
+        updateDownloadWriteStream = null;
+        try {
+            // sha512（base64，去 padding 容错）与 latest.yml/files[0].sha512 比对
+            const expected = updateFileInfo.sha512 ? String(updateFileInfo.sha512).replace(/=+$/, "") : "";
+            const actual = (await hashFileBase64(partPath)).replace(/=+$/, "");
+            if (expected && actual !== expected) {
+                fs.rmSync(partPath, { force: true });
+                updateSnapshot({ status: "error", progress: null, error: "安装包校验失败，已删除缓存，请重新下载" });
+                return;
+            }
+            fs.renameSync(partPath, exePath);
+            updateSnapshot({ status: "downloaded", progress: { percent: 100, bytesPerSecond: 0, transferred: effectiveTotal, total: effectiveTotal }, error: "" });
+        } catch (error) {
             updateError(error);
         }
-    } finally {
-        if (downloadCancellation === cancellation) downloadCancellation = null;
-    }
+    };
+
+    request.on("response", (response) => {
+        if (updateDownloadAborted) return;
+        if (response.statusCode >= 400) {
+            stream.destroy();
+            request.abort();
+            updateSnapshot({ status: "error", progress: null, error: `下载失败（HTTP ${response.statusCode}）` });
+            return;
+        }
+        if (response.statusCode === 200 && existing > 0) {
+            // 服务器不支持 Range：从头下载
+            existing = 0;
+            received = 0;
+            fs.truncateSync(partPath, 0);
+        }
+        const contentLength = Number(response.headers["content-length"]) || 0;
+        if (effectiveTotal <= 0) effectiveTotal = existing + contentLength;
+        response.on("data", (chunk) => {
+            if (updateDownloadAborted) return;
+            received += chunk.length;
+            stream.write(chunk);
+            const now = Date.now();
+            if (now - lastTime >= 200) emitProgress();
+        });
+        response.on("end", () => stream.end());
+        response.on("error", (error) => {
+            if (updateDownloadAborted) return;
+            stream.destroy();
+            updateError(error);
+        });
+    });
+
+    request.on("error", (error) => {
+        if (updateDownloadAborted) return;
+        stream.destroy();
+        updateError(error);
+    });
+
+    stream.on("finish", () => {
+        if (updateDownloadAborted) return;
+        void finishDownload();
+    });
+    stream.on("error", (error) => {
+        if (updateDownloadAborted) return;
+        updateError(error);
+    });
+
+    updateSnapshot({ status: "downloading", progress: { percent: total > 0 ? (existing / total) * 100 : 0, bytesPerSecond: 0, transferred: existing, total }, error: "" });
+    request.end();
     return updateState;
 }
 
-function cancelUpdateDownload() {
-    if (downloadCancellation && !downloadCancellation.cancelled) {
-        downloadCancellation.cancel();
-    }
+function pauseUpdateDownload() {
+    if (updateState.status !== "downloading") return updateState;
+    updateDownloadAborted = true;
+    if (updateDownloadRequest) updateDownloadRequest.abort();
+    if (updateDownloadWriteStream) updateDownloadWriteStream.end();
+    updateSnapshot({ status: "paused", progress: updateState.progress ? { ...updateState.progress, bytesPerSecond: 0 } : null, error: "" });
     return updateState;
 }
 
@@ -96,6 +239,7 @@ async function checkForUpdate(source = "manual") {
 function requestUpdateInstall() {
     if (!app.isPackaged || updateState.status !== "downloaded") throw new Error("更新尚未下载完成");
     if (!mainWindow || mainWindow.isDestroyed()) throw new Error("主窗口不可用");
+    if (!fs.existsSync(updateExePath())) throw new Error("安装包不存在，请重新下载");
     installDownloadedUpdate = true;
     mainWindow.webContents.send("lyspace:flush-persistence");
 }
@@ -502,15 +646,33 @@ function createWindow() {
     });
     mainWindow.on("close", (event) => {
         if (allowWindowClose) return;
+        // 关闭按钮默认最小化到系统托盘（隐藏窗口，不退出）；数据由现有防抖/异步机制持续落盘
         event.preventDefault();
-        mainWindow.webContents.send("lyspace:flush-persistence");
-        if (closingTimer) clearTimeout(closingTimer);
-        closingTimer = setTimeout(() => {
-            closingTimer = null;
-            void dialog.showMessageBox(mainWindow, { type: "warning", buttons: ["继续等待"], title: "数据仍在保存", message: "本次关闭已取消，请等待数据保存完成后再退出。" });
-        }, 10000);
+        mainWindow.hide();
     });
     void mainWindow.loadURL("lyspace://app/");
+}
+
+function createTray() {
+    if (tray) return;
+    const icon = nativeImage.createFromPath(path.join(__dirname, "build", "icon.png")).resize({ width: 32, height: 32 });
+    tray = new Tray(icon);
+    tray.setToolTip("LY Space");
+    const showMainWindow = () => {
+        if (!mainWindow) return;
+        if (!mainWindow.isVisible()) mainWindow.show();
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+    };
+    tray.on("click", showMainWindow);
+    tray.setContextMenu(
+        Menu.buildFromTemplate([
+            { label: "显示主界面", click: showMainWindow },
+            { type: "separator" },
+            // 关闭：走 flush 后退出流程（persistence-flushed 时 allowWindowClose=true 再真正关闭），保证数据落盘
+            { label: "关闭", click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("lyspace:flush-persistence"); } },
+        ]),
+    );
 }
 
 app.setName("LY Space");
@@ -519,6 +681,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 configureStorageBeforeReady();
 app.on("second-instance", () => {
     if (mainWindow) {
+        if (!mainWindow.isVisible()) mainWindow.show();
         if (mainWindow.isMinimized()) mainWindow.restore();
         mainWindow.focus();
     }
@@ -530,7 +693,7 @@ app.whenReady().then(async () => {
     ipcMain.handle("lyspace:update-state", () => updateState);
     ipcMain.handle("lyspace:check-update", () => checkForUpdate());
     ipcMain.handle("lyspace:download-update", () => downloadUpdate());
-    ipcMain.handle("lyspace:cancel-update-download", () => cancelUpdateDownload());
+    ipcMain.handle("lyspace:pause-update-download", () => pauseUpdateDownload());
     ipcMain.handle("lyspace:install-downloaded-update", () => requestUpdateInstall());
     ipcMain.handle("lyspace:storage-settings", () => storageInfo());
     ipcMain.handle("lyspace:choose-storage-directory", async (_event, kind) => {
@@ -732,12 +895,15 @@ app.whenReady().then(async () => {
     });
     ipcMain.handle("lyspace:persistence-flushed", () => {
         if (!mainWindow || allowWindowClose) return;
-        if (closingTimer) clearTimeout(closingTimer);
-        closingTimer = null;
         if (installDownloadedUpdate) {
             installDownloadedUpdate = false;
             allowWindowClose = true;
-            autoUpdater.quitAndInstall(false, true);
+            // 自研安装：NSIS 静默安装到当前安装目录，runAfterFinish 自动重启应用（替代 autoUpdater.quitAndInstall）
+            const exePath = updateExePath();
+            const installDir = path.dirname(app.getPath("exe"));
+            const child = spawn(exePath, ["/S", `/D=${installDir}`], { detached: true, stdio: "ignore" });
+            child.unref();
+            app.quit();
             return;
         }
         allowWindowClose = true;
@@ -748,6 +914,7 @@ app.whenReady().then(async () => {
         app.quit();
     });
     createWindow();
+    createTray();
     if (app.isPackaged) void checkForUpdate("auto");
 });
 app.on("window-all-closed", () => app.quit());

@@ -16,7 +16,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.3.5（`VERSION` 文件，tag `v0.3.5`）
+- **当前版本**：v0.3.6（`VERSION` 文件，tag `v0.3.6`）
 
 ## 2. 数据存储
 
@@ -89,6 +89,22 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 ### 3.9 v0.3.5 节点悬浮工具条自动换行
 
 - **工具条换行**（`canvas-node-hover-toolbar.tsx`）：容器去掉固定 `h-12`，改 `flex flex-wrap justify-center gap-y-1` + `max-w-[calc(100vw-32px)]`——图片节点全工具（原约 1300px 单行）超过视口宽度自动折为两行；短工具条（文本节点）仍单行。**坑**：absolute flex 容器不加 `max-w` 时宽度收缩到内容、`flex-wrap` 不生效；按钮内部 `whitespace-nowrap` 保持不折行，换行是工具条级。
+
+### 3.10 v0.3.6 更新下载断点续传与弹窗改造
+
+- **自研断点续传下载器**（`desktop/main.cjs`）：保留 electron-updater 的版本检查（`update-available` 事件缓存 `files[0]` 的 url/sha512/size），下载改为 `net.request` + `Range: bytes=N-` 续传写 `userData/updates/<文件名>.part`，暂停保留 `.part`（`pauseUpdateDownload` → abort + flush，状态 `paused`），继续调用 `downloadUpdate()` 自动从断点续传；完成后 sha512（base64 去 padding）校验，通过才改名为 `.exe` 进入 `downloaded`，校验失败删 `.part` 报错。
+- **安装方式变更**：`requestUpdateInstall` 不再用 `autoUpdater.quitAndInstall`，改为 `persistence-flushed` 后 `spawn(安装器, ["/S", `/D=${path.dirname(app.getPath("exe"))}`])` + `app.quit()`（NSIS 静默安装到当前安装目录，`runAfterFinish` 自动重启应用）。**坑**：`/D=` 必须作为最后一个整体参数（含空格路径）；下载文件 URL 拼 `https://github.com/LightyearXizIl/LY-Space/releases/download/<tag>/<files[0].url>`（tag 带 v，文件名不带 v）。
+- **三端同步**：IPC `lyspace:cancel-update-download` → `lyspace:pause-update-download`（`pauseUpdateDownload`）；`AppUpdateStatus` 新增 `"paused"`（desktop.d.ts + 主进程状态机）。
+- **弹窗**（`update-prompt.tsx`）：`styles.wrapper` flex 强制正中心（替代仅 `centered`）；`maskClosable={false}` `keyboard={false}`；`open` 覆盖 available/downloading/paused/downloaded/error（下载失败、暂停均驻留，仅「稍后」关闭）；下载中「暂停」、暂停后「继续下载」+「稍后」、失败显示错误 +「重试」。
+- **关于页**（`about-panel.tsx`）：下载中「取消下载」→「暂停」；`paused` 显示「已暂停 x / y」+「继续下载」；检查按钮 disabled 适配 paused。
+
+### 3.11 v0.3.6 关闭最小化到系统托盘
+
+- **关闭行为**（`desktop/main.cjs`）：`mainWindow.on("close")` 中 `allowWindowClose` 为 false 时 `preventDefault()` + `mainWindow.hide()`——点右上角 X 只隐藏到系统托盘，不退出；数据由现有防抖/异步落盘持续保存（隐藏不触发 flush）。
+- **系统托盘**：`createTray()`（whenReady 末尾调用）：图标 `build/icon.png` resize 32×32，tooltip「LY Space」，**左键单击**显示主界面（show/restore/focus），**右键菜单**：显示主界面 / 关闭。
+- **托盘「关闭」= flush 后退出**：菜单「关闭」发送 `lyspace:flush-persistence` → 渲染进程落盘 → `persistence-flushed` → `allowWindowClose=true` → `mainWindow.close()` 真退出（复用既有流程，数据安全）。
+- **second-instance**：`!mainWindow.isVisible()` 时先 `show()` 再 focus（窗口隐藏时再次启动实例恢复显示）。
+- **坑**：① `tray` 必须是模块级引用（局部变量会被 GC 导致图标消失）；② 隐藏 ≠ 退出，不要再在 close 里发 flush（托盘关闭才走 flush 流程）；③ `closingTimer` 10 秒等待警告已随旧 close 流程移除。
 
 ### 3.8 缩略图管线与提示词虚拟滚动（v0.3.5）
 

@@ -1,7 +1,7 @@
 export {};
 
 declare global {
-    type AppUpdateStatus = "idle" | "checking" | "available" | "downloading" | "downloaded" | "upToDate" | "error";
+    type AppUpdateStatus = "idle" | "checking" | "available" | "downloading" | "paused" | "downloaded" | "upToDate" | "error";
     type AppUpdateState = {
         status: AppUpdateStatus;
         version: string;
@@ -20,7 +20,7 @@ declare global {
             getUpdateState: () => Promise<AppUpdateState>;
             checkUpdate: () => Promise<AppUpdateState>;
             downloadUpdate: () => Promise<AppUpdateState>;
-            cancelUpdateDownload: () => Promise<AppUpdateState>;
+            pauseUpdateDownload: () => Promise<AppUpdateState>;
             installDownloadedUpdate: () => Promise<void>;
             onUpdateStateChanged: (listener: (state: AppUpdateState) => void) => () => void;
             getStorageSettings: () => Promise<StorageSettings>;

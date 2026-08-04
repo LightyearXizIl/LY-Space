@@ -19,7 +19,7 @@ export function useVersionCheck() {
     const [open, setOpen] = useState(false);
     const [releases, setReleases] = useState<ReleaseInfo[]>(localReleases);
     const [updateState, setUpdateState] = useState<AppUpdateState>(initialUpdateState);
-    const hasNewVersion = ["available", "downloading", "downloaded"].includes(updateState.status);
+    const hasNewVersion = ["available", "downloading", "paused", "downloaded"].includes(updateState.status);
 
     useEffect(() => {
         if (!window.lySpaceDesktop) return;
@@ -76,14 +76,14 @@ export function useVersionCheck() {
         }
     }, [message]);
 
-    const cancelUpdateDownload = useCallback(async () => {
+    const pauseUpdateDownload = useCallback(async () => {
         if (!window.lySpaceDesktop) return;
         try {
-            setUpdateState(await window.lySpaceDesktop.cancelUpdateDownload());
+            setUpdateState(await window.lySpaceDesktop.pauseUpdateDownload());
         } catch {
-            // 取消失败可忽略，状态会通过事件流更新
+            // 暂停失败可忽略，状态会通过事件流更新
         }
     }, []);
 
-    return { open, setOpen, updateState, releases, hasNewVersion, checkUpdate, downloadUpdate, cancelUpdateDownload, installDownloadedUpdate };
+    return { open, setOpen, updateState, releases, hasNewVersion, checkUpdate, downloadUpdate, pauseUpdateDownload, installDownloadedUpdate };
 }

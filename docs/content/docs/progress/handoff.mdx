@@ -9,49 +9,82 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 1. 项目概况
 
-- **桌面 AI 创作工作台**：画布、生图工作台、视频创作台、精修工作台、提示词库、我的素材、配置
-- **技术栈**：Electron（`desktop/main.cjs` 主进程 + `preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由**渲染进程直连** OpenAI 兼容接口（无后端）
-- **代码结构**：`desktop/main.cjs`（主进程：存储、IPC、更新）、`desktop/renderer/src/`（页面 `pages/`、组件 `components/`、全局状态 `stores/`、服务 `services/`、画布 `pages/canvas/`）
-- **当前版本**：v0.1.9（`VERSION` 文件，tag `v0.1.9`）
+- **桌面 AI 创作工作台**：无限画布、生图工作台、视频创作台、精修工作台、提示词库、我的素材、配置
+- **技术栈**：Electron（`desktop/main.cjs` 主进程 + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由**渲染进程直连** OpenAI 兼容接口（无后端）
+- **代码结构**：
+  - `desktop/main.cjs`：主进程（存储、IPC、自动更新、请求代理）
+  - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
+  - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
+  - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
+- **当前版本**：v0.3.1（`VERSION` 文件，tag `v0.3.1`）
 
-## 2. 数据存储（v0.1.9 起的最终形态）
+## 2. 数据存储
 
 | 项 | 默认位置 | 说明 |
 |---|---|---|
 | 生成结果文件 | `安装目录\Result\`（Picture/Video/text/Audio 四文件夹） | 生成后立即自动落盘 |
 | 数据缓存（IndexedDB） | `安装目录\Data cache\` | 生成记录、结果、配置缓存；`sessionData` 指向它 |
 | 存储配置 | `%APPDATA%\LY Space\app-data\storage-settings.json` | 用户可改 resultRoot/cacheRoot |
+| 上次下载目录 | `%APPDATA%\LY Space\app-data\last-save-directory.txt` | 下载对话框默认沿用上次目录 |
 
-- **数据默认跟随安装目录**：仅首次安装（无配置）默认用安装目录；用户设置过的存储地址（含历史 E 盘目录）一律保留，换目录安装不覆盖用户设置
+- **存储策略（v0.2.7 起）**：**用户设置地址优先**——仅首次安装（无配置）默认跟随安装目录；用户设置过的结果/缓存目录（含历史 E 盘目录）一律保留，换目录安装不覆盖用户设置
 - **升级保护**：`desktop/build/nsis-custom.nsh` 的 `customRemoveFiles` 宏（CopyFiles 跨卷安全）保证覆盖升级/自动更新时 `Data cache`、`Result` 不被 NSIS 卸载器清空
+- **历史教训**：NSIS 升级会清空安装目录 → 数据曾放 E 盘（v0.1.5）→ v0.1.9 跟随安装目录 + NSIS 宏保护。**不要再把默认目录改回 E 盘**（用户自定义除外）
 
 ## 3. 关键链路与已修复的坑
 
-- **落盘链路**：API 返回 → `persistGeneratedImages`（`services/api/image.ts`）→ `fetchImageBlob`（浏览器 fetch 失败回退主进程 `lyspace:fetch-url`，绕过 CORS）→ `saveGeneratedBlob` → 主进程 `writeGeneratedOutput` 写文件。**三条**走 blob 的路径（落盘/uploadImage 转存/下载）都必须用 fetchImageBlob 回退，别漏
-- **IPC**：`lyspace:fetch-url`（主进程下载，30s 超时 + image/ 类型校验）、`lyspace:save-file-dialog`（保存对话框）、`lyspace:write-generated-output` 等，均需 main.cjs + preload.cjs + `types/desktop.d.ts` 三端同步
-- **生图工作台**（`pages/image/index.tsx`）：结果图右键详情（logs 按 image.id 匹配 + `lastBatchRef` 兜底）、左上角复选框批量操作（下载选中/添加资产/删除选中，删除与记录对称回收 blob）、尺寸「自动」= 不传 size（Agnes 渠道不再回退 1:1）
-- **升级丢数据的历史根因**：NSIS 升级会清空安装目录 → 数据曾放 E 盘（v0.1.5）→ 用户改回跟随安装目录（v0.1.9）+ NSIS 宏保护。**不要再把默认目录改回 E 盘**
-- **CI 坑**：`git add -u` 不含新文件——新增文件（如 NSIS 宏）必须显式 `git add`，否则 CI 打包报 "cannot find specified resource"
+### 3.1 图片生成与落盘（生图工作台 `pages/image/index.tsx`）
+- **落盘**：API 返回 → `persistGeneratedImages`（`services/api/image.ts`）→ `fetchImageBlob`（浏览器 fetch 失败回退主进程 `lyspace:fetch-url`，绕过 CORS）→ `saveGeneratedBlob` → 主进程 `writeGeneratedOutput` 写文件并返回 `{ path, name }` → 图片记录 `localPath`
+- **三条走 blob 的路径**（落盘/uploadImage 转存/下载）都必须用 `fetchImageBlob` 回退，别漏
+- **删除同步本地**：`deleteSelectedImages` 只删除**勾选的图片**（v0.2.5 修复：不再误删同批次其他图），日志中移除被删图（无剩余才删记录），blob（storageKey）与本地文件（localPath）同步回收；主进程删除失败自动重试 3 次，结果有明确提示
+- **切换页面不中断**（v0.2.2）：生成任务存模块级 `activeImageTasks`（Map + 订阅），组件卸载不 abort；返回页面时合并任务表恢复状态，仅真实重启才标 failed
+- **结果图交互**：右键菜单（查看详情/重新编辑/下载）、左上角勾选（全选/下载选中/添加资产/删除选中，删除走最右「删除」按钮）、生成中卡片**仅右击取消生成**（v0.2.4 回退点击取消）
 
-## 4. 发版本流程（每次用户要求"更新版本"时）
+### 3.2 视频生成（视频创作台 `pages/video/index.tsx` + `services/api/video.ts`）
+- **任务式生成**：`createVideoGenerationTask` 提交 → `pollVideoGenerationLog` 轮询（Seedance 5s / Agnes 10s / 其他 2.5s）→ `storeGeneratedVideo` 落盘 `Result\Video`（fetch 跨域失败回退主进程 `fetchUrl`）
+- **轮询限流**：Agnes 状态查询遇 429/rate limit 返回 pending 继续轮询，不中断
+- **切换页面**：轮询闭包后台继续，`activeVideoLogIds` 模块级防重复轮询，任务完成通知（`emitVideoTaskUpdate`）刷新新挂载页面
+- **Agnes 参考图**（图生视频）：要求公网 HTTPS 图片 URL——自动托管链路：**阿里云 OSS（已配置时）→ 免费图床（uguu.se → tmpfiles.org → catbox.moe）→ 全部失败明确报错引导**；上传前统一转 PNG/JPEG + 最长边 1024 压缩；浏览器直传失败回退主进程代理（`lyspace:upload-free-host`）
+- **Agnes API 路径（官方文档 agnes-video-v20）**：Base URL `https://api.agnes-ai.cn`（中国站）/ `https://apihub.agnes-ai.com`（国际站）；创建任务 `POST /v1/videos`（`buildApiUrl` 自动补 `/v1`）、结果查询 `GET /agnesapi?video_id=`（`pollAgnesVideoTask` 已剥 `/v1`）
+- **请求代理回退**（v0.3.0）：`agnesRequest` 网络层失败（CORS/连接/超时）自动回退主进程 `lyspace:proxy-request` 重试；错误提示区分：HTML 响应=Base URL 填成网页地址、litellm/UploadFile=Agnes 服务端异常（可能维护中）
+
+### 3.3 公共设施
+- **IPC**：`lyspace:fetch-url`、`save-file-dialog`、`save-files-dialog`（批量一次弹窗）、`write-generated-output`、`delete-generated-files`、`upload-free-host`、`proxy-request`、`storage-settings`、更新相关等——**均需 main.cjs + preload.cjs + desktop.d.ts 三端同步**
+- **自动更新**：主进程启动自动 `checkForUpdates`；`UpdatePrompt`（全局组件）发现新版本弹窗一键下载/重启安装；**CI 发布时自动把 CHANGELOG 段落写入 Release 说明**（`--notes` 从 `$env:GITHUB_WORKSPACE\CHANGELOG.md` 提取）
+- **优化提示词**（生图/视频工作台）：TextArea 下方 ModelPicker（capability=text，默认 gpt-5.5）+ Wand2 按钮，`requestImageQuestion` 流式回填
+- **参考图**：支持点击放大（Image.PreviewGroup）、左右排序（ReferenceOrderButtons）、上传/剪切板/公网 URL
+- **CI 坑**：`git add -u` 不含新文件——新增文件必须显式 `git add`；`publish-desktop.yml` 发布步骤依赖 `GITHUB_WORKSPACE` 绝对路径（勿改回相对路径）
+
+## 4. 常用命令
+
+| 命令 | 用途 |
+|---|---|
+| `pnpm --dir desktop run check` | 类型检查（tsc --noEmit） |
+| `pnpm --dir desktop run pack:win` | 本地打包到 `release/` |
+| `node desktop/scripts/verify-release-version.cjs vX.Y.Z` | 发版前版本校验 |
+| `node --check desktop/main.cjs` | 主进程语法检查 |
+
+## 5. 发版本流程（用户要求"更新版本/发版本"时）
 
 1. `CHANGELOG.md`：Unreleased 整理成 `## vX.Y.Z - 日期`，保留空 Unreleased
 2. `VERSION` → vX.Y.Z；`desktop/package.json`、`desktop/renderer/package.json` version 同步
-3. `node scripts/verify-release-version.cjs vX.Y.Z` 校验
-4. `git add -u`（**新文件要显式 add**）+ commit + `git tag vX.Y.Z`
-5. `git push origin main` + `git push origin vX.Y.Z` —— tag 推送自动触发 CI（`publish-desktop.yml`）构建并上传 GitHub Release（draft → 正式）
-6. 用 `git credential fill` 取 token 验证 CI `completed/success` + release 资产（exe/blockmap/latest.yml 齐全）
-7. 本地 `pnpm --dir desktop run pack:win` 留存一份安装包到 `release/`（用户习惯）
+3. `node desktop/scripts/verify-release-version.cjs vX.Y.Z` 校验
+4. `git add -u`（**新文件要显式 add**）+ commit `release: vX.Y.Z` + `git tag vX.Y.Z`
+5. `git push origin main` + `git push origin vX.Y.Z` —— tag 触发 CI（`publish-desktop.yml`），自动构建上传并**写入 Release 日志**
+6. 用 `git credential fill` 取 token 验证 CI `completed/success` + release 资产（exe/blockmap/latest.yml 齐全 + body 非空）
+7. 本地 `pnpm --dir desktop run pack:win` 留存安装包到 `release/`（用户习惯）
+8. 注意：改版本号重发需删旧 tag/release（force push main + tag），参考 v0.2.0/v0.3.0 处理
 
-## 5. 待办与待测
+## 6. 待办与待测
 
 - `docs/content/docs/progress/todo.mdx`：画布插件稳定性、图像/视频/音频渠道兼容性
-- `docs/content/docs/progress/pending-test.mdx`：v0.1.9 待测项——auto 宽高比、数据跟随安装目录、升级保留、NSIS 保护、落盘、取消消失、复选框批量操作
-- 用户当前在实测 v0.1.9；新报问题优先从"存储/落盘/升级"和"生图工作台交互"两个方向排查
+- `docs/content/docs/progress/pending-test.mdx`：Agnes 中国站（`api.agnes-ai.cn`）视频生成实测（平台维护中）、参考图托管链路、OSS 配置
+- 用户当前重点：Agnes 视频参考图（公网 URL 托管）与多站点适配
 
-## 6. 用户偏好
+## 7. 用户偏好
 
 - 中文交流；代码注释/文案用中文
 - 直接修复确认的 bug（不要只报告）；低风险问题修完一起说
 - 每次功能修复完成后用户通常要求发版本 + 推送源码和安装包 + 本地留存
 - 遵循 `AGENTS.md`（最小改动、不重构、文档规范、不执行编译除非要求）
+- 重要外部信息：Agnes 平台中国站 `platform.agnes-ai.cn`（密钥页 `/settings/apiKeys`）、官方文档 `www.agnes-ai.cn/zh-Hans/docs/agnes-video-v20`（Mintlify，支持 `.md` 后缀抓取）

@@ -14,7 +14,6 @@ let storageSettings = null;
 let allowWindowClose = false;
 let closingTimer = null;
 let installDownloadedUpdate = false;
-let downloadRequested = false;
 let downloadCancellation = null;
 let updateState = { status: "idle", version: "", releaseDate: "", releaseNotes: "", progress: null, error: "", supported: false };
 
@@ -32,7 +31,6 @@ function updateSnapshot(patch) {
 }
 
 function updateError(error) {
-    downloadRequested = false;
     updateSnapshot({ status: "error", progress: null, error: error instanceof Error ? error.message : String(error || "更新失败") });
 }
 
@@ -46,10 +44,8 @@ function configureAutoUpdater() {
     autoUpdater.on("checking-for-update", () => updateSnapshot({ status: "checking", progress: null, error: "" }));
     autoUpdater.on("update-available", (info) => {
         updateSnapshot({ status: "available", version: displayVersion(info.version), releaseDate: info.releaseDate || "", releaseNotes: typeof info.releaseNotes === "string" ? info.releaseNotes : "", progress: null, error: "" });
-        if (downloadRequested) void downloadUpdate();
     });
     autoUpdater.on("update-not-available", (info) => {
-        downloadRequested = false;
         updateSnapshot({ status: "upToDate", version: displayVersion(info.version || app.getVersion()), releaseDate: info.releaseDate || "", progress: null, error: "" });
     });
     autoUpdater.on("download-progress", (progress) => updateSnapshot({ status: "downloading", progress: { percent: progress.percent, bytesPerSecond: progress.bytesPerSecond, transferred: progress.transferred, total: progress.total }, error: "" }));
@@ -59,7 +55,6 @@ function configureAutoUpdater() {
 
 async function downloadUpdate() {
     if (!app.isPackaged || updateState.status === "downloading" || updateState.status === "downloaded") return updateState;
-    downloadRequested = false;
     updateSnapshot({ status: "downloading", progress: { percent: 0, bytesPerSecond: 0, transferred: 0, total: 0 }, error: "" });
     const cancellation = new CancellationToken();
     downloadCancellation = cancellation;
@@ -81,20 +76,16 @@ async function downloadUpdate() {
 function cancelUpdateDownload() {
     if (downloadCancellation && !downloadCancellation.cancelled) {
         downloadCancellation.cancel();
-        downloadRequested = false;
     }
     return updateState;
 }
 
-async function checkAndDownloadUpdate() {
+async function checkForUpdate() {
     if (!app.isPackaged) return updateSnapshot({ status: "idle", error: "", supported: false });
     if (updateState.status === "downloaded" || updateState.status === "downloading") return updateState;
-    if (updateState.status === "available") return downloadUpdate();
-    downloadRequested = true;
     try {
         await autoUpdater.checkForUpdates();
     } catch (error) {
-        downloadRequested = false;
         updateError(error);
     }
     return updateState;
@@ -535,7 +526,8 @@ app.whenReady().then(async () => {
     installApplicationMenu();
     configureAutoUpdater();
     ipcMain.handle("lyspace:update-state", () => updateState);
-    ipcMain.handle("lyspace:check-and-download-update", () => checkAndDownloadUpdate());
+    ipcMain.handle("lyspace:check-update", () => checkForUpdate());
+    ipcMain.handle("lyspace:download-update", () => downloadUpdate());
     ipcMain.handle("lyspace:cancel-update-download", () => cancelUpdateDownload());
     ipcMain.handle("lyspace:install-downloaded-update", () => requestUpdateInstall());
     ipcMain.handle("lyspace:storage-settings", () => storageInfo());

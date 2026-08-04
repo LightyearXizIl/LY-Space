@@ -16,7 +16,8 @@ declare global {
     interface Window {
         lySpaceDesktop?: {
             getUpdateState: () => Promise<AppUpdateState>;
-            checkAndDownloadUpdate: () => Promise<AppUpdateState>;
+            checkUpdate: () => Promise<AppUpdateState>;
+            downloadUpdate: () => Promise<AppUpdateState>;
             cancelUpdateDownload: () => Promise<AppUpdateState>;
             installDownloadedUpdate: () => Promise<void>;
             onUpdateStateChanged: (listener: (state: AppUpdateState) => void) => () => void;

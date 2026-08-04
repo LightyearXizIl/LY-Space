@@ -7,7 +7,7 @@ import { PromptSourceEditorDrawer } from "./prompt-source-editor-drawer";
 import { PromptSourceContentModal } from "./prompt-source-content-modal";
 import { fetchPromptSourceStatuses, refreshAllSources, refreshSource } from "@/services/api/prompts";
 import { PROMPT_SOURCE_INTERVAL_OPTIONS, usePromptSourceStore } from "@/stores/use-prompt-source-store";
-import type { PromptSource } from "@/services/api/prompt-source-presets";
+import { PERSONAL_SOURCE_ID, type PromptSource } from "@/services/api/prompt-source-presets";
 
 const STATUS_QUERY_KEY = ["prompt-source-statuses"];
 
@@ -96,6 +96,7 @@ export function ConfigPromptSources() {
             <div className="space-y-2">
                 {sources.map((source) => {
                     const status = statusQuery.data?.[source.id];
+                    const isPersonal = source.id === PERSONAL_SOURCE_ID;
                     return (
                         <div key={source.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-stone-200 px-4 py-3 dark:border-stone-800">
                             <Switch size="small" checked={source.enabled} onChange={(checked) => { toggleSource(source.id, checked); void invalidatePrompts(); }} />
@@ -105,9 +106,13 @@ export function ConfigPromptSources() {
                                     {source.builtIn ? <Tag className="m-0 shrink-0 text-[10px]">内置</Tag> : null}
                                 </div>
                                 <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-500">
-                                    <a className="max-w-full truncate hover:text-stone-800 hover:underline dark:hover:text-stone-200" href={source.homepage || source.url} target="_blank" rel="noreferrer">
-                                        {source.homepage || source.url}
-                                    </a>
+                                    {isPersonal ? (
+                                        <span>本地存储</span>
+                                    ) : (
+                                        <a className="max-w-full truncate hover:text-stone-800 hover:underline dark:hover:text-stone-200" href={source.homepage || source.url} target="_blank" rel="noreferrer">
+                                            {source.homepage || source.url}
+                                        </a>
+                                    )}
                                     <span className="tabular-nums">{status?.count ?? 0} 条</span>
                                     {status?.lastError ? <Tag color="error" className="m-0 text-[10px]" title={status.lastError}>失败</Tag> : status?.lastSuccessAt ? <Tag color="success" className="m-0 text-[10px]">正常</Tag> : <Tag className="m-0 text-[10px]">未同步</Tag>}
                                     <span>{status?.lastSuccessAt ? `上次成功 ${formatTime(status.lastSuccessAt)}` : "尚未拉取"}</span>
@@ -117,9 +122,11 @@ export function ConfigPromptSources() {
                                 <Button size="small" icon={<Eye className="size-3.5" />} onClick={() => setViewingId(source.id)}>
                                     查看内容
                                 </Button>
-                                <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={refreshingId === source.id} onClick={() => void handleRefreshOne(source)}>
-                                    立即拉取
-                                </Button>
+                                {!isPersonal ? (
+                                    <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={refreshingId === source.id} onClick={() => void handleRefreshOne(source)}>
+                                        立即拉取
+                                    </Button>
+                                ) : null}
                                 {!source.builtIn ? <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => setEditingSource(source)}>编辑来源</Button> : null}
                                 {!source.builtIn ? <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={() => handleDelete(source)}>删除</Button> : null}
                             </div>

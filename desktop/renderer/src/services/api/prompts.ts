@@ -2,7 +2,8 @@ import localforage from "localforage";
 
 import { runPromptSource, type RawPrompt } from "./prompt-source-runtime";
 import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
-import type { PromptSource } from "./prompt-source-presets";
+import { fetchPersonalPrompts } from "./personal-prompts";
+import { PERSONAL_SOURCE_ID, type PromptSource } from "./prompt-source-presets";
 
 export type Prompt = RawPrompt & {
     sourceId: string;
@@ -52,6 +53,11 @@ function enabledSources() {
     return usePromptSourceStore.getState().sources.filter((source) => source.enabled);
 }
 
+/** 个人词库是本地存储的特殊内置来源，不走远程拉取与缓存。 */
+function isPersonalSource(source: PromptSource) {
+    return source.id === PERSONAL_SOURCE_ID;
+}
+
 function cacheKey(sourceId: string) {
     return `prompt-source:${sourceId}`;
 }
@@ -79,6 +85,10 @@ async function readSourceCache(sourceId: string) {
 }
 
 async function refreshSourceRecord(source: PromptSource): Promise<PromptSourceRefreshResult> {
+    if (isPersonalSource(source)) {
+        const count = (await fetchPersonalPrompts()).length;
+        return { sourceId: source.id, sourceName: source.name, count, lastSuccessAt: new Date().toISOString(), lastError: "", success: true };
+    }
     const previous = await readSourceCache(source.id);
     try {
         const items = withSourceMeta(source, await runPromptSource(source));
@@ -111,6 +121,7 @@ function getOrStartRefresh(source: PromptSource) {
 }
 
 async function getSourcePrompts(source: PromptSource): Promise<Prompt[]> {
+    if (isPersonalSource(source)) return withSourceMeta(source, await fetchPersonalPrompts());
     const cached = await readSourceCache(source.id);
     if (cached) {
         const stale = cached.signature !== sourceSignature(source) || Date.now() - cached.fetchedAt >= cacheTtlMs;
@@ -167,13 +178,15 @@ export async function refreshSource(sourceId: string): Promise<PromptSourceRefre
 }
 
 export async function refreshAllSources(): Promise<PromptSourceRefreshSummary> {
-    const results = await Promise.all(enabledSources().map(getOrStartRefresh));
+    const results = await Promise.all(enabledSources().filter((source) => !isPersonalSource(source)).map(getOrStartRefresh));
     return summarizeRefresh(results);
 }
 
 export async function refreshDueSources(maxAgeMs: number): Promise<PromptSourceRefreshSummary> {
     const sources = await Promise.all(
-        enabledSources().map(async (source) => {
+        enabledSources()
+            .filter((source) => !isPersonalSource(source))
+            .map(async (source) => {
             const cached = await readSourceCache(source.id);
             const lastSuccess = cached?.lastSuccessAt ? new Date(cached.lastSuccessAt).getTime() : 0;
             return !lastSuccess || Boolean(cached?.lastError) || Date.now() - lastSuccess >= maxAgeMs || cached?.signature !== sourceSignature(source) ? source : null;
@@ -186,6 +199,10 @@ export async function refreshDueSources(maxAgeMs: number): Promise<PromptSourceR
 export async function fetchPromptSourceStatuses(): Promise<Record<string, PromptSourceStatus>> {
     const entries = await Promise.all(
         usePromptSourceStore.getState().sources.map(async (source) => {
+            if (isPersonalSource(source)) {
+                const count = (await fetchPersonalPrompts()).length;
+                return [source.id, { sourceId: source.id, count, lastSuccessAt: new Date().toISOString(), lastError: "" }] as const;
+            }
             const cache = await readSourceCache(source.id);
             return [source.id, { sourceId: source.id, count: cache?.items?.length || 0, lastSuccessAt: cache?.lastSuccessAt || "", lastError: cache?.lastError || "" }] as const;
         }),

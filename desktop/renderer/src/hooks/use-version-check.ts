@@ -37,19 +37,31 @@ export function useVersionCheck() {
                 if (active) setReleases(sortReleases(parseChangelog(content)));
             })
             .catch(() => {
-                if (active) setReleases(localReleases);
+                if (!active) return;
+                // 远程 CHANGELOG 拉取失败时，回退用主进程提供的 Release 说明（GitHub Release body，即本版本 CHANGELOG 段落）
+                const notes = updateState.releaseNotes ? parseChangelog(updateState.releaseNotes) : [];
+                setReleases(notes.length ? sortReleases(notes) : localReleases);
             });
         return () => {
             active = false;
         };
-    }, [localReleases, updateState.version]);
+    }, [localReleases, updateState.releaseNotes, updateState.version]);
 
-    const checkAndDownloadUpdate = useCallback(async () => {
+    const checkUpdate = useCallback(async () => {
         if (!window.lySpaceDesktop) return;
         try {
-            setUpdateState(await window.lySpaceDesktop.checkAndDownloadUpdate());
+            setUpdateState(await window.lySpaceDesktop.checkUpdate());
         } catch {
             message.error("检查更新失败，请稍后重试");
+        }
+    }, [message]);
+
+    const downloadUpdate = useCallback(async () => {
+        if (!window.lySpaceDesktop) return;
+        try {
+            setUpdateState(await window.lySpaceDesktop.downloadUpdate());
+        } catch {
+            message.error("下载更新失败，请稍后重试");
         }
     }, [message]);
 
@@ -71,5 +83,5 @@ export function useVersionCheck() {
         }
     }, []);
 
-    return { open, setOpen, updateState, releases, hasNewVersion, checkAndDownloadUpdate, cancelUpdateDownload, installDownloadedUpdate };
+    return { open, setOpen, updateState, releases, hasNewVersion, checkUpdate, downloadUpdate, cancelUpdateDownload, installDownloadedUpdate };
 }

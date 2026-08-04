@@ -1,5 +1,5 @@
 import { Alert, Button, Progress, Tag, Timeline } from "antd";
-import { ExternalLink, Globe, Info, RefreshCw, User } from "lucide-react";
+import { Download, ExternalLink, Globe, Info, RefreshCw, User } from "lucide-react";
 import { useVersionCheck } from "@/hooks/use-version-check";
 import { APP_VERSION } from "@/constant/env";
 
@@ -33,7 +33,7 @@ function formatBytes(value?: number) {
 }
 
 export function AboutPanel() {
-    const { updateState, releases, checkAndDownloadUpdate, cancelUpdateDownload, installDownloadedUpdate } = useVersionCheck();
+    const { updateState, releases, checkUpdate, downloadUpdate, cancelUpdateDownload, installDownloadedUpdate } = useVersionCheck();
     const checking = updateState.status === "checking";
     const downloading = updateState.status === "downloading";
     const downloaded = updateState.status === "downloaded";
@@ -98,7 +98,7 @@ export function AboutPanel() {
                 <div className="mb-3 flex items-center justify-between gap-3">
                     <div className="text-sm font-semibold">版本更新</div>
                     <div className="flex items-center gap-2">
-                        <Button icon={<RefreshCw className="size-4" />} disabled={!updateState.supported || checking || downloading || downloaded} onClick={() => void checkAndDownloadUpdate()}>
+                        <Button icon={<RefreshCw className="size-4" />} disabled={!updateState.supported || checking || downloading || downloaded} onClick={() => void checkUpdate()}>
                             {checking ? "检查中..." : downloading ? "正在下载..." : downloaded ? "已下载" : "检查更新"}
                         </Button>
                         {downloading ? <Button danger onClick={() => void cancelUpdateDownload()}>取消下载</Button> : null}
@@ -117,7 +117,19 @@ export function AboutPanel() {
 
                 {!updateState.supported ? <Alert className="mb-3" type="info" showIcon message="本地开发模式不会连接正式更新服务。" /> : null}
                 {updateState.status === "upToDate" ? <Alert className="mb-3" type="success" showIcon message="已是最新版本" /> : null}
-                {updateState.status === "available" ? <Alert className="mb-3" type="info" showIcon message={`发现 ${latestVersion}，点击“检查更新”即可开始下载。`} /> : null}
+                {updateState.status === "available" ? (
+                    <Alert
+                        className="mb-3"
+                        type="info"
+                        showIcon
+                        message={`发现新版本 ${latestVersion}`}
+                        description={
+                            <Button size="small" type="primary" icon={<Download className="size-3.5" />} className="mt-2" onClick={() => void downloadUpdate()}>
+                                下载更新
+                            </Button>
+                        }
+                    />
+                ) : null}
                 {downloading ? (
                     <div className="mb-3 rounded-lg border border-stone-200 p-3 dark:border-stone-800">
                         <div className="mb-2 flex justify-between text-xs text-stone-500 dark:text-stone-400">
@@ -151,7 +163,7 @@ export function AboutPanel() {
                         description={
                             <div className="space-y-2">
                                 <div>{updateState.error || "无法连接更新服务"}</div>
-                                <button type="button" className="cursor-pointer bg-transparent p-0 text-xs text-stone-500 underline hover:text-stone-950 dark:hover:text-white" onClick={() => void checkAndDownloadUpdate()}>
+                                <button type="button" className="cursor-pointer bg-transparent p-0 text-xs text-stone-500 underline hover:text-stone-950 dark:hover:text-white" onClick={() => void checkUpdate()}>
                                     重试
                                 </button>
                             </div>

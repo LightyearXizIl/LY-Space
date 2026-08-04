@@ -22,6 +22,8 @@ export type ModelChannel = {
     apiKey: string;
     apiFormat: ApiCallFormat;
     models: ChannelModel[];
+    /** 是否启用；缺省视为启用（兼容旧数据）。禁用后其模型从选择器中隐藏，请求解析回退到其他启用渠道。 */
+    enabled?: boolean;
 };
 
 export type AiConfig = {
@@ -193,8 +195,17 @@ export function resolveModelForCapability(config: AiConfig, currentModel: string
 }
 
 export function selectableModelsByCapability(config: AiConfig, capability?: ModelCapability) {
-    if (!capability) return config.models;
-    return config.channels.flatMap((channel) => channel.models.filter((model) => model.capability === capability).map((model) => encodeChannelModel(channel.id, model.name)));
+    if (!capability) {
+        return config.models.filter((model) => {
+            const decoded = decodeChannelModel(model);
+            if (!decoded) return true;
+            const channel = config.channels.find((item) => item.id === decoded.channelId);
+            return !channel || channel.enabled !== false;
+        });
+    }
+    return config.channels
+        .filter((channel) => channel.enabled !== false)
+        .flatMap((channel) => channel.models.filter((model) => model.capability === capability).map((model) => encodeChannelModel(channel.id, model.name)));
 }
 
 /** The user script (if any) attached to a model; empty string means use the system default call. */
@@ -211,11 +222,13 @@ export function imageModelFeatures(config: AiConfig, value: string): ImageModelF
 }
 
 export function selectableImageModelsByFeature(config: AiConfig, feature: ImageModelFeature) {
-    return config.channels.flatMap((channel) =>
-        channel.models
-            .filter((model) => model.capability === "image" && imageModelFeatures(config, encodeChannelModel(channel.id, model.name)).includes(feature))
-            .map((model) => encodeChannelModel(channel.id, model.name)),
-    );
+    return config.channels
+        .filter((channel) => channel.enabled !== false)
+        .flatMap((channel) =>
+            channel.models
+                .filter((model) => model.capability === "image" && imageModelFeatures(config, encodeChannelModel(channel.id, model.name)).includes(feature))
+                .map((model) => encodeChannelModel(channel.id, model.name)),
+        );
 }
 
 function isAiConfigReady(config: AiConfig, model: string) {
@@ -330,6 +343,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         apiKey: channel?.apiKey || "",
         apiFormat,
         models: normalizeChannelModels(channel?.models),
+        enabled: channel?.enabled !== false,
     };
 }
 
@@ -378,7 +392,8 @@ export function resolveModelChannel(config: AiConfig, value: string) {
     const decoded = decodeChannelModel(value);
     const model = decoded?.model || value;
     const matched = decoded ? config.channels.find((channel) => channel.id === decoded.channelId) : config.channels.find((channel) => channel.models.some((item) => item.name === model));
-    return matched || config.channels[0] || createModelChannel({ id: "default", name: "默认渠道", baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, models: config.models.map(modelOptionName).map((name) => ({ name, capability: guessCapability(name) })) });
+    const usable = matched && matched.enabled !== false ? matched : config.channels.find((channel) => channel.enabled !== false);
+    return usable || matched || config.channels[0] || createModelChannel({ id: "default", name: "默认渠道", baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, models: config.models.map(modelOptionName).map((name) => ({ name, capability: guessCapability(name) })) });
 }
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {

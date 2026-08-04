@@ -1,4 +1,4 @@
-import { App, Button, Form, Input, Modal, Progress, Select, Tabs } from "antd";
+import { App, Button, Form, Input, Modal, Progress, Select, Switch, Tabs } from "antd";
 import { Cloud, Download, FolderOpen, Pencil, Plus, RefreshCw, RotateCcw, Trash2, Upload, Wifi } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -119,7 +119,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     };
 
     const finishConfig = () => {
-        const ready = config.channels.some((channel) => channel.baseUrl.trim() && channel.apiKey.trim() && channel.models.length);
+        const ready = config.channels.some((channel) => channel.enabled !== false && channel.baseUrl.trim() && channel.apiKey.trim() && channel.models.length);
         setConfigDialogOpen(false);
         if (!ready) return;
         message.success(shouldPromptContinue ? "配置已保存，请继续刚才的请求" : "配置已保存");
@@ -240,10 +240,13 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                 <div className="space-y-2">
                                     {config.channels.map((channel) => (
                                         <div key={channel.id} className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 px-4 py-3 dark:border-stone-800">
-                                            <div className="min-w-0">
-                                                <div className="truncate text-sm font-semibold">{channel.name || "未命名渠道"}</div>
-                                                <div className="mt-1 truncate text-xs text-stone-500">
-                                                    {apiFormatLabel(channel.apiFormat)} · {channel.models.length} 个模型 · {channel.baseUrl || "未填写接口地址"}
+                                            <div className="flex min-w-0 items-center gap-3">
+                                                <Switch size="small" checked={channel.enabled !== false} onChange={(checked) => saveChannel({ ...channel, enabled: checked })} />
+                                                <div className="min-w-0">
+                                                    <div className="truncate text-sm font-semibold">{channel.name || "未命名渠道"}</div>
+                                                    <div className="mt-1 truncate text-xs text-stone-500">
+                                                        {apiFormatLabel(channel.apiFormat)} · {channel.models.length} 个模型 · {channel.baseUrl || "未填写接口地址"}
+                                                    </div>
                                                 </div>
                                             </div>
                                             <div className="flex shrink-0 gap-2">

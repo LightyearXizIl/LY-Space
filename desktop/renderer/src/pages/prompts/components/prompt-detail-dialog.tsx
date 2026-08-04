@@ -1,9 +1,9 @@
-import { Copy, FileText, FolderPlus } from "lucide-react";
+import { BookmarkPlus, Copy, FileText, FolderPlus, Pencil } from "lucide-react";
 import { Button, Modal, Space, Tag } from "antd";
 
 import { formatPromptDate, type Prompt } from "@/services/api/prompts";
 
-export function PromptDetailDialog({ prompt, onClose, onCopy, onSaveAsset }: { prompt: Prompt | null; onClose: () => void; onCopy: (prompt: string) => void; onSaveAsset?: (prompt: Prompt) => void }) {
+export function PromptDetailDialog({ prompt, onClose, onCopy, onSaveAsset, onEditPersonal, onAddToPersonal }: { prompt: Prompt | null; onClose: () => void; onCopy: (prompt: string) => void; onSaveAsset?: (prompt: Prompt) => void; onEditPersonal?: (prompt: Prompt) => void; onAddToPersonal?: (prompt: Prompt) => void }) {
     return (
         <Modal title={prompt?.title} open={Boolean(prompt)} onCancel={onClose} footer={null} width={720} centered styles={{ body: { height: "calc(85vh - 55px)", overflow: "hidden" } }}>
             {prompt ? (
@@ -33,6 +33,16 @@ export function PromptDetailDialog({ prompt, onClose, onCopy, onSaveAsset }: { p
                             {onSaveAsset ? (
                                 <Button icon={<FolderPlus className="size-4" />} onClick={() => onSaveAsset(prompt)}>
                                     加入我的资产
+                                </Button>
+                            ) : null}
+                            {onAddToPersonal ? (
+                                <Button icon={<BookmarkPlus className="size-4" />} onClick={() => onAddToPersonal(prompt)}>
+                                    加入我的词库
+                                </Button>
+                            ) : null}
+                            {onEditPersonal ? (
+                                <Button icon={<Pencil className="size-4" />} onClick={() => onEditPersonal(prompt)}>
+                                    编辑
                                 </Button>
                             ) : null}
                         </Space>

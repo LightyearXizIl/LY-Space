@@ -1,5 +1,5 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, LoaderCircle, Music2, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon, Wand2 } from "lucide-react";
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, Download, FolderPlus, History, LoaderCircle, Music2, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon, Wand2 } from "lucide-react";
+import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent as ReactClipboardEvent, type DragEvent } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
 import localforage from "localforage";
 import { nanoid } from "nanoid";
@@ -183,7 +183,7 @@ export default function VideoPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sessionHydrated]);
 
-    const addReferences = async (files?: FileList | null) => {
+    const addReferences = async (files?: FileList | readonly File[] | null) => {
         const selectedFiles = Array.from(files || []);
         const unsupported = selectedFiles.filter((file) => !file.type.startsWith("image/") && !SEEDANCE_VIDEO_MIME_TYPES.includes(file.type) && !isSupportedAudioFile(file));
         if (unsupported.length) message.warning("已忽略不支持的参考资产，请使用图片、mp4/mov 视频或 mp3/wav 音频");
@@ -251,25 +251,15 @@ export default function VideoPage() {
         void addReferences(event.dataTransfer.files);
     };
 
-    const addReferencesFromClipboard = async () => {
-        try {
-            const items = await navigator.clipboard.read();
-            const blobs = await Promise.all(items.flatMap((item) => item.types.filter((type) => type.startsWith("image/")).map((type) => item.getType(type))));
-            if (!blobs.length) {
-                message.error("剪切板里没有可读取的图片");
-                return;
-            }
-            const nextReferences = await Promise.all(
-                blobs.slice(0, SEEDANCE_REFERENCE_LIMITS.images - references.length).map(async (blob, index) => {
-                    const image = await uploadImage(blob);
-                    return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
-                }),
-            );
-            setReferences((value) => [...value, ...nextReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.images));
-            message.success(`已读取 ${nextReferences.length} 张参考图`);
-        } catch {
-            message.error("剪切板里没有可读取的图片");
-        }
+
+    const addReferencesFromPaste = (event: ReactClipboardEvent) => {
+        const files = Array.from(event.clipboardData.items)
+            .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+            .map((item) => item.getAsFile())
+            .filter((file): file is File => Boolean(file));
+        if (!files.length) return;
+        event.preventDefault();
+        void addReferences(files);
     };
     // Agnes 等渠道只接受公网 HTTPS 参考图：本地参考图自动托管（OSS 优先，免费图床兜底），失败明确报错引导
     const ensurePublicReferenceUrls = async (refs: ReferenceImage[]) => {
@@ -580,9 +570,6 @@ export default function VideoPage() {
                                             添加公网 URL
                                         </Button>
                                         <Button size="small" onClick={() => setOssSettingsOpen((value) => !value)}>OSS 设置</Button>
-                                        <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={() => void addReferencesFromClipboard()}>
-                                            剪切板
-                                        </Button>
                                         <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
                                             上传
                                         </Button>
@@ -605,7 +592,10 @@ export default function VideoPage() {
                                     </div>
                                 ) : null}
                                 <div
-                                    className={`hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors ${referenceDragTarget === "image" ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
+                                    tabIndex={0}
+                                    className={`hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors focus:outline-none ${referenceDragTarget === "image" ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
+                                    onMouseEnter={(event) => event.currentTarget.focus({ preventScroll: true })}
+                                    onPaste={addReferencesFromPaste}
                                     onDragEnter={(event) => handleReferenceDragEnter(event, "image")}
                                     onDragOver={(event) => {
                                         event.preventDefault();
@@ -626,7 +616,7 @@ export default function VideoPage() {
                                             </div>
                                         ))}
                                     </Image.PreviewGroup>
-                                    {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{referenceDragTarget === "image" ? "松开即可上传参考资产" : "暂无参考图，可拖入文件，最多 9 张"}</div> : null}
+                                    {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{referenceDragTarget === "image" ? "松开即可上传参考资产" : "暂无参考图，可拖入文件或直接粘贴，最多 9 张"}</div> : null}
                                 </div>
                             </div>
 

@@ -142,6 +142,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **画布提示词优化**（`hooks/use-prompt-optimizer.ts`，新增）：与生图/视频页 optimizePrompt 同源逻辑（textModel 优先、`requestImageQuestion` 流式回填、isAiConfigReady 校验+openConfigDialog 引导），供画布面板与 Composer 复用。画布面板 `updatePrompt` 语义沿用：`isEditingExistingContent` 时优化结果只更新本地 prompt，提交才写回 metadata。
 - **Composer 优化保留 @ 引用**：system prompt 明确要求原样保留 `@[node:xxx]` 令牌（hook 支持 `systemPrompt` 自定义参数），回填后 `parseComposerTokens` 自动还原引用 chips；模型删改令牌会导致对应引用丢失（可接受，用户可重新 @ 引用）。
 - **坑**：① 提示词优化整体覆盖输入框文本（含已插入镜头文字）——与生图/视频页行为一致，镜头按钮高亮自动随文本消失；② Composer 编辑器有焦点时 value 变化跳过 DOM 重建（既有机制），点击镜头/优化按钮会先失焦再重建，文本正常显示。
+- **坑（浅色模式 Alert 深灰）**：antd 主题 token 的 `colorInfo` 曾跟随 `color.primary`（浅色 #171717 黑）→ `colorInfoBg` 由黑色板派生为 #575757 深灰，导致 Alert info（关于页"发现新版本"等）在浅色模式下是深灰块；暗色模式 primary=#fafafa 白还会派生白底白 icon。已移除 `colorInfo` 覆盖恢复 antd 默认 #1677ff。**教训：`colorInfo`/`colorInfoBg` 等派生 token 不要设为黑/白等极端色，除非显式同步设置对应 Bg/Border**。
 
 
 ## 4. 常用命令

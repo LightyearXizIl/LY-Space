@@ -36,7 +36,6 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
         cssVar: { key: dark ? "infinite-canvas-dark" : "infinite-canvas-light" },
         token: {
             colorPrimary: color.primary,
-            colorInfo: color.primary,
             colorLink: color.primary,
             colorLinkHover: color.primaryHover,
             colorLinkActive: color.primary,

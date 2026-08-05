@@ -925,15 +925,13 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog, cam
 
     return (
         <>
-            <div className="col-span-2 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-3 sm:col-span-1">
-                <div className="min-w-0">
-                    <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">模型</span>
-                    <ModelPicker config={config} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(false)} />
-                </div>
-                <div className="min-w-0">
-                    <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">镜头</span>
-                    <CameraTrigger value={cameraValue} onChange={onCameraChange} />
-                </div>
+            <div className="min-w-0">
+                <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">模型</span>
+                <ModelPicker config={config} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(false)} />
+            </div>
+            <div className="min-w-0">
+                <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">镜头</span>
+                <CameraTrigger value={cameraValue} onChange={onCameraChange} />
             </div>
             <div className="col-span-2">
                 <ImageSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />

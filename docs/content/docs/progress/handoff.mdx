@@ -16,7 +16,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.4.2（`VERSION` 文件，tag `v0.4.2`）
+- **当前版本**：v0.4.3（`VERSION` 文件，tag `v0.4.3`）
 
 ## 2. 数据存储
 
@@ -171,6 +171,10 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 - **资产侧栏类型筛选标签**（`canvas-side-panel.tsx`）：选中态由黑底白字改为柔和样式（浅色 `bg-stone-100 text-stone-900`、暗色 `bg-stone-800 text-stone-100`，与页面场景选中态一致）；类型标签容器改 `flex-nowrap` + `overflow-x-auto`，5 个类型标签一行不折行（侧栏极窄时横向滚动兜底）。**坑**：下方 allTags 标签筛选行仍保持 `flex-wrap`（标签数量多，勿一并改死）。
 - **生图/视频页模型行与镜头按钮**（`image/index.tsx`、`video/index.tsx`、`camera-trigger.tsx`）：模型行由 `grid-cols-2` 对半改为 `grid-cols-[minmax(0,1fr)_auto]`——模型下拉占满剩余宽度（长模型名不再截断），镜头按钮紧凑靠右；镜头按钮由 antd Button 改为与 `SelectTrigger` 同款胶囊样式（`h-8 rounded-full border bg-transparent px-3 shadow-sm`），移除 `!w-full`。**坑**：`CameraTrigger` 的 `placement` 仍默认 `bottomRight`（弹层以按钮右缘对齐，本次未改），如需按钮正下方弹出需改 placement。
+
+### 3.19 v0.4.3 变更要点
+
+- **镜头模块移入设置区右列**（`image/index.tsx`、`video/index.tsx` GenerationSettings）：桌面端外层为 `sm:grid-cols-2` 两列，此前整个 GenerationSettings 占左列（内部再分模型/镜头），**右列整行空白**（用户截图黄框位置）。本次把「模型」「镜头」拆为外层 grid 的两个独立列——模型占左列、镜头整体移入右列（与模型同排、标题同高），`ImageSettingsPanel` 仍跨两列；移动端 Drawer（外层同为 2 列）模型/镜头继续左右并排。**坑**：GenerationSettings 的 fragment 子元素直接参与外层 grid 排布，模型/镜头 div 不得再设 `col-span-2`（否则又回到单列内部排布）；v0.4.2 的 `grid-cols-[minmax(0,1fr)_auto]` 内部分列实现已被此方案取代。
 
 ## 4. 常用命令
 

@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent } from "react";
-import { Button, Image } from "antd";
-import { FileText, Image as ImageIcon, Music2, Video, X } from "lucide-react";
+import { Button, Image, Tooltip } from "antd";
+import { FileText, Image as ImageIcon, Music2, Video, Wand2, X } from "lucide-react";
 
+import { CameraModule } from "@/components/camera-module";
+import { usePromptOptimizer } from "@/hooks/use-prompt-optimizer";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
+import type { CanvasGenerationMode } from "@/types/canvas";
 import type { NodeGenerationInput } from "./canvas-node-generation";
 
 type CanvasConfigComposerProps = {
@@ -12,6 +16,8 @@ type CanvasConfigComposerProps = {
     inputs: NodeGenerationInput[];
     onChange: (value: string) => void;
     onClose: () => void;
+    /** 生成模式（决定提示词优化文案），缺省按生图 */
+    mode?: CanvasGenerationMode;
 };
 
 type Token =
@@ -24,8 +30,10 @@ type MentionState = {
 
 export const CONFIG_REFERENCE_PATTERN = /@\[node:([^\]]+)\]/g;
 
-export function CanvasConfigComposer({ value, inputs, onChange, onClose }: CanvasConfigComposerProps) {
+export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = "image" }: CanvasConfigComposerProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const globalConfig = useEffectiveConfig();
+    const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const editorRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
     const [mention, setMention] = useState<MentionState | null>(null);
@@ -104,6 +112,17 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose }: Canva
 
     const stopCanvasInteraction = (event: PointerEvent | MouseEvent) => event.stopPropagation();
 
+    // 提示词优化：system prompt 要求原样保留 @[node:xxx] 引用令牌，回填后 parseComposerTokens 自动还原引用 chips
+    const optimizeKind = mode === "video" ? "video" : "image";
+    const { optimizing, optimize } = usePromptOptimizer({
+        kind: optimizeKind,
+        config: globalConfig,
+        getText: () => value,
+        setText: onChange,
+        openConfigDialog: () => openConfigDialog(true),
+        systemPrompt: `你是专业的${optimizeKind === "video" ? "视频生成" : "生图"}提示词优化专家。请优化用户给出的提示词，使其更具体、生动、可控（可补充主体、风格、构图、光线、氛围、画质等描述）。提示词中的 @[node:xxx] 是资产引用标记，必须原样保留、不得删除或改动。只输出优化后的提示词本身，不要解释、不要引号、不要多余内容。`,
+    });
+
     return (
         <div
             data-canvas-no-zoom
@@ -172,6 +191,12 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose }: Canva
                     onBlur={() => window.setTimeout(closeMention, 120)}
                 />
                 {mention && candidates.length ? <MentionMenu inputs={candidates} allInputs={inputs} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} /> : null}
+            </div>
+            <CameraModule value={value} onChange={onChange} theme={theme} showTitle={false} className="mt-2" />
+            <div className="mt-1.5 flex items-center justify-end gap-1.5">
+                <Tooltip title="优化提示词">
+                    <Button type="text" size="small" className="!h-6 !w-6" icon={<Wand2 className="size-4" />} loading={optimizing} onClick={() => void optimize()} />
+                </Tooltip>
             </div>
             {imagePreview ? <Image src={imagePreview} alt="引用图片预览" style={{ display: "none" }} preview={{ visible: true, src: imagePreview, onVisibleChange: (visible) => !visible && setImagePreview(null) }} /> : null}
         </div>

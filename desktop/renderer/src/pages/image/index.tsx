@@ -4,6 +4,7 @@ import { App, Button, Checkbox, Drawer, Dropdown, Empty, Image, Input, Modal, Ta
 import localforage from "localforage";
 import { saveAs } from "file-saver";
 
+import { CameraModule } from "@/components/camera-module";
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
@@ -749,6 +750,10 @@ export default function ImagePage() {
                                         </Tooltip>
                                     </div>
                                 </div>
+                            </div>
+
+                            <div>
+                                <CameraModule value={prompt} onChange={setPrompt} />
                             </div>
 
                             <div className="min-w-0">

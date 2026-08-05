@@ -17,3 +17,5 @@ release
 desktop/renderer/public/plugins
 plugins/canvas/*/dist
 plugins/canvas/*/node_modules
+
+.reasonix/

@@ -6,6 +6,7 @@ import { nanoid } from "nanoid";
 import { saveAs } from "file-saver";
 
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
+import { CameraModule } from "@/components/camera-module";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoSizeLabel } from "@/components/video-settings-panel";
@@ -567,6 +568,10 @@ export default function VideoPage() {
                                         </Tooltip>
                                     </div>
                                 </div>
+                            </div>
+
+                            <div>
+                                <CameraModule value={prompt} onChange={setPrompt} />
                             </div>
 
                             <div className="min-w-0">

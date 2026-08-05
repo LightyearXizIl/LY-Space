@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import { ArrowUp, LoaderCircle, Square } from "lucide-react";
-import { Button } from "antd";
+import { ArrowUp, LoaderCircle, Square, Wand2 } from "lucide-react";
+import { Button, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
+import { CameraModule } from "@/components/camera-module";
+import { usePromptOptimizer } from "@/hooks/use-prompt-optimizer";
 import { defaultConfig, resolveModelForCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -51,6 +53,15 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         if (!isEditingExistingContent) onPromptChange(node.id, value);
     };
 
+    // 提示词优化：仅 image/video 节点提供（audio/text 无对应优化先例）
+    const { optimizing, optimize } = usePromptOptimizer({
+        kind: mode === "video" ? "video" : "image",
+        config,
+        getText: () => prompt,
+        setText: updatePrompt,
+        openConfigDialog: () => openConfigDialog(true),
+    });
+
     const submit = () => {
         const text = prompt.trim();
         if (!text || isRunning) return;
@@ -75,6 +86,17 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 style={{ background: "transparent", color: theme.node.text }}
                 placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent)}
             />
+
+            {mode === "image" || mode === "video" ? (
+                <>
+                    <CameraModule value={prompt} onChange={updatePrompt} theme={theme} showTitle={false} className="mt-2" />
+                    <div className="mt-1.5 flex items-center justify-end gap-1.5">
+                        <Tooltip title="优化提示词">
+                            <Button type="text" size="small" className="!h-6 !w-6" icon={<Wand2 className="size-4" />} loading={optimizing} onClick={() => void optimize()} />
+                        </Tooltip>
+                    </div>
+                </>
+            ) : null}
 
             <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">

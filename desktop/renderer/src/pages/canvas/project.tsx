@@ -2816,6 +2816,7 @@ function InfiniteCanvasPage() {
                 <CanvasConfigComposer
                     value={panelNode.metadata?.composerContent ?? panelNode.metadata?.prompt ?? ""}
                     inputs={configInputsById.get(panelNode.id) || []}
+                    mode={panelNode.metadata?.generationMode || "image"}
                     onChange={(composerContent) => handleConfigNodeChange(panelNode.id, { composerContent })}
                     onClose={() => setDialogNodeId(null)}
                 />

@@ -16,7 +16,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.3.8（`VERSION` 文件，tag `v0.3.8`）
+- **当前版本**：v0.3.9（`VERSION` 文件，tag `v0.3.9`）
 
 ## 2. 数据存储
 
@@ -50,7 +50,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ### 3.3 公共设施
 - **IPC**：`lyspace:fetch-url`、`save-file-dialog`、`save-files-dialog`（批量一次弹窗）、`write-generated-output`、`delete-generated-files`、`upload-free-host`、`proxy-request`、`storage-settings`、更新相关等——**均需 main.cjs + preload.cjs + desktop.d.ts 三端同步**
-- **自动更新**：启动自动 `checkForUpdates`（来源 `auto`）；**仅启动自动检查发现新版本时弹居中弹窗**（`UpdatePrompt`，含版本号/更新日志/下载按钮/下载进度/重启安装）；关于页手动检查（来源 `manual`）不弹窗，仅在页内显示状态与日志。来源标记：`checkForUpdate(source)` → `updateState.triggeredBy`（`update-available` 时写入，三端同步）。**CI 发布时自动把 CHANGELOG 段落写入 Release 说明**（`--notes` 从 `$env:GITHUB_WORKSPACE\CHANGELOG.md` 提取）
+- **自动更新**：启动自动 `checkForUpdates`（来源 `auto`）；**仅启动自动检查发现新版本时弹居中弹窗**（`UpdatePrompt`，含版本号/更新日志/下载按钮/下载进度/重启安装，v0.3.6 起支持暂停/断点续传，见 3.10）；关于页手动检查（来源 `manual`）不弹窗，仅在页内显示状态与日志。来源标记：`checkForUpdate(source)` → `updateState.triggeredBy`（`update-available` 时写入，三端同步）。**CI 发布时自动把 CHANGELOG 段落写入 Release 说明**（`--notes` 从 `$env:GITHUB_WORKSPACE\CHANGELOG.md` 提取）
 - **优化提示词**（生图/视频工作台）：TextArea 下方 ModelPicker（capability=text，默认 gpt-5.5）+ Wand2 按钮，`requestImageQuestion` 流式回填
 - **参考图**：支持点击放大（Image.PreviewGroup）、左右排序（ReferenceOrderButtons）、上传/框内粘贴/公网 URL（阿里云设置 Tab 添加）、清空按钮（各类型独立）；参考视频/音频同样有清空按钮
 - **CI 坑**：`git add -u` 不含新文件——新增文件必须显式 `git add`；`publish-desktop.yml` 发布步骤依赖 `GITHUB_WORKSPACE` 绝对路径（勿改回相对路径）
@@ -80,11 +80,18 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 - **画布编辑持久化防抖**：nodes/connections/chatSessions 保存走 500ms trailing debounce（`projectSaveTimerRef` + `pendingProjectSaveRef`），拖拽/生成不再每帧全量 JSON.stringify + IndexedDB 写；切换项目/卸载时 `flushProjectSave` 立即落盘。**坑**：新加画布持久化字段时确认走 pending patch 闭包，勿直接调用 updateProject 高频路径。
 - **缩放不重渲染节点**：新建 `useCanvasViewportStore`（`stores/canvas/use-canvas-viewport-store.ts`）保存当前 viewport；`CanvasNode` 移除 scale prop（zoom 不再击穿 React.memo），节点内经 `store.getState().viewport.k` 读取（resize 开始时快照进 resizeRef）。**坑**：该 store 仅供 getState 读取，不要用 selector 订阅（会失去 memo 收益）。
-- **rAF 合并**：滚轮缩放（`infinite-canvas.tsx`，基于 viewportRef 累积保证精度）、框选、连线拖拽、refine 预览重绘均 rAF 合并，每帧最多一次 setState。
+- **rAF 合并**：滚轮缩放（`infinite-canvas.tsx`，基于 viewportRef 累积保证精度）、框选、refine 预览重绘均 rAF 合并，每帧最多一次 setState（连线拖拽 v0.3.8 起改回同步更新，见 3.14）。
 - **memo 化**：ConnectionPath（pathD useMemo，onSelect/onContextMenu 必须传稳定引用 `handleSelectConnection`/`handleConnectionContextMenu`）、CanvasTopBar/CanvasToolbar/CanvasZoomControls/CanvasSidePanel（内联箭头回调已提升为稳定 useCallback）、PromptCard（onOpen/onCopy/extraAction 需稳定引用，`prompts/index.tsx` 已 useCallback）。
 - **高频写库修复**：video 页 `saveWorkbenchSession` 依赖去掉 elapsedMs（对齐 image 页既有先例，elapsedMs 取闭包最新值）；refine 会话保存 500ms 防抖（`sessionSnapshotRef` 渲染期同步 + 卸载 flush）；refine 调色/LUT Slider 改 onChange 轻量预览、onChangeComplete 才 commitEdits（history 不再每帧 push）。
 - **输入框失焦提交**：新建 `useDraftInput`（`hooks/use-draft-input.ts`）+ video 面板输入组件本地 draft 模式，配置弹窗 8 处与设置面板输入不再每键写全局 config store（避免全量 persist 序列化 + 订阅者重渲染），失焦/Enter 提交。**坑**：受控输入必须本地草稿否则输入回跳；外部配置变化（导入）经 value 依赖自动回显。
 - **图片加载**：assets 封面 `loading="lazy" decoding="async"`；画布节点 img `decoding="async"`。
+
+### 3.8 缩略图管线与提示词虚拟滚动（v0.3.5）
+
+- **缩略图管线**：新建 `services/thumbnail.ts`——`getThumbnailUrl(source)` 把 blob:/data: URL 原图降采样为最长边 1024 的 JPEG object URL（`createImageBitmap` + canvas + `toBlob`），模块级 LRU 缓存 200 条（淘汰时 revoke），并发上限 3（`runThumbnailTask` 队列），失败返回 null 由调用方回退原图。
+  - **画布图片节点**（`canvas-node.tsx` ImageContent）：默认显示缩略图；订阅 `useCanvasViewportStore.viewport.k`（仅本子组件重渲染，CanvasNode memo 外壳不受影响），当 `节点宽 × 缩放 > 1024×1.2` 时切回原图避免放大模糊。**坑**：缩略图 URL 是共享缓存，组件切换时不可 revoke（LRU 淘汰才 revoke）；图片内容变化（新 blob URL）自动走新 key，旧条目由 LRU 回收。
+  - **assets 封面**（`pages/assets/index.tsx` AssetCard）：同样走缩略图，生成失败回退原图。
+- **提示词虚拟滚动**（`pages/prompts/index.tsx`）：引入 `@tanstack/react-virtual`，按窗口断点（1280px→3 列 / 640px→2 列 / 其余 1 列）把卡片分组成行，行虚拟化 + 动态测量（`measureElement`），overscan 4，滚动容器为原 `<main>`（`scrollRef`）；无限滚动加载（`handleListScroll` 滚到底 fetchNextPage）保留不变；`PromptGrid` 组件已删除。**坑**：行高由封面（aspect 4:3 固定）+ 内容决定，首次渲染即稳定，动态测量一次后不再漂移；resize 跨断点会重新分组，滚动位置可能有轻微偏移（可接受）。
 
 ### 3.9 v0.3.5 节点悬浮工具条自动换行
 
@@ -127,12 +134,15 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **关于页更新区**：核对 stone + `dark:` 变体已全适配，无硬编码颜色。
 - **更新不删用户数据（保障确认）**：① NSIS `customRemoveFiles` 宏保护安装目录 `Data cache`/`Result`（升级卸载时复制到临时再移回），自研静默安装（`/S /D=`）走同一 NSIS 脚本同样受保护；② 画布/渠道/会话等 userData（IndexedDB/localStorage，`%APPDATA%\LY Space`）不在安装目录天然保留；③ 升级前 `flush-persistence` 落盘。
 
-### 3.8 缩略图管线与提示词虚拟滚动（v0.3.5）
+### 3.15 v0.3.9 镜头模块 + 画布节点提示词优化
 
-- **缩略图管线**：新建 `services/thumbnail.ts`——`getThumbnailUrl(source)` 把 blob:/data: URL 原图降采样为最长边 1024 的 JPEG object URL（`createImageBitmap` + canvas + `toBlob`），模块级 LRU 缓存 200 条（淘汰时 revoke），并发上限 3（`runThumbnailTask` 队列），失败返回 null 由调用方回退原图。
-  - **画布图片节点**（`canvas-node.tsx` ImageContent）：默认显示缩略图；订阅 `useCanvasViewportStore.viewport.k`（仅本子组件重渲染，CanvasNode memo 外壳不受影响），当 `节点宽 × 缩放 > 1024×1.2` 时切回原图避免放大模糊。**坑**：缩略图 URL 是共享缓存，组件切换时不可 revoke（LRU 淘汰才 revoke）；图片内容变化（新 blob URL）自动走新 key，旧条目由 LRU 回收。
-  - **assets 封面**（`pages/assets/index.tsx` AssetCard）：同样走缩略图，生成失败回退原图。
-- **提示词虚拟滚动**（`pages/prompts/index.tsx`）：引入 `@tanstack/react-virtual`，按窗口断点（1280px→3 列 / 640px→2 列 / 其余 1 列）把卡片分组成行，行虚拟化 + 动态测量（`measureElement`），overscan 4，滚动容器为原 `<main>`（`scrollRef`）；无限滚动加载（`handleListScroll` 滚到底 fetchNextPage）保留不变；`PromptGrid` 组件已删除。**坑**：行高由封面（aspect 4:3 固定）+ 内容决定，首次渲染即稳定，动态测量一次后不再漂移；resize 跨断点会重新分组，滚动位置可能有轻微偏移（可接受）。
+- **镜头模块**（`components/camera-module.tsx`，新增）：5 组单选按钮（视角：自动/正面/45度/侧面/背面/俯视/仰视；景别：自动/特写/半身-中景/全身/产品细节/场景/远景；距离：自动/近/中/远；镜头：自动/广角/标准/长焦/微距；机位：自动/平视/高机位/低机位），默认"自动"= 不产生文本。点击选项把文字以"，"追加到提示词末尾，再点已插入项移除，组内切换先删旧插新，点"自动"清空该组。**选中态由提示词文本派生**（`cameraTextPresent` 独立词匹配），外部改文本（优化回填/手改/切节点）高亮自动同步，无需 state。
+- **文本操作纯函数**：`appendCameraText`/`removeCameraText`/`cameraTextPresent`（导出可测）。独立词正则 `(^|分隔符)词(?=$|分隔符)`——避免单字选项误伤长词（"中"不误配"半身/中景"、"远"不误配"远景"）；remove 删最后出现、开头残留分隔符自动清理。**坑**：新增镜头选项时注意与既有选项/用户词的字串包含关系。
+- **接入点**：① 生图页/视频页提示词区块正下方（`<CameraModule value={prompt} onChange={setPrompt} />`）；② 画布生成节点面板 `canvas-node-prompt-panel.tsx`（仅 image/video 节点显示，`theme` 适配画布明暗、`showTitle={false}` 紧凑）；③ 生成配置节点 `CanvasConfigComposer`（编辑器下方，`value/onChange` 受控，点击后失焦触发 useEffect tokens 重建显示）。
+- **画布提示词优化**（`hooks/use-prompt-optimizer.ts`，新增）：与生图/视频页 optimizePrompt 同源逻辑（textModel 优先、`requestImageQuestion` 流式回填、isAiConfigReady 校验+openConfigDialog 引导），供画布面板与 Composer 复用。画布面板 `updatePrompt` 语义沿用：`isEditingExistingContent` 时优化结果只更新本地 prompt，提交才写回 metadata。
+- **Composer 优化保留 @ 引用**：system prompt 明确要求原样保留 `@[node:xxx]` 令牌（hook 支持 `systemPrompt` 自定义参数），回填后 `parseComposerTokens` 自动还原引用 chips；模型删改令牌会导致对应引用丢失（可接受，用户可重新 @ 引用）。
+- **坑**：① 提示词优化整体覆盖输入框文本（含已插入镜头文字）——与生图/视频页行为一致，镜头按钮高亮自动随文本消失；② Composer 编辑器有焦点时 value 变化跳过 DOM 重建（既有机制），点击镜头/优化按钮会先失焦再重建，文本正常显示。
+
 
 ## 4. 常用命令
 
@@ -159,7 +169,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 - `docs/content/docs/progress/todo.mdx`：画布插件稳定性、图像/视频/音频渠道兼容性
 - `docs/content/docs/progress/pending-test.mdx`：Agnes 中国站（`api.agnes-ai.cn`）视频生成实测（平台维护中）、参考图托管链路、OSS 配置
-- 用户当前重点：Agnes 视频参考图（公网 URL 托管）与多站点适配
+- 用户当前重点：画布交互体验（框选/连线/指针）、更新下载体验（暂停/断点续传）、窗口与主题适配
 
 ## 7. 用户偏好
 
@@ -167,5 +177,6 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - 直接修复确认的 bug（不要只报告）；低风险问题修完一起说
 - 每次功能修复完成后用户通常要求发版本 + 推送源码和安装包 + 本地留存
 - **每次发布新版本都要更新交接文档**：版本号、vX.Y.Z 变更要点与坑（见第 5 节发版流程第 1 步）
+- **更新升级必须保留用户数据**：画布、生图/视频工作台数据、渠道配置等一律不得因升级删除（NSIS 宏 + userData 保障见 3.14）
 - 遵循 `AGENTS.md`（最小改动、不重构、文档规范、不执行编译除非要求）
 - 重要外部信息：Agnes 平台中国站 `platform.agnes-ai.cn`（密钥页 `/settings/apiKeys`）、官方文档 `www.agnes-ai.cn/zh-Hans/docs/agnes-video-v20`（Mintlify，支持 `.md` 后缀抓取）

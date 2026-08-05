@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Modal } from "antd";
 import { Maximize2, RotateCcw } from "lucide-react";
 
@@ -8,7 +8,8 @@ import type { CanvasNodeData } from "@/types/canvas";
 
 /**
  * 图片详情预览：双击/工具栏/侧栏放大预览入口共用。
- * 鼠标滚轮直接放大缩小（0.2x–5x），底部显示缩放比例与重置按钮。
+ * 鼠标滚轮直接放大缩小（0.2x–5x），放大后可按住拖动查看（scale > 1 生效），
+ * 底部显示缩放比例与重置按钮。
  */
 
 type CanvasImagePreviewModalProps = {
@@ -23,14 +24,47 @@ const MAX_SCALE = 5;
 export function CanvasImagePreviewModal({ node, open, onClose }: CanvasImagePreviewModalProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [scale, setScale] = useState(1);
+    const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+    const [dragging, setDragging] = useState(false);
+    const dragRef = useRef<{ startX: number; startY: number; offsetX: number; offsetY: number } | null>(null);
 
     useEffect(() => {
-        if (open) setScale(1);
+        if (open) {
+            setScale(1);
+            setDragOffset({ x: 0, y: 0 });
+        }
     }, [node?.id, open]);
 
     const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
         event.preventDefault();
         setScale((current) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, current * (event.deltaY < 0 ? 1.1 : 0.9))));
+    };
+
+    // 放大（scale > 1）后按住图片拖动平移查看（按钮区域不参与拖动）
+    const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+        if (scale <= 1) return;
+        if (event.target instanceof Element && event.target.closest("button")) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        dragRef.current = { startX: event.clientX, startY: event.clientY, offsetX: dragOffset.x, offsetY: dragOffset.y };
+        setDragging(true);
+    };
+    const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+        if (!dragRef.current) return;
+        setDragOffset({
+            x: dragRef.current.offsetX + (event.clientX - dragRef.current.startX),
+            y: dragRef.current.offsetY + (event.clientY - dragRef.current.startY),
+        });
+    };
+    const endDrag = () => {
+        if (!dragRef.current) return;
+        dragRef.current = null;
+        setDragging(false);
+    };
+
+    const resetView = () => {
+        setScale(1);
+        setDragOffset({ x: 0, y: 0 });
     };
 
     return (
@@ -44,12 +78,20 @@ export function CanvasImagePreviewModal({ node, open, onClose }: CanvasImagePrev
             styles={{ body: { padding: 0, display: "flex", justifyContent: "center", alignItems: "center", maxHeight: "80vh", overflow: "hidden" } }}
         >
             {node?.metadata?.content ? (
-                <div className="relative" onWheel={handleWheel}>
+                <div
+                    className="relative"
+                    onWheel={handleWheel}
+                    onPointerDown={handlePointerDown}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={endDrag}
+                    onPointerCancel={endDrag}
+                    style={{ cursor: scale > 1 ? (dragging ? "grabbing" : "grab") : "default", touchAction: "none" }}
+                >
                     <img
                         src={node.metadata.content}
                         alt={node.title || "图片"}
                         draggable={false}
-                        style={{ maxWidth: "100%", maxHeight: "80vh", objectFit: "contain", transform: `scale(${scale})`, transformOrigin: "center center", transition: "transform 80ms ease-out", display: "block" }}
+                        style={{ maxWidth: "100%", maxHeight: "80vh", objectFit: "contain", transform: `translate(${dragOffset.x}px, ${dragOffset.y}px) scale(${scale})`, transformOrigin: "center center", transition: dragging ? "none" : "transform 80ms ease-out", display: "block" }}
                     />
                     <div
                         className="absolute bottom-2 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs shadow-md"
@@ -58,9 +100,9 @@ export function CanvasImagePreviewModal({ node, open, onClose }: CanvasImagePrev
                         <span className="min-w-14 text-center">{Math.round(scale * 100)}%</span>
                         <button
                             type="button"
-                            title="重置缩放"
+                            title="重置缩放与位置"
                             className="inline-flex size-6 cursor-pointer items-center justify-center rounded-full transition-colors hover:opacity-70"
-                            onClick={() => setScale(1)}
+                            onClick={resetView}
                         >
                             <RotateCcw className="size-3.5" />
                         </button>

@@ -301,6 +301,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ nodes, onInsert, onSaveN
     const removeAsset = useAssetStore((state) => state.removeAsset);
     const [keyword, setKeyword] = useState("");
     const [tagFilter, setTagFilter] = useState<string>("all");
+    const [typeFilter, setTypeFilter] = useState<AssetKind | "all">("all");
     const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
     const [uploading, setUploading] = useState(false);
     const [canvasPickerOpen, setCanvasPickerOpen] = useState(false);
@@ -318,12 +319,13 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ nodes, onInsert, onSaveN
 
     const filtered = useMemo(() => {
         const query = keyword.trim().toLowerCase();
-        return assets.filter((asset) => (tagFilter === "all" || (asset.tags || []).includes(tagFilter)) && (!query || [asset.title, ...(asset.tags || [])].join(" ").toLowerCase().includes(query)));
-    }, [assets, keyword, tagFilter]);
+        return assets.filter((asset) => (typeFilter === "all" || asset.kind === typeFilter) && (tagFilter === "all" || (asset.tags || []).includes(tagFilter)) && (!query || [asset.title, ...(asset.tags || [])].join(" ").toLowerCase().includes(query)));
+    }, [assets, keyword, tagFilter, typeFilter]);
 
     const groups = useMemo(() => ASSET_GROUPS.map((group) => ({ ...group, items: filtered.filter((asset) => asset.kind === group.kind) })).filter((group) => group.items.length > 0), [filtered]);
 
-    const handleFiles = async (fileList: FileList | null) => {        const files = Array.from(fileList || []);
+    const handleFiles = async (fileList: FileList | null) => {
+        const files = Array.from(fileList || []);
         if (!files.length) return;
         setUploading(true);
         const hide = message.loading("正在添加资产…", 0);
@@ -381,6 +383,25 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ nodes, onInsert, onSaveN
                     </button>
                 </Dropdown>
                 <input ref={fileInputRef} type="file" accept="image/*,video/*,audio/*" multiple className="hidden" onChange={(e) => void handleFiles(e.target.files)} />
+            </div>
+            <div className="flex flex-wrap gap-1.5 px-3 pb-2">
+                {(["all", "image", "video", "text", "audio"] as const).map((kind) => {
+                    const label = kind === "all" ? "全部" : kind === "image" ? "图片" : kind === "video" ? "视频" : kind === "text" ? "文本" : "音频";
+                    return (
+                        <button
+                            key={kind}
+                            type="button"
+                            onClick={() => setTypeFilter(kind)}
+                            className={cn(
+                                "rounded-full px-2.5 py-0.5 text-xs font-medium transition",
+                                typeFilter === kind ? "bg-stone-900 text-stone-50 dark:bg-stone-100 dark:text-stone-950" : "text-stone-500 hover:bg-black/5 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-white/10 dark:hover:text-stone-100",
+                            )}
+                            style={typeFilter === kind ? undefined : { color: theme.node.text }}
+                        >
+                            {label}
+                        </button>
+                    );
+                })}
             </div>
             {allTags.length ? (
                 <div className="flex flex-wrap gap-1.5 px-3 pb-2">

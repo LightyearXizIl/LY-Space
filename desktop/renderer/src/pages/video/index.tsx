@@ -759,15 +759,16 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog, cam
 
     return (
         <>
-            <label className="col-span-2 block min-w-0 sm:col-span-1">
-                <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">模型</span>
-                <div className="flex items-center gap-2">
-                    <div className="min-w-0 flex-1">
-                        <ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} />
-                    </div>
-                    <CameraTrigger value={cameraValue} onChange={onCameraChange} />
+            <div className="col-span-2 grid min-w-0 grid-cols-2 gap-3 sm:col-span-1">
+                <div className="min-w-0">
+                    <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">模型</span>
+                    <ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} />
                 </div>
-            </label>
+                <div className="min-w-0">
+                    <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">镜头</span>
+                    <CameraTrigger value={cameraValue} onChange={onCameraChange} buttonClassName="!w-full" />
+                </div>
+            </div>
             <div className="col-span-2">
                 <VideoSettingsPanel config={config} model={model} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
             </div>

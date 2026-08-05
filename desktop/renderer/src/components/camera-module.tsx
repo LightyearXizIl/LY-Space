@@ -111,36 +111,38 @@ export function CameraModule({ value, onChange, theme, showTitle = true, classNa
             <div className="space-y-1.5">
                 {CAMERA_GROUPS.map((group) => {
                     return (
-                        <div key={group.key} className="flex flex-wrap items-center gap-1.5">
-                            <span className="w-8 shrink-0 text-xs font-medium" style={theme ? { color: theme.node.muted } : undefined}>
+                        <div key={group.key} className="flex gap-1.5">
+                            <span className="w-8 shrink-0 pt-0.5 text-xs font-medium" style={theme ? { color: theme.node.muted } : undefined}>
                                 {group.label}
                             </span>
-                            {group.options.map((option) => {
-                                const active = isActive(group, option);
-                                return (
-                                    <button
-                                        key={option}
-                                        type="button"
-                                        className={`rounded-md border px-2.5 py-1 text-xs leading-4 transition-colors ${
-                                            theme
-                                                ? ""
-                                                : active
-                                                  ? "border-stone-900 bg-stone-100 text-stone-900 dark:border-stone-100 dark:bg-stone-800 dark:text-stone-100"
-                                                  : "border-stone-300 bg-white/70 text-stone-600 hover:border-stone-400 hover:text-stone-900 dark:border-stone-700 dark:bg-stone-900/70 dark:text-stone-400 dark:hover:border-stone-600 dark:hover:text-stone-200"
-                                        }`}
-                                        style={
-                                            theme
-                                                ? active
-                                                    ? { background: theme.toolbar.activeBg, borderColor: theme.node.activeStroke, color: theme.toolbar.activeText }
-                                                    : { background: "transparent", borderColor: theme.node.stroke, color: theme.node.text }
-                                                : undefined
-                                        }
-                                        onClick={() => toggleOption(group, option)}
-                                    >
-                                        {option}
-                                    </button>
-                                );
-                            })}
+                            <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+                                {group.options.map((option) => {
+                                    const active = isActive(group, option);
+                                    return (
+                                        <button
+                                            key={option}
+                                            type="button"
+                                            className={`rounded-md border px-2.5 py-1 text-xs leading-4 transition-colors ${
+                                                theme
+                                                    ? ""
+                                                    : active
+                                                      ? "border-stone-900 bg-stone-100 text-stone-900 dark:border-stone-100 dark:bg-stone-800 dark:text-stone-100"
+                                                      : "border-stone-300 bg-white/70 text-stone-600 hover:border-stone-400 hover:text-stone-900 dark:border-stone-700 dark:bg-stone-900/70 dark:text-stone-400 dark:hover:border-stone-600 dark:hover:text-stone-200"
+                                            }`}
+                                            style={
+                                                theme
+                                                    ? active
+                                                        ? { background: theme.toolbar.activeBg, borderColor: theme.node.activeStroke, color: theme.toolbar.activeText }
+                                                        : { background: "transparent", borderColor: theme.node.stroke, color: theme.node.text }
+                                                    : undefined
+                                            }
+                                            onClick={() => toggleOption(group, option)}
+                                        >
+                                            {option}
+                                        </button>
+                                    );
+                                })}
+                            </div>
                         </div>
                     );
                 })}

@@ -16,7 +16,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.4.0（`VERSION` 文件，tag `v0.4.0`）
+- **当前版本**：v0.4.1（`VERSION` 文件，tag `v0.4.1`）
 
 ## 2. 数据存储
 
@@ -155,6 +155,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **图片预览滚轮缩放**：新组件 `CanvasImagePreviewModal`（原内联 Modal 替换），滚轮直接缩放 0.2x–5x（±10%/步），底部悬浮条显示比例 + 重置 + 放大按钮，打开/切换节点重置。
 - **资产侧栏**：`ASSET_GROUPS` 加音频分组；"添加"按钮改 Dropdown：本地上传（accept 加 `audio/*`，handleFiles 加 audio 分支）/ **从画布添加**（Modal 列出有内容的图片/视频/音频/文本节点，调 `saveNodeAsset`，经 `onSaveNodeAsset` prop 从 project.tsx 传入）/ **新增文本**（Modal TextArea → `addAsset({kind:"text"})`，标题取前 24 字）。
 - **快捷键提示更新**（canvas-zoom-controls + canvas-top-bar 两处）：空格/中键平移（空格即抓手）、Alt+左键拖动复制、右键节点=工具栏、空白处右键=添加节点、双击创建条目移除。
+- **v0.4.1 修正**：① `toolbarNode` 移除 `|| singleSelectedNodeId` 单选回退（v0.4.0 只改触发点漏删此处，选中节点仍会显示工具栏）——现在仅右键节点触发；② 镜头弹层组行改"标签固定列（w-8）+ 按钮独立 flex-wrap 换行区"，换行不再越过标题列；③ 资产侧栏搜索框下新增类型筛选（全部/图片/视频/文本/音频，`typeFilter` state，与标签筛选/搜索共存）；④ 生图/视频页设置区模型行改 `grid-cols-2` 左右分列（左「模型」+下拉、右「镜头」标题+按钮，两标题同高，移动端 Drawer 复用）；⑤ 图片预览 Modal 放大后**可按住拖动平移**（scale>1 生效：pointer capture + dragOffset，`translate+scale` 变换，`dragging` state 控制 transition 与光标，按钮区域不参与拖动，重置同时清位置；打开/切节点重置）。
 
 
 ## 4. 常用命令

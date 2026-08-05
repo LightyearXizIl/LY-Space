@@ -16,7 +16,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.3.6（`VERSION` 文件，tag `v0.3.6`）
+- **当前版本**：v0.3.7（`VERSION` 文件，tag `v0.3.7`）
 
 ## 2. 数据存储
 
@@ -105,6 +105,18 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **托盘「关闭」= flush 后退出**：菜单「关闭」发送 `lyspace:flush-persistence` → 渲染进程落盘 → `persistence-flushed` → `allowWindowClose=true` → `mainWindow.close()` 真退出（复用既有流程，数据安全）。
 - **second-instance**：`!mainWindow.isVisible()` 时先 `show()` 再 focus（窗口隐藏时再次启动实例恢复显示）。
 - **坑**：① `tray` 必须是模块级引用（局部变量会被 GC 导致图标消失）；② 隐藏 ≠ 退出，不要再在 close 里发 flush（托盘关闭才走 flush 流程）；③ `closingTimer` 10 秒等待警告已随旧 close 流程移除。
+
+### 3.12 v0.3.7 新建渠道草稿化 + 默认渠道 OpenAI
+
+- **新建渠道草稿化**（`app-config-modal.tsx`）：点「新增渠道」只创建临时草稿（`editingDraft` state + `editingChannelId`）打开编辑抽屉，**不写入 channels**——不点保存直接关闭即丢弃，重启后无残留；`saveChannel` 按 id 是否已存在区分「新增（push）/编辑（替换）」，保存成功才持久化并清草稿。
+- **默认渠道 OpenAI**（`use-config-store.ts` `defaultConfig`）：baseUrl/apiFormat 改 `OPENAI_BASE_URL`/`"openai"`，`channels[0]` 改为 OpenAI 渠道（纯 OpenAI 模型：gpt-image-2/gpt-image-2-vip/nano-banana-2/nano-banana-fast/gpt-5.5/gpt-5.4，去掉 gemini）。**不包含任何 key**：全部 apiKey 留空，用户自行填写（全代码无硬编码密钥）。
+- **坑**：① `defaultConfig` 仅影响新安装/重置配置的用户，已装用户持久化配置不受影响；② `GRSAI_DEFAULT_MODELS` 保留（`services/api/image.ts:1167` grsai 格式模型列表仍依赖）；③ `default::gpt-image-2`/`default::gpt-5.5` 默认模型引用依赖 default 渠道含这两个模型名，改模型列表时别删。
+
+### 3.13 v0.3.7 画布左键框选
+
+- **左键空白处 = 框选**（`infinite-canvas.tsx` `handlePointerDown` + `project.tsx` `handleCanvasMouseDown`）：普通左键按住空白拖动出现框选矩形并选中相交节点；点击空白（无拖动）= 取消选择；Shift+左键 = 追加框选；Ctrl/⌘+左键同样框选（兼容旧习惯）。
+- **平移改为中键 或 空格+左键**：原「左键空白=平移」让位给框选；原「空格+左键只 preventDefault 的占位分支」顺带修复为真正平移。
+- **坑**：① 节点/连线上的左键行为不受影响（`isBackgroundClick` 隔离）；② `handleCanvasMouseDown` 的 ctrl/meta 限制已移除——若以后要恢复「Ctrl 才框选」需同时改两处；③ 框选路径复用 `selectionBoxRef` + rAF 合并（性能优化后每帧最多一次相交计算）。
 
 ### 3.8 缩略图管线与提示词虚拟滚动（v0.3.5）
 

@@ -102,17 +102,25 @@ export const GRSAI_DEFAULT_MODELS: ChannelModel[] = [
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
-    baseUrl: GRSAI_DOMESTIC_BASE_URL,
+    baseUrl: OPENAI_BASE_URL,
     apiKey: "",
-    apiFormat: "grsai",
+    apiFormat: "openai",
+    // 默认渠道 OpenAI：不包含任何 key（apiKey 留空），由用户自行填写
     channels: [
         {
             id: "default",
-            name: "GRS AI",
-            baseUrl: GRSAI_DOMESTIC_BASE_URL,
+            name: "OpenAI",
+            baseUrl: OPENAI_BASE_URL,
             apiKey: "",
-            apiFormat: "grsai",
-            models: GRSAI_DEFAULT_MODELS,
+            apiFormat: "openai",
+            models: [
+                { name: "gpt-image-2", capability: "image" },
+                { name: "gpt-image-2-vip", capability: "image" },
+                { name: "nano-banana-2", capability: "image" },
+                { name: "nano-banana-fast", capability: "image" },
+                { name: "gpt-5.5", capability: "text" },
+                { name: "gpt-5.4", capability: "text" },
+            ],
         },
     ],
     model: "default::gpt-image-2",

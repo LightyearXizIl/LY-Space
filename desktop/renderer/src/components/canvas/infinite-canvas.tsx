@@ -102,14 +102,16 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
         if (target?.closest("[data-connection-create-menu]")) return;
         const isBackgroundClick = !target?.closest("[data-node-id],[data-connection-id]");
 
-        if (event.button === 0 && (event.ctrlKey || event.metaKey) && isBackgroundClick) {
+        // 左键空白处：框选节点（Ctrl/⌘+左键同样走框选，兼容旧习惯）
+        if (event.button === 0 && isBackgroundClick && !isSpacePressed) {
             event.preventDefault();
             event.currentTarget.setPointerCapture(event.pointerId);
             onCanvasMouseDown?.(event);
             return;
         }
 
-        if (event.button === 1 || (event.button === 0 && !isSpacePressed && isBackgroundClick)) {
+        // 中键 或 空格+左键：平移画布
+        if (event.button === 1 || (event.button === 0 && isSpacePressed && isBackgroundClick)) {
             event.preventDefault();
             event.currentTarget.setPointerCapture(event.pointerId);
             panState.current = {
@@ -122,10 +124,6 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
             };
             document.body.style.cursor = "grabbing";
             return;
-        }
-
-        if (event.button === 0 && isSpacePressed && isBackgroundClick) {
-            event.preventDefault();
         }
     };
 

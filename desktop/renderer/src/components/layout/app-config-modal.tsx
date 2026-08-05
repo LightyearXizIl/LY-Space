@@ -58,6 +58,8 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const configInputRef = useRef<HTMLInputElement>(null);
     const [activeTab, setActiveTab] = useState<ConfigTabKey>(initialTab);
     const [editingChannelId, setEditingChannelId] = useState("");
+    // 新建渠道草稿：不点保存不写入 channels（点「新增渠道」只打开编辑抽屉，关闭/取消即丢弃）
+    const [editingDraft, setEditingDraft] = useState<ModelChannel | null>(null);
     const [testingWebdav, setTestingWebdav] = useState(false);
     const [syncingWebdav, setSyncingWebdav] = useState(false);
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
@@ -81,7 +83,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const webdavDirectoryDraft = useDraftInput(webdav.directory);
     const webdavUsernameDraft = useDraftInput(webdav.username);
     const webdavPasswordDraft = useDraftInput(webdav.password);
-    const editingChannel = config.channels.find((channel) => channel.id === editingChannelId) || null;
+    const editingChannel = config.channels.find((channel) => channel.id === editingChannelId) || editingDraft;
     useEffect(() => setActiveTab(initialTab), [initialTab]);
     useEffect(() => {
         if (!window.lySpaceDesktop) return;
@@ -152,7 +154,8 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
 
     const addChannel = () => {
         const channel = createModelChannel({ name: `渠道 ${config.channels.length + 1}` });
-        updateChannels([...config.channels, channel]);
+        // 只打开草稿编辑，保存（saveChannel）才写入 channels 并持久化
+        setEditingDraft(channel);
         setEditingChannelId(channel.id);
     };
 
@@ -165,7 +168,10 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     };
 
     const saveChannel = (channel: ModelChannel) => {
-        updateChannels(config.channels.map((item) => (item.id === channel.id ? channel : item)));
+        // 新建渠道（id 不在列表）才 push；编辑渠道替换；保存后清草稿
+        const exists = config.channels.some((item) => item.id === channel.id);
+        updateChannels(exists ? config.channels.map((item) => (item.id === channel.id ? channel : item)) : [...config.channels, channel]);
+        setEditingDraft(null);
     };
 
     const testWebdav = async () => {
@@ -261,7 +267,10 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                                 </div>
                                             </div>
                                             <div className="flex shrink-0 gap-2">
-                                                <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => setEditingChannelId(channel.id)}>
+                                                <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => {
+                                                    setEditingDraft(null);
+                                                    setEditingChannelId(channel.id);
+                                                }}>
                                                     编辑
                                                 </Button>
                                                 <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={() => deleteChannel(channel.id)} />
@@ -406,7 +415,10 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                     </Button>
                 </div>
             ) : null}
-            <ChannelEditorDrawer open={Boolean(editingChannel)} channel={editingChannel} onSave={saveChannel} onClose={() => setEditingChannelId("")} />
+            <ChannelEditorDrawer open={Boolean(editingChannel)} channel={editingChannel} onSave={saveChannel} onClose={() => {
+                setEditingChannelId("");
+                setEditingDraft(null);
+            }} />
         </>
     );
 }

@@ -1052,13 +1052,7 @@ function InfiniteCanvasPage() {
             if (pendingConnectionCreateRef.current) cancelPendingConnectionCreate();
             if (event.button !== 0) return;
 
-            if (!event.ctrlKey && !event.metaKey) {
-                setSelectionBox(null);
-                setSelectedNodeIds(new Set());
-                setSelectedConnectionId(null);
-                return;
-            }
-
+            // 左键空白处直接启动框选；点击空白（无拖动）时 0 尺寸框选自然清空选择 = 取消选择
             const world = screenToCanvas(event.clientX, event.clientY);
             const nextSelectionBox = {
                 startWorldX: world.x,

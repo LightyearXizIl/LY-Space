@@ -16,7 +16,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.3.7（`VERSION` 文件，tag `v0.3.7`）
+- **当前版本**：v0.3.8（`VERSION` 文件，tag `v0.3.8`）
 
 ## 2. 数据存储
 
@@ -117,6 +117,15 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **左键空白处 = 框选**（`infinite-canvas.tsx` `handlePointerDown` + `project.tsx` `handleCanvasMouseDown`）：普通左键按住空白拖动出现框选矩形并选中相交节点；点击空白（无拖动）= 取消选择；Shift+左键 = 追加框选；Ctrl/⌘+左键同样框选（兼容旧习惯）。
 - **平移改为中键 或 空格+左键**：原「左键空白=平移」让位给框选；原「空格+左键只 preventDefault 的占位分支」顺带修复为真正平移。
 - **坑**：① 节点/连线上的左键行为不受影响（`isBackgroundClick` 隔离）；② `handleCanvasMouseDown` 的 ctrl/meta 限制已移除——若以后要恢复「Ctrl 才框选」需同时改两处；③ 框选路径复用 `selectionBoxRef` + rAF 合并（性能优化后每帧最多一次相交计算）。
+
+### 3.14 v0.3.8 画布指针/选择/连线优化 + 标题栏主题 + 数据保留保障
+
+- **画布空闲指针为系统默认**（`infinite-canvas.tsx`）：容器去掉 `cursor-grab`，空闲时系统默认箭头；平移中仍 `grabbing`（body style）。
+- **节点编辑框/上方工具栏仅选中时显示**（`project.tsx`）：`handleCanvasMouseDown` 启动框选时补 `setDialogNodeId(null)` + `setToolbarNodeId(null)`（此前框选空白只清选择，面板/工具栏残留）；`deselectCanvas` 与 `keepNodeToolbar`（要求已选中）逻辑不变。
+- **连线拖拽改回同步更新**（`project.tsx`）：移除 `connectionDragRef`/`connectionFrameRef` rAF 合并，mousemove 直接 `setMouseWorld` + `setConnectionTargetNodeId`（连线是单条低频交互，同步最跟手；框选的 rAF 合并保留）。`connectNodes` 补反馈：连自己提示「不能连接到自身」、重复连接提示「该连接已存在」。
+- **窗口标题栏跟随应用主题**：主进程 `nativeTheme.themeSource`（IPC `lyspace:set-native-theme`，preload `setNativeTheme`）；`AppProviders` 主题变化时同步调用——Windows 标题栏/原生控件明暗随应用内浅/暗切换。
+- **关于页更新区**：核对 stone + `dark:` 变体已全适配，无硬编码颜色。
+- **更新不删用户数据（保障确认）**：① NSIS `customRemoveFiles` 宏保护安装目录 `Data cache`/`Result`（升级卸载时复制到临时再移回），自研静默安装（`/S /D=`）走同一 NSIS 脚本同样受保护；② 画布/渠道/会话等 userData（IndexedDB/localStorage，`%APPDATA%\LY Space`）不在安装目录天然保留；③ 升级前 `flush-persistence` 落盘。
 
 ### 3.8 缩略图管线与提示词虚拟滚动（v0.3.5）
 

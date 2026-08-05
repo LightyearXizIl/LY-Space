@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net: electronNet, protocol, shell, Tray } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, net: electronNet, protocol, shell, Tray } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -690,6 +690,10 @@ app.whenReady().then(async () => {
     registerAppProtocol();
     installApplicationMenu();
     configureAutoUpdater();
+    ipcMain.handle("lyspace:set-native-theme", (_event, source) => {
+        // 窗口标题栏等原生 UI 明暗跟随应用主题
+        nativeTheme.themeSource = source === "dark" ? "dark" : "light";
+    });
     ipcMain.handle("lyspace:update-state", () => updateState);
     ipcMain.handle("lyspace:check-update", () => checkForUpdate());
     ipcMain.handle("lyspace:download-update", () => downloadUpdate());

@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld("lySpaceDesktop", {
     downloadUpdate: () => ipcRenderer.invoke("lyspace:download-update"),
     pauseUpdateDownload: () => ipcRenderer.invoke("lyspace:pause-update-download"),
     installDownloadedUpdate: () => ipcRenderer.invoke("lyspace:install-downloaded-update"),
+    setNativeTheme: (source) => ipcRenderer.invoke("lyspace:set-native-theme", source),
     onUpdateStateChanged: (listener) => {
         const handler = (_event, state) => listener(state);
         ipcRenderer.on("lyspace:update-state-changed", handler);

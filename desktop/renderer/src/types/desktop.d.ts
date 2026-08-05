@@ -22,6 +22,7 @@ declare global {
             downloadUpdate: () => Promise<AppUpdateState>;
             pauseUpdateDownload: () => Promise<AppUpdateState>;
             installDownloadedUpdate: () => Promise<void>;
+            setNativeTheme: (source: "dark" | "light") => Promise<void>;
             onUpdateStateChanged: (listener: (state: AppUpdateState) => void) => () => void;
             getStorageSettings: () => Promise<StorageSettings>;
             chooseStorageDirectory: (kind: "result" | "cache") => Promise<string>;

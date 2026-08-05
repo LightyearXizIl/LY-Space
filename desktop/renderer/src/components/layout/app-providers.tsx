@@ -26,6 +26,8 @@ export function AppProviders({ children }: { children: ReactNode }) {
     useEffect(() => {
         document.documentElement.classList.toggle("dark", dark);
         document.documentElement.style.colorScheme = theme;
+        // 窗口标题栏等原生 UI 明暗跟随应用主题
+        void window.lySpaceDesktop?.setNativeTheme(theme);
     }, [dark, theme]);
 
     return (

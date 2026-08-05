@@ -249,8 +249,6 @@ function InfiniteCanvasPage() {
     const selectionBoxRef = useRef(selectionBox);
     const selectionDragRef = useRef<{ clientX: number; clientY: number; buttons: number } | null>(null);
     const selectionFrameRef = useRef<number | null>(null);
-    const connectionDragRef = useRef<{ clientX: number; clientY: number } | null>(null);
-    const connectionFrameRef = useRef<number | null>(null);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
 
@@ -509,7 +507,10 @@ function InfiniteCanvasPage() {
 
     const connectNodes = useCallback(
         (current: ConnectionHandle, targetNodeId: string) => {
-            if (current.nodeId === targetNodeId) return;
+            if (current.nodeId === targetNodeId) {
+                message.warning("不能连接到自身");
+                return;
+            }
 
             const connection = normalizeConnection(current.nodeId, targetNodeId, nodesRef.current, current.handleType);
             if (!connection) {
@@ -518,7 +519,9 @@ function InfiniteCanvasPage() {
             }
             const { fromNodeId, toNodeId } = connection;
             const exists = connectionsRef.current.some((conn) => conn.fromNodeId === fromNodeId && conn.toNodeId === toNodeId);
-            if (!exists) {
+            if (exists) {
+                message.warning("该连接已存在");
+            } else {
                 setConnections((prev) => [...prev, { id: `conn-${Date.now()}`, fromNodeId, toNodeId }]);
             }
             setContextMenu(null);
@@ -1052,6 +1055,10 @@ function InfiniteCanvasPage() {
             if (pendingConnectionCreateRef.current) cancelPendingConnectionCreate();
             if (event.button !== 0) return;
 
+            // 左键空白处直接启动框选；同时收起节点编辑框与上方工具栏（仅选中时显示）
+            setDialogNodeId(null);
+            setToolbarNodeId(null);
+
             // 左键空白处直接启动框选；点击空白（无拖动）时 0 尺寸框选自然清空选择 = 取消选择
             const world = screenToCanvas(event.clientX, event.clientY);
             const nextSelectionBox = {
@@ -1233,19 +1240,11 @@ function InfiniteCanvasPage() {
             }
 
             if (connectingParamsRef.current && !pendingConnectionCreateRef.current) {
-                // 连线拖拽:rAF 合并(每帧最多一次 setState)
-                connectionDragRef.current = { clientX: event.clientX, clientY: event.clientY };
-                if (connectionFrameRef.current) return;
-                connectionFrameRef.current = requestAnimationFrame(() => {
-                    connectionFrameRef.current = null;
-                    const latest = connectionDragRef.current;
-                    const params = connectingParamsRef.current;
-                    if (!latest || !params || pendingConnectionCreateRef.current) return;
-                    const dropTarget = getConnectionDropTarget(latest.clientX, latest.clientY, params);
-                    connectionTargetNodeIdRef.current = dropTarget.nodeId;
-                    setConnectionTargetNodeId(dropTarget.nodeId);
-                    setMouseWorld(screenToCanvas(latest.clientX, latest.clientY));
-                });
+                // 连线拖拽：同步更新（单条低频交互，直接更新最跟手）
+                const dropTarget = getConnectionDropTarget(event.clientX, event.clientY, connectingParamsRef.current);
+                connectionTargetNodeIdRef.current = dropTarget.nodeId;
+                setConnectionTargetNodeId(dropTarget.nodeId);
+                setMouseWorld(screenToCanvas(event.clientX, event.clientY));
             }
         },
         [finishNodeDrag, getConnectionDropTarget, screenToCanvas],

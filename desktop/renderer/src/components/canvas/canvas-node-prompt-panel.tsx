@@ -3,7 +3,7 @@ import { ArrowUp, LoaderCircle, Square, Wand2 } from "lucide-react";
 import { Button, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
-import { CameraModule } from "@/components/camera-module";
+import { CanvasCameraPopover } from "./canvas-camera-popover";
 import { usePromptOptimizer } from "@/hooks/use-prompt-optimizer";
 import { defaultConfig, resolveModelForCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -88,14 +88,12 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             />
 
             {mode === "image" || mode === "video" ? (
-                <>
-                    <CameraModule value={prompt} onChange={updatePrompt} theme={theme} showTitle={false} className="mt-2" />
-                    <div className="mt-1.5 flex items-center justify-end gap-1.5">
-                        <Tooltip title="优化提示词">
-                            <Button type="text" size="small" className="!h-6 !w-6" icon={<Wand2 className="size-4" />} loading={optimizing} onClick={() => void optimize()} />
-                        </Tooltip>
-                    </div>
-                </>
+                <div className="mt-1.5 flex items-center justify-end gap-1.5">
+                    <ModelPicker config={config} value={config.textModel || config.model} onChange={(model) => onConfigChange(node.id, { textModel: model })} capability="text" className="!h-6 !min-w-[7rem] !px-2 !text-xs" />
+                    <Tooltip title="优化提示词">
+                        <Button type="text" size="small" className="!h-6 !w-6" icon={<Wand2 className="size-4" />} loading={optimizing} onClick={() => void optimize()} />
+                    </Tooltip>
+                </div>
             ) : null}
 
             <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
@@ -112,11 +110,13 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                                 onMissingConfig={() => openConfigDialog(true)}
                                 onOpenChange={onImageSettingsOpenChange}
                             />
+                            <CanvasCameraPopover value={prompt} onChange={updatePrompt} buttonClassName="!h-10 !max-w-[110px] !justify-start !rounded-full !px-3" />
                         </>
                     ) : mode === "video" ? (
                         <>
                             <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="video" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
                             <CanvasVideoSettingsPopover config={config} buttonClassName="!h-10 !max-w-[170px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
+                            <CanvasCameraPopover value={prompt} onChange={updatePrompt} buttonClassName="!h-10 !max-w-[110px] !justify-start !rounded-full !px-3" />
                         </>
                     ) : mode === "audio" ? (
                         <>
@@ -163,6 +163,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
     return {
         ...globalConfig,
         model: resolveModelForCapability(globalConfig, node.metadata?.model, mode),
+        textModel: node.metadata?.textModel || globalConfig.textModel || defaultConfig.textModel,
         reasoningEffort: node.metadata?.reasoningEffort || globalConfig.reasoningEffort || defaultConfig.reasoningEffort,
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
         imageResolution: node.metadata?.imageResolution || globalConfig.imageResolution || defaultConfig.imageResolution,

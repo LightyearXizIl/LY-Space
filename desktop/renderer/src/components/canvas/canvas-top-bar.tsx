@@ -135,11 +135,14 @@ export const CanvasTopBar = memo(function CanvasTopBar({
             </div>
             <Modal title="快捷键" open={shortcutsOpen} onCancel={() => setShortcutsOpen(false)} footer={null} centered>
                 <div className="space-y-2 border-t pt-4 text-sm" style={{ borderColor: theme.node.stroke }}>
-                    <Shortcut keys={["拖动画布"]} value="平移视图" />
+                    <Shortcut keys={["空格 / 中键", "拖动"]} value="平移画布（空格按住即抓手）" />
                     <Shortcut keys={["滚轮"]} value="缩放画布" />
                     <Shortcut keys={["缩放滑杆"]} value="精确调整缩放" />
                     <Shortcut keys={["Ctrl / Cmd", "拖动"]} value="框选多个节点" />
                     <Shortcut keys={["Shift / Ctrl / Cmd", "点击"]} value="追加选择节点" />
+                    <Shortcut keys={["Alt", "左键拖动"]} value="复制节点（框选组同样生效）" />
+                    <Shortcut keys={["右键节点"]} value="节点工具栏（竖向）" />
+                    <Shortcut keys={["空白处右键"]} value="添加节点" />
                     <Shortcut keys={["Ctrl / Cmd", "A"]} value="全选节点" />
                     <Shortcut keys={["Ctrl / Cmd", "C / V"]} value="复制 / 粘贴节点，或粘贴剪切板文本/图片" />
                     <Shortcut keys={["Ctrl / Cmd", "Z"]} value="撤销" />

@@ -4,7 +4,7 @@ import { App, Button, Checkbox, Drawer, Dropdown, Empty, Image, Input, Modal, Ta
 import localforage from "localforage";
 import { saveAs } from "file-saver";
 
-import { CameraModule } from "@/components/camera-module";
+import { CameraTrigger } from "@/components/camera-trigger";
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
@@ -752,10 +752,6 @@ export default function ImagePage() {
                                 </div>
                             </div>
 
-                            <div>
-                                <CameraModule value={prompt} onChange={setPrompt} />
-                            </div>
-
                             <div className="min-w-0">
                                 <div className="mb-2 flex items-center justify-between gap-3">
                                     <span className="text-base font-semibold">参考图</span>
@@ -830,7 +826,7 @@ export default function ImagePage() {
                             </div>
 
                             <div className="hidden gap-4 sm:grid sm:grid-cols-2">
-                                <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                                <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} cameraValue={prompt} onCameraChange={setPrompt} />
                             </div>
                         </div>
 
@@ -912,7 +908,7 @@ export default function ImagePage() {
             />
             <Drawer title="参数" placement="bottom" size="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
                 <div className="grid grid-cols-2 gap-3 pb-4">
-                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
+                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} cameraValue={prompt} onCameraChange={setPrompt} />
                 </div>
             </Drawer>
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
@@ -924,14 +920,19 @@ export default function ImagePage() {
     );
 }
 
-function GenerationSettings({ config, model, updateConfig, openConfigDialog }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
+function GenerationSettings({ config, model, updateConfig, openConfigDialog, cameraValue, onCameraChange }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void; cameraValue: string; onCameraChange: (value: string) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
     return (
         <>
             <label className="col-span-2 block min-w-0 sm:col-span-1">
                 <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">模型</span>
-                <ModelPicker config={config} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(false)} />
+                <div className="flex items-center gap-2">
+                    <div className="min-w-0 flex-1">
+                        <ModelPicker config={config} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(false)} />
+                    </div>
+                    <CameraTrigger value={cameraValue} onChange={onCameraChange} />
+                </div>
             </label>
             <div className="col-span-2">
                 <ImageSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />

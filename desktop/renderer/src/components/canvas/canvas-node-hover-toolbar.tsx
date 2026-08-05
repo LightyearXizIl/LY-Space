@@ -37,6 +37,8 @@ type CanvasNodeHoverToolbarProps = {
     onToggleFreeResize: (node: CanvasNodeData) => void;
     onDelete: (node: CanvasNodeData) => void;
     extraTools?: CanvasNodeToolbarItem[];
+    /** 右键弹出位置（fixed 坐标）；不传时回退到节点上方悬浮定位 */
+    position?: { x: number; y: number } | null;
 };
 
 type ToolbarTool = {
@@ -75,6 +77,7 @@ export function CanvasNodeHoverToolbar({
     onToggleFreeResize,
     onDelete,
     extraTools = [],
+    position = null,
 }: CanvasNodeHoverToolbarProps) {
     const [quickImageToolIds, setQuickImageToolIds] = useState<ImageQuickToolId[]>(defaultImageQuickToolIds);
     const [showImageToolLabels, setShowImageToolLabels] = useState(true);
@@ -104,8 +107,10 @@ export function CanvasNodeHoverToolbar({
     if (!node) return null;
 
     const activeNode = node;
-    const left = viewport.x + (node.position.x + node.width / 2) * viewport.k;
-    const top = viewport.y + node.position.y * viewport.k - 14;
+    const isPositioned = Boolean(position);
+    // 右键弹出：fixed 定位在点击处（clamp 到视口）；否则回退节点上方悬浮
+    const left = isPositioned ? Math.max(8, Math.min(position!.x, window.innerWidth - 260)) : viewport.x + (node.position.x + node.width / 2) * viewport.k;
+    const top = isPositioned ? Math.max(8, Math.min(position!.y, window.innerHeight - 360)) : viewport.y + node.position.y * viewport.k - 14;
     const isImage = node.type === CanvasNodeType.Image;
     const isVideo = node.type === CanvasNodeType.Video;
     const isAudio = node.type === CanvasNodeType.Audio;
@@ -181,7 +186,11 @@ export function CanvasNodeHoverToolbar({
     return (
         <>
             <div
-                className="absolute z-[70] flex max-w-[calc(100vw-32px)] flex-wrap items-center justify-center gap-y-1 -translate-x-1/2 -translate-y-full overflow-visible rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
+                className={
+                    isPositioned
+                        ? "fixed z-[70] flex max-h-[340px] flex-col flex-wrap content-start gap-x-1 gap-y-0.5 overflow-y-auto rounded-[18px] border border-black/10 bg-white p-1.5 text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
+                        : "absolute z-[70] flex max-w-[calc(100vw-32px)] flex-wrap items-center justify-center gap-y-1 -translate-x-1/2 -translate-y-full overflow-visible rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
+                }
                 style={{ left, top }}
                 onMouseEnter={() => onKeep(node.id)}
                 onMouseLeave={() => {

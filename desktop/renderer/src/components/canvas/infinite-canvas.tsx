@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -11,13 +11,12 @@ type InfiniteCanvasProps = {
     onViewportChange: (viewport: ViewportTransform) => void;
     onCanvasMouseDown?: (event: React.PointerEvent<HTMLDivElement>) => void;
     onCanvasDeselect?: () => void;
-    onCanvasDoubleClick?: (event: React.MouseEvent<HTMLDivElement>) => void;
     onContextMenu?: (event: React.MouseEvent) => void;
     onDrop?: (event: React.DragEvent<HTMLDivElement>) => void;
     children: React.ReactNode;
 };
 
-export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines", onViewportChange, onCanvasMouseDown, onCanvasDeselect, onCanvasDoubleClick, onContextMenu, onDrop, children }: InfiniteCanvasProps) {
+export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines", onViewportChange, onCanvasMouseDown, onCanvasDeselect, onContextMenu, onDrop, children }: InfiniteCanvasProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const panState = useRef({
         isPanning: false,
@@ -31,7 +30,7 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
     const viewportRef = useRef(viewport);
     const frameRef = useRef<number | null>(null);
     const nextViewportRef = useRef<ViewportTransform | null>(null);
-    const [isSpacePressed, setIsSpacePressed] = useState(false);
+    const spacePressedRef = useRef(false);
 
     useEffect(() => {
         scaleRef.current = viewport.k;
@@ -49,11 +48,16 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
         const handleKeyDown = (event: KeyboardEvent) => {
             if (event.code !== "Space") return;
             if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
-            setIsSpacePressed(true);
+            if (event.target instanceof Element && event.target.closest("[contenteditable=true]")) return;
+            spacePressedRef.current = true;
+            // 空格按下立即变抓手（不再等鼠标点按）；配合鼠标左键才真正平移
+            document.body.style.cursor = "grab";
         };
 
         const handleKeyUp = (event: KeyboardEvent) => {
-            if (event.code === "Space") setIsSpacePressed(false);
+            if (event.code !== "Space") return;
+            spacePressedRef.current = false;
+            if (!panState.current.isPanning) document.body.style.cursor = "";
         };
 
         window.addEventListener("keydown", handleKeyDown);
@@ -61,6 +65,7 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
         return () => {
             window.removeEventListener("keydown", handleKeyDown);
             window.removeEventListener("keyup", handleKeyUp);
+            document.body.style.cursor = "";
         };
     }, []);
 
@@ -103,7 +108,7 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
         const isBackgroundClick = !target?.closest("[data-node-id],[data-connection-id]");
 
         // 左键空白处：框选节点（Ctrl/⌘+左键同样走框选，兼容旧习惯）
-        if (event.button === 0 && isBackgroundClick && !isSpacePressed) {
+        if (event.button === 0 && isBackgroundClick && !spacePressedRef.current) {
             event.preventDefault();
             event.currentTarget.setPointerCapture(event.pointerId);
             onCanvasMouseDown?.(event);
@@ -111,7 +116,7 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
         }
 
         // 中键 或 空格+左键：平移画布
-        if (event.button === 1 || (event.button === 0 && isSpacePressed && isBackgroundClick)) {
+        if (event.button === 1 || (event.button === 0 && spacePressedRef.current && isBackgroundClick)) {
             event.preventDefault();
             event.currentTarget.setPointerCapture(event.pointerId);
             panState.current = {
@@ -125,12 +130,6 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
             document.body.style.cursor = "grabbing";
             return;
         }
-    };
-
-    const handleDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
-        const target = event.target instanceof Element ? event.target : null;
-        if (target?.closest("[data-canvas-no-zoom],[data-node-id],[data-connection-id]")) return;
-        onCanvasDoubleClick?.(event);
     };
 
     useEffect(() => {
@@ -165,7 +164,8 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
                 onCanvasDeselect?.();
             }
             panState.current.isPanning = false;
-            document.body.style.cursor = "";
+            // 松左键时若空格仍按住，回到抓手；否则恢复默认
+            document.body.style.cursor = spacePressedRef.current ? "grab" : "";
         };
 
         window.addEventListener("pointermove", handlePointerMove);
@@ -196,7 +196,6 @@ export function InfiniteCanvas({ containerRef, viewport, backgroundMode = "lines
             className="relative h-full w-full select-none overflow-hidden"
             style={{ background: theme.canvas.background }}
             onPointerDown={handlePointerDown}
-            onDoubleClick={handleDoubleClick}
             onWheel={handleWheel}
             onContextMenu={onContextMenu}
             onDragOver={(event) => event.preventDefault()}

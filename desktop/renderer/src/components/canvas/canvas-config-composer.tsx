@@ -4,11 +4,12 @@ import { Button, Image, Tooltip } from "antd";
 import { FileText, Image as ImageIcon, Music2, Video, Wand2, X } from "lucide-react";
 
 import { CameraModule } from "@/components/camera-module";
+import { ModelPicker } from "@/components/model-picker";
 import { usePromptOptimizer } from "@/hooks/use-prompt-optimizer";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
-import type { CanvasGenerationMode } from "@/types/canvas";
+import type { CanvasGenerationMode, CanvasNodeMetadata } from "@/types/canvas";
 import type { NodeGenerationInput } from "./canvas-node-generation";
 
 type CanvasConfigComposerProps = {
@@ -18,6 +19,8 @@ type CanvasConfigComposerProps = {
     onClose: () => void;
     /** 生成模式（决定提示词优化文案），缺省按生图 */
     mode?: CanvasGenerationMode;
+    /** 把提示词优化选择的文本模型持久化到节点 metadata */
+    onConfigChange?: (patch: Partial<CanvasNodeMetadata>) => void;
 };
 
 type Token =
@@ -30,10 +33,11 @@ type MentionState = {
 
 export const CONFIG_REFERENCE_PATTERN = /@\[node:([^\]]+)\]/g;
 
-export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = "image" }: CanvasConfigComposerProps) {
+export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = "image", onConfigChange }: CanvasConfigComposerProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const globalConfig = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
+    const [textModel, setTextModel] = useState(globalConfig.textModel || globalConfig.model);
     const editorRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
     const [mention, setMention] = useState<MentionState | null>(null);
@@ -116,7 +120,7 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
     const optimizeKind = mode === "video" ? "video" : "image";
     const { optimizing, optimize } = usePromptOptimizer({
         kind: optimizeKind,
-        config: globalConfig,
+        config: { ...globalConfig, textModel },
         getText: () => value,
         setText: onChange,
         openConfigDialog: () => openConfigDialog(true),
@@ -194,6 +198,16 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
             </div>
             <CameraModule value={value} onChange={onChange} theme={theme} showTitle={false} className="mt-2" />
             <div className="mt-1.5 flex items-center justify-end gap-1.5">
+                <ModelPicker
+                    config={{ ...globalConfig, textModel }}
+                    value={textModel}
+                    onChange={(model) => {
+                        setTextModel(model);
+                        onConfigChange?.({ textModel: model });
+                    }}
+                    capability="text"
+                    className="!h-6 !min-w-[7rem] !px-2 !text-xs"
+                />
                 <Tooltip title="优化提示词">
                     <Button type="text" size="small" className="!h-6 !w-6" icon={<Wand2 className="size-4" />} loading={optimizing} onClick={() => void optimize()} />
                 </Tooltip>

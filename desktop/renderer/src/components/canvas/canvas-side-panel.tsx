@@ -1,7 +1,7 @@
 import { memo, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { App, Empty, Input, Popconfirm, Select, Spin, Tag } from "antd";
+import { App, Button, Dropdown, Empty, Input, Modal, Popconfirm, Select, Spin, Tag } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, Check, ChevronRight, Download, Eye, FileText, Image as ImageIcon, ListChecks, Music2, Plus, Search, Settings2, Square, Trash2, Type, Video } from "lucide-react";
+import { BookOpen, Check, ChevronRight, Download, Eye, FileText, Image as ImageIcon, ListChecks, Music2, Plus, Search, Settings2, Square, Trash2, Type, Upload, Video } from "lucide-react";
 import { motion } from "motion/react";
 
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
@@ -31,6 +31,8 @@ type Props = {
     onFocusNode: (nodeId: string) => void;
     onPreviewNode: (nodeId: string) => void;
     onInsertAsset: (payload: InsertAssetPayload) => void;
+    /** 从画布节点加入资产（图片/视频/音频/文本） */
+    onSaveNodeAsset?: (node: CanvasNodeData) => void;
 };
 
 const NODE_TYPE_ICON: Record<string, typeof Square> = {
@@ -49,7 +51,7 @@ const STATUS_COLOR: Record<string, string> = {
     idle: "transparent",
 };
 
-export const CanvasSidePanel = memo(function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, onInsertAsset }: Props) {
+export const CanvasSidePanel = memo(function CanvasSidePanel({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, onInsertAsset, onSaveNodeAsset }: Props) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [tab, setTab] = useState<PanelTab>("canvas");
     const width = useCanvasSidePanelStore((state) => state.width);
@@ -106,7 +108,7 @@ export const CanvasSidePanel = memo(function CanvasSidePanel({ nodes, selectedNo
                     {tab === "canvas" ? (
                         <CanvasNodesTab nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={onFocusNode} onPreviewNode={onPreviewNode} theme={theme} />
                     ) : tab === "assets" ? (
-                        <CanvasAssetsTab onInsert={onInsertAsset} theme={theme} />
+                        <CanvasAssetsTab nodes={nodes} onInsert={onInsertAsset} onSaveNodeAsset={onSaveNodeAsset} theme={theme} />
                     ) : (
                         <CanvasPromptsTab onInsert={onInsertAsset} theme={theme} />
                     )}
@@ -281,6 +283,7 @@ function CheckMark({ checked, theme }: { checked: boolean; theme: CanvasTheme })
 const ASSET_GROUPS: { kind: AssetKind; label: string; icon: typeof Square }[] = [
     { kind: "image", label: "图片", icon: ImageIcon },
     { kind: "video", label: "视频", icon: Video },
+    { kind: "audio", label: "音频", icon: Music2 },
     { kind: "text", label: "文本", icon: FileText },
 ];
 
@@ -291,7 +294,7 @@ function buildInsertPayload(asset: Asset): InsertAssetPayload {
     return { kind: "image", dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey, title: asset.title };
 }
 
-const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onInsert: (payload: InsertAssetPayload) => void; theme: CanvasTheme }) {
+const CanvasAssetsTab = memo(function CanvasAssetsTab({ nodes, onInsert, onSaveNodeAsset, theme }: { nodes: CanvasNodeData[]; onInsert: (payload: InsertAssetPayload) => void; onSaveNodeAsset?: (node: CanvasNodeData) => void; theme: CanvasTheme }) {
     const { message } = App.useApp();
     const assets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
@@ -300,7 +303,16 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
     const [tagFilter, setTagFilter] = useState<string>("all");
     const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
     const [uploading, setUploading] = useState(false);
+    const [canvasPickerOpen, setCanvasPickerOpen] = useState(false);
+    const [textDraftOpen, setTextDraftOpen] = useState(false);
+    const [textDraft, setTextDraft] = useState("");
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // 可存为资产的画布节点（图片/视频/音频/文本有内容）
+    const savableNodes = useMemo(
+        () => nodes.filter((node) => (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio || node.type === CanvasNodeType.Text) && Boolean(node.metadata?.content?.trim())),
+        [nodes],
+    );
 
     const allTags = useMemo(() => Array.from(new Set(assets.flatMap((asset) => asset.tags || []))).slice(0, 20), [assets]);
 
@@ -311,8 +323,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
 
     const groups = useMemo(() => ASSET_GROUPS.map((group) => ({ ...group, items: filtered.filter((asset) => asset.kind === group.kind) })).filter((group) => group.items.length > 0), [filtered]);
 
-    const handleFiles = async (fileList: FileList | null) => {
-        const files = Array.from(fileList || []);
+    const handleFiles = async (fileList: FileList | null) => {        const files = Array.from(fileList || []);
         if (!files.length) return;
         setUploading(true);
         const hide = message.loading("正在添加资产…", 0);
@@ -327,10 +338,14 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                     const media = await uploadMediaFile(file, "video");
                     addAsset({ kind: "video", title: file.name || "视频", coverUrl: "", tags: [], data: { url: media.url, storageKey: media.storageKey, width: media.width || 0, height: media.height || 0, bytes: media.bytes, mimeType: media.mimeType } });
                     added += 1;
+                } else if (file.type.startsWith("audio/")) {
+                    const media = await uploadMediaFile(file, "audio");
+                    addAsset({ kind: "audio", title: file.name || "音频", coverUrl: "", tags: [], data: { url: media.url, storageKey: media.storageKey, bytes: media.bytes, mimeType: media.mimeType, durationMs: media.durationMs || 0 } });
+                    added += 1;
                 }
             }
             if (added) message.success(`已添加 ${added} 个资产`);
-            else message.warning("仅支持图片或视频文件");
+            else message.warning("仅支持图片、视频或音频文件");
         } catch (error) {
             console.error(error);
             message.error("添加失败，请重试");
@@ -345,17 +360,27 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
         <div className="flex h-full flex-col">
             <div className="flex items-center gap-2 px-3 pb-2 pt-1">
                 <Input size="small" allowClear prefix={<Search className="size-3.5 text-stone-400" />} placeholder="搜索资产" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
-                <button
-                    type="button"
-                    disabled={uploading}
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold transition hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10"
-                    style={{ color: theme.node.text }}
+                <Dropdown
+                    trigger={["click"]}
+                    menu={{
+                        items: [
+                            { key: "upload", label: "本地上传", icon: <Upload className="size-3.5" />, onClick: () => fileInputRef.current?.click() },
+                            { key: "canvas", label: "从画布添加", icon: <ImageIcon className="size-3.5" />, onClick: () => setCanvasPickerOpen(true) },
+                            { key: "text", label: "新增文本", icon: <FileText className="size-3.5" />, onClick: () => setTextDraftOpen(true) },
+                        ],
+                    }}
                 >
-                    <Plus className="size-3.5" />
-                    添加
-                </button>
-                <input ref={fileInputRef} type="file" accept="image/*,video/*" multiple className="hidden" onChange={(e) => void handleFiles(e.target.files)} />
+                    <button
+                        type="button"
+                        disabled={uploading}
+                        className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold transition hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10"
+                        style={{ color: theme.node.text }}
+                    >
+                        <Plus className="size-3.5" />
+                        添加
+                    </button>
+                </Dropdown>
+                <input ref={fileInputRef} type="file" accept="image/*,video/*,audio/*" multiple className="hidden" onChange={(e) => void handleFiles(e.target.files)} />
             </div>
             {allTags.length ? (
                 <div className="flex flex-wrap gap-1.5 px-3 pb-2">
@@ -401,6 +426,55 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                     <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无资产" className="pt-16" />
                 )}
             </div>
+
+            <Modal title="从画布添加资产" open={canvasPickerOpen} onCancel={() => setCanvasPickerOpen(false)} footer={null} width={360} destroyOnHidden>
+                {savableNodes.length ? (
+                    <div className="thin-scrollbar max-h-80 space-y-1 overflow-y-auto">
+                        {savableNodes.map((node) => {
+                            const NodeIcon = NODE_TYPE_ICON[node.type];
+                            return (
+                                <button
+                                    key={node.id}
+                                    type="button"
+                                    onClick={() => {
+                                        onSaveNodeAsset?.(node);
+                                        setCanvasPickerOpen(false);
+                                    }}
+                                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition hover:bg-black/5 dark:hover:bg-white/10"
+                                    style={{ color: theme.node.text }}
+                                >
+                                    {NodeIcon ? <NodeIcon className="size-4 shrink-0 opacity-60" /> : null}
+                                    <span className="min-w-0 flex-1 truncate">{node.title || "未命名节点"}</span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                ) : (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="画布暂无可保存的节点" className="py-10" />
+                )}
+            </Modal>
+
+            <Modal
+                title="新增文本资产"
+                open={textDraftOpen}
+                onCancel={() => setTextDraftOpen(false)}
+                onOk={() => {
+                    const content = textDraft.trim();
+                    if (!content) {
+                        message.warning("请输入文本内容");
+                        return;
+                    }
+                    addAsset({ kind: "text", title: content.slice(0, 24), coverUrl: "", tags: [], data: { content } });
+                    message.success("已新增文本资产");
+                    setTextDraft("");
+                    setTextDraftOpen(false);
+                }}
+                okText="新增"
+                cancelText="取消"
+                width={420}
+            >
+                <Input.TextArea value={textDraft} onChange={(e) => setTextDraft(e.target.value)} rows={5} placeholder="输入文本内容" />
+            </Modal>
         </div>
     );
 });

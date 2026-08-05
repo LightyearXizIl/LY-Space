@@ -23,6 +23,7 @@ import { ActiveConnectionPath, ConnectionPath } from "@/components/canvas/canvas
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
 import { CanvasConfigNodePanel } from "@/components/canvas/canvas-config-node-panel";
 import { CanvasNodeContextMenu } from "@/components/canvas/canvas-context-menu";
+import { CanvasImagePreviewModal } from "@/components/canvas/canvas-image-preview-modal";
 import { CanvasNodeAngleDialog, type CanvasImageAngleParams } from "@/components/canvas/canvas-node-angle-dialog";
 import { CanvasNodeCropDialog, type CanvasImageCropRect } from "@/components/canvas/canvas-node-crop-dialog";
 import { CanvasNodeMaskEditDialog, type CanvasImageMaskEditPayload } from "@/components/canvas/canvas-node-mask-edit-dialog";
@@ -217,6 +218,8 @@ function InfiniteCanvasPage() {
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [projectLoaded, setProjectLoaded] = useState(false);
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
+    const [toolbarPosition, setToolbarPosition] = useState<{ x: number; y: number } | null>(null);
+    const altCloneIdsRef = useRef<{ nodeIds: string[]; connectionIds: string[]; originalIds: string[] } | null>(null);
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
@@ -790,6 +793,7 @@ function InfiniteCanvasPage() {
             setSelectedConnectionId(null);
             setHoveredNodeId((current) => (current && allIds.has(current) ? null : current));
             setToolbarNodeId((current) => (current && allIds.has(current) ? null : current));
+            setToolbarPosition(null);
             setDialogNodeId((current) => (current && allIds.has(current) ? null : current));
             setEditingNodeId((current) => (current && allIds.has(current) ? null : current));
             setInfoNodeId((current) => (current && allIds.has(current) ? null : current));
@@ -818,6 +822,7 @@ function InfiniteCanvasPage() {
         setSelectionBox(null);
         setHoveredNodeId(null);
         setToolbarNodeId(null);
+        setToolbarPosition(null);
         setDialogNodeId(null);
         setEditingNodeId(null);
     }, [cancelPendingConnectionCreate]);
@@ -1058,6 +1063,7 @@ function InfiniteCanvasPage() {
             // 左键空白处直接启动框选；同时收起节点编辑框与上方工具栏（仅选中时显示）
             setDialogNodeId(null);
             setToolbarNodeId(null);
+            setToolbarPosition(null);
 
             // 左键空白处直接启动框选；点击空白（无拖动）时 0 尺寸框选自然清空选择 = 取消选择
             const world = screenToCanvas(event.clientX, event.clientY);
@@ -1092,9 +1098,7 @@ function InfiniteCanvasPage() {
             nextSelected.add(nodeId);
         }
         setSelectedNodeIds(nextSelected);
-        const soloId = nextSelected.size === 1 && nextSelected.has(nodeId) ? nodeId : null;
-        setToolbarNodeId(soloId);
-        return { nextSelected, soloId };
+        return { nextSelected };
     }, []);
 
     // capture 阶段选中:点击节点内部任意元素(含吞掉 mousedown 的 textarea/iframe)都能选中并弹出工具条。
@@ -1136,6 +1140,51 @@ function InfiniteCanvasPage() {
             startY: event.clientY,
             initialSelectedNodes: currentNodes.filter((node) => dragIds.has(node.id)).map((node) => ({ id: node.id, x: node.position.x, y: node.position.y })),
         };
+
+        // Alt+左键拖拽 = 复制节点（原节点不动，拖拽副本；框选组同样生效）
+        if (event.altKey) {
+            const idMap = new Map<string, string>();
+            const now = Date.now();
+            const clones = currentNodes
+                .filter((node) => dragIds.has(node.id))
+                .map((node) => {
+                    const newId = `${node.type}-${now}-${Math.random().toString(36).slice(2, 7)}`;
+                    idMap.set(node.id, newId);
+                    return { ...node, id: newId, title: `${node.title} Copy`, position: { x: node.position.x, y: node.position.y } };
+                })
+                .map((node) => {
+                    const metadata = node.metadata;
+                    if (!metadata) return node;
+                    const nextMetadata = {
+                        ...metadata,
+                        ...(metadata.groupId && idMap.has(metadata.groupId) ? { groupId: idMap.get(metadata.groupId) } : {}),
+                        ...(metadata.batchChildIds?.some((childId) => idMap.has(childId)) ? { batchChildIds: metadata.batchChildIds.map((childId) => idMap.get(childId) ?? childId) } : {}),
+                    };
+                    return nextMetadata === metadata ? node : { ...node, metadata: nextMetadata };
+                });
+            const cloneIds = new Set(clones.map((node) => node.id));
+            setNodes((prev) => [...prev, ...clones]);
+            // 复制两端都在克隆集合内的连线（与 Ctrl+C/V 粘贴行为一致，避免副本成孤岛）
+            const nextConnections = connectionsRef.current.flatMap((connection, index) => {
+                const fromNodeId = idMap.get(connection.fromNodeId);
+                const toNodeId = idMap.get(connection.toNodeId);
+                if (!fromNodeId || !toNodeId) return [];
+                return [{ ...connection, id: `conn-${now}-${index}-${Math.random().toString(36).slice(2, 7)}`, fromNodeId, toNodeId }];
+            });
+            setConnections((prev) => [...prev, ...nextConnections]);
+            setSelectedNodeIds(cloneIds);
+            setSelectedConnectionId(null);
+            // 记录克隆（Alt+点击未拖动时撤销；拖动后保留并随位移提交进入历史）
+            altCloneIdsRef.current = { nodeIds: [...cloneIds], connectionIds: nextConnections.map((connection) => connection.id), originalIds: [...nextSelected] };
+            dragRef.current = {
+                isDraggingNode: true,
+                hasMoved: false,
+                startX: event.clientX,
+                startY: event.clientY,
+                initialSelectedNodes: clones.map((node) => ({ id: node.id, x: node.position.x, y: node.position.y })),
+            };
+        }
+
         historyPausedRef.current = true;
         nodeDraggingRef.current = true;
         setIsNodeDragging(true);
@@ -1149,6 +1198,7 @@ function InfiniteCanvasPage() {
         if (!dragRef.current.isDraggingNode) return;
 
         const wasClick = !dragRef.current.hasMoved && dragRef.current.initialSelectedNodes.length === 1;
+        const hadMoved = dragRef.current.hasMoved;
         const clickedNodeId = dragRef.current.initialSelectedNodes[0]?.id;
         const currentViewport = viewportRef.current;
         const dx = clientX == null ? 0 : (clientX - dragRef.current.startX) / currentViewport.k;
@@ -1180,6 +1230,25 @@ function InfiniteCanvasPage() {
         dragRef.current.isDraggingNode = false;
         dragRef.current.hasMoved = false;
         dragRef.current.initialSelectedNodes = [];
+
+        // Alt+点击（按住 Alt 单击未拖动）：撤销克隆并恢复原节点选中。
+        // 克隆的 setState 与 historyPaused 同帧批处理被跳过，必须在此回滚，否则 Ctrl+Z 失效且下次 undo 会连带回滚。
+        const altClone = altCloneIdsRef.current;
+        altCloneIdsRef.current = null;
+        if (altClone && !hadMoved) {
+            const cloneSet = new Set(altClone.nodeIds);
+            const connSet = new Set(altClone.connectionIds);
+            const nextNodes = nodesRef.current.filter((node) => !cloneSet.has(node.id));
+            const nextConnections = connectionsRef.current.filter((connection) => !connSet.has(connection.id));
+            setNodes(nextNodes);
+            setConnections(nextConnections);
+            setSelectedNodeIds(new Set(altClone.originalIds));
+            setSelectedConnectionId(null);
+            // 同步 lastHistoryRef 引用，使 history effect 的引用比较短路，避免提交空历史条目
+            if (lastHistoryRef.current) lastHistoryRef.current = { ...lastHistoryRef.current, nodes: nextNodes, connections: nextConnections };
+            return;
+        }
+
         if (wasClick && clickedNodeId) {
             const clickedNode = nodesRef.current.find((node) => node.id === clickedNodeId);
             const clickedDefinition = clickedNode ? getNodeDefinition(clickedNode.type) : undefined;
@@ -1498,6 +1567,7 @@ function InfiniteCanvasPage() {
                 setConnecting(null);
                 setHoveredNodeId(null);
                 setToolbarNodeId(null);
+                setToolbarPosition(null);
                 setDialogNodeId(null);
                 setEditingNodeId(null);
                 setInfoNodeId(null);
@@ -2101,7 +2171,9 @@ function InfiniteCanvasPage() {
         if ((event.target as HTMLElement).closest("[data-node-id]")) return;
         event.preventDefault();
         setContextMenu(null);
-    }, []);
+        // 空白右键 = 打开选择节点弹窗（原双击左键功能迁移至此）
+        setNodeCreatePosition(screenToCanvas(event.clientX, event.clientY));
+    }, [screenToCanvas]);
 
     const handleGenerateNode = useCallback(
         async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
@@ -2803,9 +2875,17 @@ function InfiniteCanvasPage() {
     const handleNodeViewImage = useCallback((node: CanvasNodeData) => setPreviewNodeId(node.id), []);
     const handleNodeRetry = useCallback((node: CanvasNodeData) => void handleRetryNode(node), [handleRetryNode]);
     const handleNodeContextMenu = useCallback((event: ReactMouseEvent, nodeId: string) => {
+        // 右键节点 = 在点击处弹出节点工具栏（不再弹复制/删除右键菜单）
         event.preventDefault();
         event.stopPropagation();
-        setContextMenu({ type: "node", x: event.clientX, y: event.clientY, nodeId });
+        setContextMenu(null);
+        // 右键未选中节点时先单选选中，保证工具栏操作语义一致
+        if (!selectedNodeIdsRef.current.has(nodeId)) {
+            setSelectedNodeIds(new Set([nodeId]));
+            setSelectedConnectionId(null);
+        }
+        setToolbarNodeId(nodeId);
+        setToolbarPosition({ x: event.clientX, y: event.clientY });
     }, []);
 
     const renderNodePanel = useCallback(
@@ -2818,6 +2898,7 @@ function InfiniteCanvasPage() {
                     inputs={configInputsById.get(panelNode.id) || []}
                     mode={panelNode.metadata?.generationMode || "image"}
                     onChange={(composerContent) => handleConfigNodeChange(panelNode.id, { composerContent })}
+                    onConfigChange={(patch) => handleConfigNodeChange(panelNode.id, patch)}
                     onClose={() => setDialogNodeId(null)}
                 />
             ) : (
@@ -2832,7 +2913,10 @@ function InfiniteCanvasPage() {
                     modeOverride={getNodeDefinition(panelNode.type)?.useBuiltinPanel?.mode}
                     onImageSettingsOpenChange={(open) => {
                         setNodeImageSettingsOpen(open);
-                        if (open) setToolbarNodeId(null);
+                        if (open) {
+                            setToolbarNodeId(null);
+                            setToolbarPosition(null);
+                        }
                     }}
                 />
             ),
@@ -2877,7 +2961,7 @@ function InfiniteCanvasPage() {
 
     return (
         <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
-            <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} />
+            <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} onSaveNodeAsset={(node) => void saveNodeAsset(node)} />
             <section className="relative min-w-0 flex-1 overflow-hidden">
                 <CanvasTopBar
                     title={currentProject?.title || "未命名画布"}
@@ -2910,10 +2994,6 @@ function InfiniteCanvasPage() {
                     }}
                     onCanvasMouseDown={handleCanvasMouseDown}
                     onCanvasDeselect={deselectCanvas}
-                    onCanvasDoubleClick={(event) => {
-                        setContextMenu(null);
-                        setNodeCreatePosition(screenToCanvas(event.clientX, event.clientY));
-                    }}
                     onContextMenu={preventCanvasContextMenu}
                     onDrop={handleDrop}
                 >
@@ -3015,6 +3095,7 @@ function InfiniteCanvasPage() {
                 <CanvasNodeHoverToolbar
                     node={isNodeDragging || nodeImageSettingsOpen ? null : toolbarNode}
                     viewport={viewport}
+                    position={toolbarPosition}
                     extraTools={toolbarNode ? buildNodeToolbarItems(toolbarNode) : undefined}
                     onKeep={keepNodeToolbar}
                     onLeave={hideNodeToolbar}
@@ -3071,17 +3152,8 @@ function InfiniteCanvasPage() {
                     <CanvasNodeContextMenu
                         menu={contextMenu}
                         onClose={() => setContextMenu(null)}
-                        onDuplicate={() => {
-                            if (contextMenu.type !== "node") return;
-                            duplicateNode(contextMenu.nodeId);
-                            setContextMenu(null);
-                        }}
                         onDelete={() => {
-                            if (contextMenu.type === "node") {
-                                deleteNodes(new Set([contextMenu.nodeId]));
-                            } else {
-                                deleteConnection(contextMenu.connectionId);
-                            }
+                            if (contextMenu.type === "connection" && contextMenu.connectionId) deleteConnection(contextMenu.connectionId);
                             setContextMenu(null);
                         }}
                     />
@@ -3110,17 +3182,7 @@ function InfiniteCanvasPage() {
 
                 {angleNode?.metadata?.content ? <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open={Boolean(angleNode)} onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} /> : null}
 
-                <Modal
-                    title="图片详情"
-                    open={Boolean(previewNode?.metadata?.content)}
-                    centered
-                    onCancel={() => setPreviewNodeId(null)}
-                    footer={null}
-                    width="auto"
-                    styles={{ body: { padding: 0, display: "flex", justifyContent: "center", alignItems: "center", maxHeight: "80vh" } }}
-                >
-                    {previewNode?.metadata?.content ? <img src={previewNode.metadata.content} alt={previewNode.title || "图片"} style={{ maxWidth: "100%", maxHeight: "80vh", objectFit: "contain" }} /> : null}
-                </Modal>
+                <CanvasImagePreviewModal node={previewNode} open={Boolean(previewNode?.metadata?.content)} onClose={() => setPreviewNodeId(null)} />
 
                 <Modal
                     title="清空画布？"

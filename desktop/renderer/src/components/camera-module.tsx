@@ -125,7 +125,7 @@ export function CameraModule({ value, onChange, theme, showTitle = true, classNa
                                             theme
                                                 ? ""
                                                 : active
-                                                  ? "border-stone-900 bg-stone-900 text-stone-50 dark:border-stone-100 dark:bg-stone-100 dark:text-stone-950"
+                                                  ? "border-stone-900 bg-stone-100 text-stone-900 dark:border-stone-100 dark:bg-stone-800 dark:text-stone-100"
                                                   : "border-stone-300 bg-white/70 text-stone-600 hover:border-stone-400 hover:text-stone-900 dark:border-stone-700 dark:bg-stone-900/70 dark:text-stone-400 dark:hover:border-stone-600 dark:hover:text-stone-200"
                                         }`}
                                         style={

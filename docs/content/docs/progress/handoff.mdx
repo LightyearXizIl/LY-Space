@@ -16,7 +16,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.3.9（`VERSION` 文件，tag `v0.3.9`）
+- **当前版本**：v0.4.0（`VERSION` 文件，tag `v0.4.0`）
 
 ## 2. 数据存储
 
@@ -143,6 +143,18 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **Composer 优化保留 @ 引用**：system prompt 明确要求原样保留 `@[node:xxx]` 令牌（hook 支持 `systemPrompt` 自定义参数），回填后 `parseComposerTokens` 自动还原引用 chips；模型删改令牌会导致对应引用丢失（可接受，用户可重新 @ 引用）。
 - **坑**：① 提示词优化整体覆盖输入框文本（含已插入镜头文字）——与生图/视频页行为一致，镜头按钮高亮自动随文本消失；② Composer 编辑器有焦点时 value 变化跳过 DOM 重建（既有机制），点击镜头/优化按钮会先失焦再重建，文本正常显示。
 - **坑（浅色模式 Alert 深灰）**：antd 主题 token 的 `colorInfo` 曾跟随 `color.primary`（浅色 #171717 黑）→ `colorInfoBg` 由黑色板派生为 #575757 深灰，导致 Alert info（关于页"发现新版本"等）在浅色模式下是深灰块；暗色模式 primary=#fafafa 白还会派生白底白 icon。已移除 `colorInfo` 覆盖恢复 antd 默认 #1677ff。**教训：`colorInfo`/`colorInfoBg` 等派生 token 不要设为黑/白等极端色，除非显式同步设置对应 Bg/Border**。
+
+### 3.16 v0.4.0 镜头模块重构 + 画布交互改造
+
+- **镜头模块 UI 重构**：① 画布节点面板：`CanvasCameraPopover`（新组件，仿 `CanvasImageSettingsPopover` 的 portal fixed 定位 + 外部点击关闭）按钮放在工具栏行**图像/视频设置右侧**，点击展开；② 生图/视频页：`CameraTrigger`（新组件，antd Popover）放在**设置区"模型"下拉右侧**（GenerationSettings 模型行改 flex 一行两列，移动端 Drawer 复用自动生效）；③ Composer 保留内联展开。页面场景选中态改为柔和样式（浅色 `border-stone-900 bg-stone-100 text-stone-900`、暗色 `border-stone-100 bg-stone-800 text-stone-100`），不再整块反色。
+- **画布优化模型选择**：`CanvasNodeMetadata.textModel`（提示词优化专用文本模型）；两处 `buildNodeConfig` 透传 `textModel: metadata.textModel || globalConfig.textModel || defaultConfig.textModel`；面板优化行（image/video 节点）与 Composer 优化行均加 `ModelPicker(capability="text")`（Composer 经新增 `onConfigChange` prop 持久化到 Config 节点 metadata）。
+- **右键节点 = 工具栏**：不再"选中即显示"（`selectNodeByEvent` 移除 setToolbarNodeId）；右键节点在**点击处**弹出工具栏（`toolbarPosition` fixed 坐标，视口 clamp），`flex-col flex-wrap max-h-[340px]` **竖向两列**（文字横写），未选中节点右键会先单选选中；节点右键菜单（复制/删除）移除——`CanvasNodeContextMenu` 仅剩连接线删除；复制入口改为快捷键/Alt 拖拽。工具栏清理链路（空白 mousedown/Esc/删除/图片面板）同步清 `toolbarPosition`。
+- **空格立即抓手**：keydown 空格即 `body.cursor="grab"`（不再等左键点按），配合左键才平移；`spacePressedRef` 同步供 pointerdown 判断（避免同帧 state 滞后）；keyup 恢复默认（平移中不抢）；**排除 INPUT/TEXTAREA/contentEditable**（Composer 输入空格不触发）；pointerup 松左键时空格仍按住回 grab。
+- **空白右键 = 添加节点**：`preventCanvasContextMenu` 改为打开 `NodeCreateMenu`（screenToCanvas 定位）；双击空白创建已移除（infinite-canvas 删除 onDoubleClick 接线）。
+- **Alt+左键拖拽复制**（含框选组）：`handleNodeMouseDown` 检查 `event.altKey` → 原位克隆 dragIds（新 id、title 加 Copy、`groupId`/`batchChildIds` 重映射）并复制两端都在克隆集的连线（同 Ctrl+C/V 语义）→ 拖拽副本。**坑**：① 克隆 setState 与 `historyPausedRef=true` 同帧批处理，渲染时 paused 已生效 → 克隆不进历史，**Alt 点击未拖动时必须撤销克隆**（`altCloneIdsRef` 记录 + finishNodeDrag 回滚，`hadMoved` 快照须在 dragRef 重置前保存）；② 撤销分支同步 `lastHistoryRef.current` 引用，使 history effect 引用比较短路，避免空历史条目；③ 拖动位移在 paused=false 后提交 → undo 一步回滚克隆+位移。
+- **图片预览滚轮缩放**：新组件 `CanvasImagePreviewModal`（原内联 Modal 替换），滚轮直接缩放 0.2x–5x（±10%/步），底部悬浮条显示比例 + 重置 + 放大按钮，打开/切换节点重置。
+- **资产侧栏**：`ASSET_GROUPS` 加音频分组；"添加"按钮改 Dropdown：本地上传（accept 加 `audio/*`，handleFiles 加 audio 分支）/ **从画布添加**（Modal 列出有内容的图片/视频/音频/文本节点，调 `saveNodeAsset`，经 `onSaveNodeAsset` prop 从 project.tsx 传入）/ **新增文本**（Modal TextArea → `addAsset({kind:"text"})`，标题取前 24 字）。
+- **快捷键提示更新**（canvas-zoom-controls + canvas-top-bar 两处）：空格/中键平移（空格即抓手）、Alt+左键拖动复制、右键节点=工具栏、空白处右键=添加节点、双击创建条目移除。
 
 
 ## 4. 常用命令

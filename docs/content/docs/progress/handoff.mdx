@@ -16,7 +16,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.4.1（`VERSION` 文件，tag `v0.4.1`）
+- **当前版本**：v0.4.2（`VERSION` 文件，tag `v0.4.2`）
 
 ## 2. 数据存储
 
@@ -158,6 +158,20 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **v0.4.1 修正**：① `toolbarNode` 移除 `|| singleSelectedNodeId` 单选回退（v0.4.0 只改触发点漏删此处，选中节点仍会显示工具栏）——现在仅右键节点触发；② 镜头弹层组行改"标签固定列（w-8）+ 按钮独立 flex-wrap 换行区"，换行不再越过标题列；③ 资产侧栏搜索框下新增类型筛选（全部/图片/视频/文本/音频，`typeFilter` state，与标签筛选/搜索共存）；④ 生图/视频页设置区模型行改 `grid-cols-2` 左右分列（左「模型」+下拉、右「镜头」标题+按钮，两标题同高，移动端 Drawer 复用）；⑤ 图片预览 Modal 放大后**可按住拖动平移**（scale>1 生效：pointer capture + dragOffset，`translate+scale` 变换，`dragging` state 控制 transition 与光标，按钮区域不参与拖动，重置同时清位置；打开/切节点重置）。
 
 
+### 3.17 deepseek-eyes 看图技能（Reasonix 环境，非应用内功能）
+
+- **用途**：会话主模型（DeepSeek V4 Flash）无原生视觉，用户发图时通过 `eyes.py` 路由到外部视觉模型转成文字描述，再基于描述回答
+- **技能位置**：`E:\Vibe coding\LY Space\.reasonix\skills\deepseek-eyes\`（SKILL.md + eyes.py）；源项目 `E:\Vibe coding\deepseek-eyes-master`（工作区外只读，未改动）
+- **调用方式**：`python "E:\Vibe coding\LY Space\.reasonix\skills\deepseek-eyes\eyes.py" "<图片路径>" --prompt "<用户问题>" [--provider zhipu|gemini|siliconflow|dashscope]`
+- **4 个 provider（均实测通过）**：zhipu（默认，`glm-4.6v-flash` 免费，128K）/ gemini（`gemini-3.6-flash` 免费层，用户网络可直连 Google）/ siliconflow（`PaddlePaddle/PaddleOCR-VL-1.5` 免费 OCR）/ dashscope（百炼，key 额度已耗尽 403，勿用）
+- **环境变量**（均写入 Windows 用户级）：`ZHIPU_API_KEY`、`GEMINI_API_KEY`、`SILICONFLOW_API_KEY`、`DASHSCOPE_API_KEY`
+- **坑**：① 智谱旧格式 key 是 `id.secret`，必须签 HS256 JWT（`zhipu_bearer_token` 已内置处理），`sk-` 开头新格式直传 Bearer；② SiliconFlow 的 OCR 模型必须用真实尺寸图片（1x1 会 400）；③ 免费模型偶发 429 限流 / SSL EOF 网络抖动，稍等重试即可；④ Gemini 免费层有限速，日常默认 zhipu，精细看图切 `--provider gemini`、提取文字切 `--provider siliconflow`
+
+### 3.18 v0.4.2 变更要点
+
+- **资产侧栏类型筛选标签**（`canvas-side-panel.tsx`）：选中态由黑底白字改为柔和样式（浅色 `bg-stone-100 text-stone-900`、暗色 `bg-stone-800 text-stone-100`，与页面场景选中态一致）；类型标签容器改 `flex-nowrap` + `overflow-x-auto`，5 个类型标签一行不折行（侧栏极窄时横向滚动兜底）。**坑**：下方 allTags 标签筛选行仍保持 `flex-wrap`（标签数量多，勿一并改死）。
+- **生图/视频页模型行与镜头按钮**（`image/index.tsx`、`video/index.tsx`、`camera-trigger.tsx`）：模型行由 `grid-cols-2` 对半改为 `grid-cols-[minmax(0,1fr)_auto]`——模型下拉占满剩余宽度（长模型名不再截断），镜头按钮紧凑靠右；镜头按钮由 antd Button 改为与 `SelectTrigger` 同款胶囊样式（`h-8 rounded-full border bg-transparent px-3 shadow-sm`），移除 `!w-full`。**坑**：`CameraTrigger` 的 `placement` 仍默认 `bottomRight`（弹层以按钮右缘对齐，本次未改），如需按钮正下方弹出需改 placement。
+
 ## 4. 常用命令
 
 | 命令 | 用途 |
@@ -188,6 +202,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 ## 7. 用户偏好
 
 - 中文交流；代码注释/文案用中文
+- **deepseek-eyes 视觉技能已配置**（见 3.17）：用户发图时自动走 `eyes.py`，默认 zhipu `glm-4.6v-flash`（免费）；精细看图切 gemini、文字提取切 siliconflow
 - 直接修复确认的 bug（不要只报告）；低风险问题修完一起说
 - 每次功能修复完成后用户通常要求发版本 + 推送源码和安装包 + 本地留存
 - **每次发布新版本都要更新交接文档**：版本号、vX.Y.Z 变更要点与坑（见第 5 节发版流程第 1 步）

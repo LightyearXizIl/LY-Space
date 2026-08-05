@@ -384,7 +384,7 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ nodes, onInsert, onSaveN
                 </Dropdown>
                 <input ref={fileInputRef} type="file" accept="image/*,video/*,audio/*" multiple className="hidden" onChange={(e) => void handleFiles(e.target.files)} />
             </div>
-            <div className="flex flex-wrap gap-1.5 px-3 pb-2">
+            <div className="flex flex-nowrap gap-1 overflow-x-auto px-3 pb-2">
                 {(["all", "image", "video", "text", "audio"] as const).map((kind) => {
                     const label = kind === "all" ? "全部" : kind === "image" ? "图片" : kind === "video" ? "视频" : kind === "text" ? "文本" : "音频";
                     return (
@@ -393,8 +393,8 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ nodes, onInsert, onSaveN
                             type="button"
                             onClick={() => setTypeFilter(kind)}
                             className={cn(
-                                "rounded-full px-2.5 py-0.5 text-xs font-medium transition",
-                                typeFilter === kind ? "bg-stone-900 text-stone-50 dark:bg-stone-100 dark:text-stone-950" : "text-stone-500 hover:bg-black/5 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-white/10 dark:hover:text-stone-100",
+                                "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium transition",
+                                typeFilter === kind ? "bg-stone-100 text-stone-900 dark:bg-stone-800 dark:text-stone-100" : "text-stone-500 hover:bg-black/5 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-white/10 dark:hover:text-stone-100",
                             )}
                             style={typeFilter === kind ? undefined : { color: theme.node.text }}
                         >

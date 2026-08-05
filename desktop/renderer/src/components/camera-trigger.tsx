@@ -1,7 +1,8 @@
 import { Aperture } from "lucide-react";
-import { Button, Popover } from "antd";
+import { Popover } from "antd";
 
 import { CameraModule } from "@/components/camera-module";
+import { cn } from "@/lib/utils";
 
 /**
  * 页面场景（生图/视频工作台）镜头按钮：按钮 + 点击展开 popover。
@@ -25,9 +26,16 @@ export function CameraTrigger({ value, onChange, buttonClassName, placement = "b
             arrow={false}
             content={<CameraModule value={value} onChange={onChange} className="w-72" />}
         >
-            <Button icon={<Aperture className="size-3.5" />} className={buttonClassName || "!h-8 !px-3"}>
+            <button
+                type="button"
+                className={cn(
+                    "flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-input bg-transparent px-3 text-sm font-normal shadow-sm transition-colors hover:bg-black/5 hover:text-stone-900 dark:hover:bg-white/10 dark:hover:text-stone-100",
+                    buttonClassName,
+                )}
+            >
+                <Aperture className="size-3.5 shrink-0 opacity-70" />
                 镜头
-            </Button>
+            </button>
         </Popover>
     );
 }

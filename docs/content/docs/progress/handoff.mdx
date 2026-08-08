@@ -158,11 +158,13 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **v0.4.1 修正**：① `toolbarNode` 移除 `|| singleSelectedNodeId` 单选回退（v0.4.0 只改触发点漏删此处，选中节点仍会显示工具栏）——现在仅右键节点触发；② 镜头弹层组行改"标签固定列（w-8）+ 按钮独立 flex-wrap 换行区"，换行不再越过标题列；③ 资产侧栏搜索框下新增类型筛选（全部/图片/视频/文本/音频，`typeFilter` state，与标签筛选/搜索共存）；④ 生图/视频页设置区模型行改 `grid-cols-2` 左右分列（左「模型」+下拉、右「镜头」标题+按钮，两标题同高，移动端 Drawer 复用）；⑤ 图片预览 Modal 放大后**可按住拖动平移**（scale>1 生效：pointer capture + dragOffset，`translate+scale` 变换，`dragging` state 控制 transition 与光标，按钮区域不参与拖动，重置同时清位置；打开/切节点重置）。
 
 
-### 3.17 deepseek-eyes 看图技能（Reasonix 环境，非应用内功能）
+### 3.17 DeepSeek_Visualmodel 看图技能（Reasonix 环境，非应用内功能）
 
 - **用途**：会话主模型（DeepSeek V4 Flash）无原生视觉，用户发图时通过 `eyes.py` 路由到外部视觉模型转成文字描述，再基于描述回答
-- **技能位置**：`E:\Vibe coding\LY Space\.reasonix\skills\deepseek-eyes\`（SKILL.md + eyes.py）；源项目 `E:\Vibe coding\deepseek-eyes-master`（工作区外只读，未改动）
-- **调用方式**：`python "E:\Vibe coding\LY Space\.reasonix\skills\deepseek-eyes\eyes.py" "<图片路径>" --prompt "<用户问题>" [--provider zhipu|gemini|siliconflow|dashscope]`
+- **技能位置**：`E:\Vibe coding\skills\DeepSeek_Visualmodel\`（**共享技能目录**，已注册进全局 `[skills] paths`，所有项目可用；SKILL.md + eyes.py + README.md，技能名 `DeepSeek_Visualmodel`）。**源项目 `E:\Vibe coding\deepseek-eyes-master` 已不存在（被清理）**，代码唯一来源即 `E:\Vibe coding\skills`
+- **调用方式**：`python "E:\Vibe coding\skills\DeepSeek_Visualmodel\eyes.py" "<图片路径>" --prompt "<用户问题>" [--provider zhipu|gemini|siliconflow|dashscope]`
+- **GitHub 仓库**：`https://github.com/LightyearXizIl/skills_Collection`（公开，main 分支，本地根 `E:\Vibe coding\skills`，初始 commit 4e99902；git 身份 LightyearXizIl / LightyearXizIl@users.noreply.github.com（仓库级）；gh CLI 未登录，用 Windows 凭据管理器 git 凭据推送）
+- **合集规范**：每个技能一个子目录（SKILL.md frontmatter 必须 name+description）+ 目录内 README.md（用途/用法/key 配置）+ **禁止任何 API key**（一律环境变量）；新增技能后需显式 `git add` → commit → push
 - **4 个 provider（均实测通过）**：zhipu（默认，`glm-4.6v-flash` 免费，128K）/ gemini（`gemini-3.6-flash` 免费层，用户网络可直连 Google）/ siliconflow（`PaddlePaddle/PaddleOCR-VL-1.5` 免费 OCR）/ dashscope（百炼，key 额度已耗尽 403，勿用）
 - **环境变量**（均写入 Windows 用户级）：`ZHIPU_API_KEY`、`GEMINI_API_KEY`、`SILICONFLOW_API_KEY`、`DASHSCOPE_API_KEY`
 - **坑**：① 智谱旧格式 key 是 `id.secret`，必须签 HS256 JWT（`zhipu_bearer_token` 已内置处理），`sk-` 开头新格式直传 Bearer；② SiliconFlow 的 OCR 模型必须用真实尺寸图片（1x1 会 400）；③ 免费模型偶发 429 限流 / SSL EOF 网络抖动，稍等重试即可；④ Gemini 免费层有限速，日常默认 zhipu，精细看图切 `--provider gemini`、提取文字切 `--provider siliconflow`

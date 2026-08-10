@@ -7,6 +7,15 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 > 用途：新 AI 会话接手前的快速上手指南。代码优先遵守 `AGENTS.md`，本文补充项目现状、关键决策与坑。
 
+## 0. 给 ZCode 的快速上手
+
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前 tag `v0.4.3`）
+- **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
+- **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
+- **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`
+- **注意**：第 3.17 节是 Reasonix 环境专属技能（外部 `eyes.py` 看图工具），与本应用代码无关，ZCode 环境无此技能，可忽略
+- **必守规则**（AGENTS.md）：最小改动、不重构、不改无关文件、不执行编译/构建（除非用户明确要求）、中文注释与文案；发版流程见第 5 节
+
 ## 1. 项目概况
 
 - **桌面 AI 创作工作台**：无限画布、生图工作台、视频创作台、精修工作台、提示词库、我的素材、配置

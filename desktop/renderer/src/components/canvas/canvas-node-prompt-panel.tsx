@@ -87,20 +87,9 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent)}
             />
 
-            {mode === "image" || mode === "video" ? (
-                // 提示词工具行：提示词库 + 优化文本模型 + 优化按钮（左对齐，避免与下方工具栏右侧控件堆叠）
-                <div className="mt-2 flex min-w-0 items-center gap-2">
-                    <CanvasPromptLibrary onSelect={updatePrompt} />
-                    <ModelPicker config={config} value={config.textModel || config.model} onChange={(model) => onConfigChange(node.id, { textModel: model })} capability="text" className="!h-6 !min-w-[7rem] !px-2 !text-xs" />
-                    <Tooltip title="优化提示词">
-                        <Button type="text" size="small" className="!h-6 !w-6" icon={<Wand2 className="size-4" />} loading={optimizing} onClick={() => void optimize()} />
-                    </Tooltip>
-                </div>
-            ) : null}
-
             <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
-                    {mode !== "image" && mode !== "video" ? <CanvasPromptLibrary onSelect={updatePrompt} /> : null}
+                    <CanvasPromptLibrary onSelect={updatePrompt} />
                     {mode === "image" ? (
                         <>
                             <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="image" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
@@ -113,12 +102,22 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                                 onOpenChange={onImageSettingsOpenChange}
                             />
                             <CanvasCameraPopover value={prompt} onChange={updatePrompt} buttonClassName="!h-10 !max-w-[110px] !justify-start !rounded-full !px-3" />
+                            {/* 优化提示模块放在生成按钮左边 */}
+                            <ModelPicker config={config} value={config.textModel || config.model} onChange={(model) => onConfigChange(node.id, { textModel: model })} capability="text" className="!h-6 !min-w-[7rem] !px-2 !text-xs" />
+                            <Tooltip title="优化提示词">
+                                <Button type="text" size="small" className="!h-6 !w-6" icon={<Wand2 className="size-4" />} loading={optimizing} onClick={() => void optimize()} />
+                            </Tooltip>
                         </>
                     ) : mode === "video" ? (
                         <>
                             <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="video" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
                             <CanvasVideoSettingsPopover config={config} buttonClassName="!h-10 !max-w-[170px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
                             <CanvasCameraPopover value={prompt} onChange={updatePrompt} buttonClassName="!h-10 !max-w-[110px] !justify-start !rounded-full !px-3" />
+                            {/* 优化提示模块放在生成按钮左边 */}
+                            <ModelPicker config={config} value={config.textModel || config.model} onChange={(model) => onConfigChange(node.id, { textModel: model })} capability="text" className="!h-6 !min-w-[7rem] !px-2 !text-xs" />
+                            <Tooltip title="优化提示词">
+                                <Button type="text" size="small" className="!h-6 !w-6" icon={<Wand2 className="size-4" />} loading={optimizing} onClick={() => void optimize()} />
+                            </Tooltip>
                         </>
                     ) : mode === "audio" ? (
                         <>

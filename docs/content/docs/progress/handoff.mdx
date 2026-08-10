@@ -9,7 +9,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前 tag `v0.4.5`）
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前 tag `v0.4.6`）
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
 - **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`
@@ -25,7 +25,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.4.5（`VERSION` 文件，tag `v0.4.5`）
+- **当前版本**：v0.4.6（`VERSION` 文件，tag `v0.4.6`）
 
 ## 2. 数据存储
 
@@ -204,6 +204,12 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **生图/视频工作台「模型/镜头」行**（`pages/image/index.tsx`、`pages/video/index.tsx`）：设置区外层 grid 由 `sm:grid-cols-2` 改为 `sm:grid-cols-[minmax(0,1fr)_auto]`（移动端 Drawer 同样），模型下拉占满剩余宽度不再截断，镜头按钮紧凑靠右。**坑**：v0.4.3 的 50/50 两列布局被此方案取代；`ImageSettingsPanel` 的 `col-span-2` 仍跨两列不受影响。
 - **画布复制/克隆只复制选中节点**（`project.tsx` Alt 克隆 + `pasteCopiedNodes`）：① 批量组根节点被选中时其 `batchChildIds` 子图不再随 Alt 克隆（`selectedBatchRootIds` 过滤），副本根节点 `batchChildIds` 清空（显示为单图）；② **输入连线同步**：源节点不在复制集合时，复制一条连线指向原源头节点（`fromNodeId` 保留原 id、`toNodeId` 映射新 id）——「只要线不要源头节点」，Alt 克隆与 Ctrl+C/V 粘贴行为一致；③ Alt 单击未拖动撤销逻辑（`altCloneIdsRef`）已覆盖新增输入连线。**坑**：拖拽（非 Alt）移动组时 `dragIds` 仍含批量子图（不变）；两端都在复制集合的连线仍按原逻辑重映射。
 - **组节点固定（钉子）**（`types/canvas.ts` + `canvas-node.tsx` + `project.tsx`）：`CanvasNodeMetadata.pinned?: boolean`；组节点右上角（「N 个节点」标签旁）新增 Pin 按钮，点击固定/取消；`isNodeLocked` 动态判定——组 pinned 时组自身及所有 `groupId` 指向该组的成员（含后续拖入/新建）不可拖动；`handleNodeMouseDown` 计算 `dragIds` 后若有任一锁定节点直接 return（不建 dragRef、不触发 Alt 克隆）。**坑**：① 锁定只拦移动，选中/删除/调整组帧大小/连线仍可用；② 框选拖拽含锁定节点时整组拖动被拦（安全优先）；③ pin 状态随节点持久化，重开项目保留。
+
+### 3.22 v0.4.6 变更要点
+
+- **组节点框内锚定**（`project.tsx`）：① `handleNodeMouseDown` 组拖动时，`dragIds` 扩展为「groupId 成员 + 中心点落在组框架内的所有节点」（复用 `findContainingGroupId` 中心点判定）——**放进组内的任意节点自动跟随组移动**，松手后经 `finishNodeDrag` 的 `findContainingGroupId` 自动写入 groupId 归属为组成员；② `isNodeLocked` 同步改为「groupId 成员 + 中心点在任一固定组框架内」都锁定（嵌套组场景直接按几何判定，不再依赖 groupId 链）。**坑**：拖动组时若某节点同时落在多个组框架内，`findContainingGroupId` 按数组逆序取最后匹配的组；组自身不参与自身框内判定（`child.id === node.id` 跳过）。
+- **组节点右上角布局**（`canvas-node.tsx` GroupNodeContent）：头部改 `justify-between` 两段式——左侧 [组图标 + 「组」]，右侧 [钉子按钮 + 「N 个节点」标签]，明确置于右上角（原 `ml-auto` 单点推送在部分情况下视觉上靠左）。
+- **图片/视频节点编辑面板还原重排**（`canvas-node-prompt-panel.tsx` + `canvas-node.tsx`）：v0.4.5 拆两行（提示词工具行左对齐在上）用户不满，v0.4.6 还原并重排——优化提示模块（文本模型+优化按钮）**移入底部工具栏、位于生成按钮左侧**，图片/视频节点行为一致；面板容器 `w-[600px]` 改为 `min-w-[600px] max-w-[min(92vw,1100px)]` 自适应拉长容纳全部功能模块。**坑**：① 面板宽度变化影响所有节点面板（文本/音频/配置共用容器），控件均已 truncate/min-w-0 安全；② 生成按钮 `shrink-0` 保持在最右；③ 文本/音频节点面板无优化模块，保持原样。
 
 ## 4. 常用命令
 

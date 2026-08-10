@@ -1132,11 +1132,18 @@ function InfiniteCanvasPage() {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, pinned: !node.metadata?.pinned } } : node)));
     }, []);
 
-    // 固定判定:组节点自身 pinned 时,组内所有成员节点(含后续拖入/新建的节点)都不可移动
+    // 固定判定:组节点自身 pinned 时,组内所有节点(含后续拖入/新建/位置框在组内的)都不可移动
     const isNodeLocked = useCallback((node: CanvasNodeData, allNodes = nodesRef.current) => {
         if (node.metadata?.pinned) return true;
-        if (!node.metadata?.groupId) return false;
-        return Boolean(allNodes.find((item) => item.id === node.metadata?.groupId)?.metadata?.pinned);
+        if (node.type === CanvasNodeType.Group) return false;
+        return allNodes.some((group) => {
+            if (group.type !== CanvasNodeType.Group || !group.metadata?.pinned || group.id === node.id) return false;
+            if (node.metadata?.groupId === group.id) return true;
+            // 位置框在固定组内(中心点在组框架内)同样锁定
+            const centerX = node.position.x + node.width / 2;
+            const centerY = node.position.y + node.height / 2;
+            return centerX >= group.position.x && centerX <= group.position.x + group.width && centerY >= group.position.y && centerY <= group.position.y + group.height;
+        });
     }, []);
 
     const handleNodeMouseDown = useCallback((event: ReactMouseEvent, nodeId: string) => {
@@ -1151,7 +1158,9 @@ function InfiniteCanvasPage() {
             node.metadata?.batchChildIds?.forEach((childId) => dragIds.add(childId));
             if (node.type === CanvasNodeType.Group) {
                 currentNodes.forEach((child) => {
-                    if (child.metadata?.groupId === node.id) dragIds.add(child.id);
+                    if (child.id === node.id) return;
+                    // 组内固定:groupId 成员 + 位置框在组内的所有节点都跟随组移动（放入组内即自动固定到组）
+                    if (child.metadata?.groupId === node.id || findContainingGroupId(child, currentNodes) === node.id) dragIds.add(child.id);
                 });
             }
         });

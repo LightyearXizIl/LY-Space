@@ -434,7 +434,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             {!isGroup ? <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} /> : null}
             {!isGroup ? <ConnectionHandleDot side="right" visible={(definition?.hasSourceHandle ?? true) && data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onMouseDown={(event) => onConnectStart(event, data.id, "source")} /> : null}
 
-            {showPanel && !isGroup && renderPanel ? <div className="absolute left-1/2 top-full z-[70] w-[600px] -translate-x-1/2 pt-4">{renderPanel(data)}</div> : null}
+            {showPanel && !isGroup && renderPanel ? <div className="absolute left-1/2 top-full z-[70] min-w-[600px] max-w-[min(92vw,1100px)] -translate-x-1/2 pt-4">{renderPanel(data)}</div> : null}
         </div>
     );
 });
@@ -470,28 +470,32 @@ function GroupNodeContent({ node, theme, groupChildCount, onToggleGroupPin }: No
     const pinned = Boolean(node.metadata?.pinned);
     return (
         <div className="pointer-events-none flex h-full w-full flex-col p-4">
-            <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: theme.node.text }}>
-                <span className="grid size-8 place-items-center rounded-xl" style={{ background: theme.toolbar.activeBg, color: theme.node.muted }}>
-                    <Group className="size-4" />
-                </span>
-                <span>组</span>
-                <button
-                    type="button"
-                    title={pinned ? "取消固定（组内所有节点恢复可移动）" : "固定组（组内所有节点不可移动）"}
-                    className="pointer-events-auto ml-auto grid size-6 cursor-pointer place-items-center rounded-full transition hover:opacity-70"
-                    style={{ color: pinned ? theme.node.activeStroke : theme.node.muted }}
-                    onClick={(event) => {
-                        event.stopPropagation();
-                        onToggleGroupPin?.(node.id);
-                    }}
-                    onMouseDown={(event) => event.stopPropagation()}
-                    onPointerDown={(event) => event.stopPropagation()}
-                >
-                    <Pin className="size-3.5" fill={pinned ? "currentColor" : "none"} />
-                </button>
-                <span className="rounded-full px-2 py-1 text-[11px] font-medium" style={{ background: theme.node.fill, color: theme.node.muted }}>
-                    {groupChildCount} 个节点
-                </span>
+            <div className="flex items-center justify-between gap-2 text-sm font-semibold" style={{ color: theme.node.text }}>
+                <div className="flex min-w-0 items-center gap-2">
+                    <span className="grid size-8 place-items-center rounded-xl" style={{ background: theme.toolbar.activeBg, color: theme.node.muted }}>
+                        <Group className="size-4" />
+                    </span>
+                    <span>组</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <button
+                        type="button"
+                        title={pinned ? "取消固定（组内所有节点恢复可移动）" : "固定组（组内所有节点不可移动）"}
+                        className="pointer-events-auto grid size-6 cursor-pointer place-items-center rounded-full transition hover:opacity-70"
+                        style={{ color: pinned ? theme.node.activeStroke : theme.node.muted }}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onToggleGroupPin?.(node.id);
+                        }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => event.stopPropagation()}
+                    >
+                        <Pin className="size-3.5" fill={pinned ? "currentColor" : "none"} />
+                    </button>
+                    <span className="rounded-full px-2 py-1 text-[11px] font-medium" style={{ background: theme.node.fill, color: theme.node.muted }}>
+                        {groupChildCount} 个节点
+                    </span>
+                </div>
             </div>
             <div className="mt-3 flex-1 rounded-2xl border border-dashed" style={{ borderColor: theme.node.stroke, background: `${theme.node.fill}55` }} />
         </div>

@@ -16,7 +16,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration, getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
-import { deleteStoredImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
+import { collectImageStorageKeys, deleteStoredImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { loadWorkbenchSession, saveWorkbenchSession } from "@/services/workbench-session";
 import { trackWrite } from "@/services/desktop-storage";
@@ -515,10 +515,19 @@ export default function ImagePage() {
         const selectedImagesInLogs = relatedLogs.flatMap((log) => log.images).filter((image) => selectedIds.has(image.id));
         // 只回收被删图片的 blob 与本地文件，同记录的其它图片保留
         const imageKeys = selectedImagesInLogs.map((image) => image.storageKey).filter((key): key is string => Boolean(key));
+        // 同一 storageKey 可能被资产/画布节点共享（如结果图「添加到资产」后插入画布）：仍被引用时保留 blob，
+        // 避免删除工作台记录导致关闭/重开项目后画布图片失效（黑块）
+        let keysToDelete = imageKeys;
+        if (keysToDelete.length) {
+            const { useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
+            const usedKeys = new Set<string>();
+            collectImageStorageKeys({ assets: useAssetStore.getState().assets, projects: useCanvasStore.getState().projects }, usedKeys);
+            keysToDelete = imageKeys.filter((key) => !usedKeys.has(key));
+        }
         const localPaths = [...new Set(selectedImagesInLogs.map((image) => image.localPath).filter((path): path is string => Boolean(path)))];
         const missingPathCount = selectedImagesInLogs.filter((image) => !image.localPath).length;
         void Promise.all([
-            deleteStoredImages(imageKeys),
+            deleteStoredImages(keysToDelete),
             ...relatedLogs.map(async (log) => {
                 const remaining = log.images.filter((image) => !selectedIds.has(image.id));
                 if (remaining.length) {

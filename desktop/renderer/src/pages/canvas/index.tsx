@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState, type DragEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { App, Button } from "antd";
 import { Download, FileUp, Plus } from "lucide-react";
@@ -23,6 +23,37 @@ export default function CanvasPage() {
     const importProject = useCanvasStore((state) => state.importProject);
     const selectedIds = useCanvasUiStore((state) => state.selectedProjectIds);
     const setDeleteIds = useCanvasUiStore((state) => state.setDeleteProjectIds);
+    const reorderProjects = useCanvasStore((state) => state.reorderProjects);
+    // 拖动排序状态:正在拖的项目 id + 目标卡片的插入位置
+    const [dragProjectId, setDragProjectId] = useState<string | null>(null);
+    const [dropTarget, setDropTarget] = useState<{ id: string; before: boolean } | null>(null);
+
+    const handleCardDragStart = (event: DragEvent<HTMLDivElement>, id: string) => {
+        // 从按钮/输入框(勾选、重命名、操作图标)上不触发拖动
+        if ((event.target as HTMLElement).closest("button, input, a")) return;
+        setDragProjectId(id);
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", id);
+    };
+    const handleCardDragOver = (event: DragEvent<HTMLDivElement>, id: string) => {
+        if (!dragProjectId || dragProjectId === id) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        const rect = event.currentTarget.getBoundingClientRect();
+        // 按卡片对角线判断插入位置:指针在对角线左/上方 → 插到该卡片之前,否则之后(网格布局通用)
+        const before = (event.clientY - rect.top) / rect.height < (event.clientX - rect.left) / rect.width;
+        setDropTarget((current) => (current?.id === id && current.before === before ? current : { id, before }));
+    };
+    const handleCardDrop = (event: DragEvent<HTMLDivElement>, id: string) => {
+        event.preventDefault();
+        if (dragProjectId && dragProjectId !== id) reorderProjects(dragProjectId, id, dropTarget?.id === id ? dropTarget.before : false);
+        setDragProjectId(null);
+        setDropTarget(null);
+    };
+    const endCardDrag = () => {
+        setDragProjectId(null);
+        setDropTarget(null);
+    };
 
     const enterProject = (id: string) => {
         navigate(`/canvas/${id}`);
@@ -91,9 +122,25 @@ export default function CanvasPage() {
                     <section className="flex min-h-[360px] items-center justify-center border-y border-stone-200 text-sm text-stone-500 dark:border-stone-800">正在加载画布...</section>
                 ) : projects.length ? (
                     <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-                        {projects.map((project) => (
-                            <CanvasProjectCard key={project.id} project={project} />
-                        ))}
+                        {projects.map((project) => {
+                            const dragging = dragProjectId === project.id;
+                            const dropSide = dropTarget?.id === project.id ? (dropTarget.before ? "before" : "after") : null;
+                            return (
+                                <div
+                                    key={project.id}
+                                    draggable={hydrated}
+                                    title="拖动卡片可自定义排序"
+                                    onDragStart={(event) => handleCardDragStart(event, project.id)}
+                                    onDragOver={(event) => handleCardDragOver(event, project.id)}
+                                    onDrop={(event) => handleCardDrop(event, project.id)}
+                                    onDragEnd={endCardDrag}
+                                    className={dragging ? "opacity-40" : undefined}
+                                    style={dropSide ? { boxShadow: `inset ${dropSide === "before" ? "3px" : "-3px"} 0 0 0 #2f80ff` } : undefined}
+                                >
+                                    <CanvasProjectCard project={project} />
+                                </div>
+                            );
+                        })}
                     </div>
                 ) : (
                     <section className="flex min-h-[360px] flex-col items-center justify-center border-y border-stone-200 text-center dark:border-stone-800">

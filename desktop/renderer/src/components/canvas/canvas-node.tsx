@@ -9,6 +9,7 @@ import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useCanvasViewportStore } from "@/stores/canvas/use-canvas-viewport-store";
 import { getThumbnailUrl, THUMBNAIL_MAX_SIDE } from "@/services/thumbnail";
+import { resolveImageUrl } from "@/services/image-storage";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
 import type { CanvasNodeContext, CanvasPluginHost } from "@/types/canvas-plugin";
@@ -672,10 +673,18 @@ function ImageContent({
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const isBatchChild = Boolean(node.metadata?.batchRootId);
     const source = node.metadata?.content || "";
+    const storageKey = node.metadata?.storageKey;
     // 订阅缩放(仅本子组件重渲染,CanvasNode 外壳的 memo 不受影响):显示尺寸超过缩略图能力时切回原图,避免放大模糊
     const viewportK = useCanvasViewportStore((state) => state.viewport.k);
     const useOriginal = node.width * viewportK > THUMBNAIL_MAX_SIDE * 1.2;
     const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+    // 原图加载失败后的兜底:按 storageKey 从 IndexedDB 重新解析(关闭/重开项目或跨重启后 content 可能是失效的 blob URL)
+    const [fallbackSrc, setFallbackSrc] = useState<string | null>(null);
+    const [loadFailed, setLoadFailed] = useState(false);
+    useEffect(() => {
+        setFallbackSrc(null);
+        setLoadFailed(false);
+    }, [source]);
     useEffect(() => {
         if (!source) return;
         if (useOriginal) {
@@ -684,25 +693,52 @@ function ImageContent({
         }
         let active = true;
         void getThumbnailUrl(source).then((url) => {
-            if (active) setThumbUrl(url);
+            if (!active) return;
+            if (url) setLoadFailed(false);
+            setThumbUrl(url);
         });
         return () => {
             active = false;
         };
     }, [source, useOriginal]);
-    const imgSrc = !useOriginal && thumbUrl ? thumbUrl : source;
+    const handleImageError = useCallback(() => {
+        // 缩略图失败:丢弃缩略图回退原图
+        if (!useOriginal && thumbUrl) {
+            setThumbUrl(null);
+            setLoadFailed(false);
+            return;
+        }
+        // 原图失败:按 storageKey 重新解析,拿到新地址则重试,否则显示加载失败占位(避免透明底透出画布底色的黑块)
+        if (!loadFailed && storageKey && !fallbackSrc) {
+            void resolveImageUrl(storageKey, "").then((url) => {
+                if (url && url !== source) setFallbackSrc(url);
+                else setLoadFailed(true);
+            });
+            return;
+        }
+        setLoadFailed(true);
+    }, [useOriginal, thumbUrl, loadFailed, storageKey, fallbackSrc, source]);
+    const imgSrc = !useOriginal && thumbUrl ? thumbUrl : fallbackSrc || source;
 
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>
             <div className="h-full w-full overflow-hidden rounded-3xl">
-                <img
-                    src={imgSrc}
-                    alt={node.title}
-                    draggable={false}
-                    decoding="async"
-                    onDragStart={(event) => event.preventDefault()}
-                    className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
-                />
+                {loadFailed ? (
+                    <div className="flex h-full w-full flex-col items-center justify-center gap-2" style={{ color: theme.node.placeholder }}>
+                        <ImageIcon className="size-6 opacity-40" />
+                        <span className="text-[11px]">图片加载失败</span>
+                    </div>
+                ) : (
+                    <img
+                        src={imgSrc}
+                        alt={node.title}
+                        draggable={false}
+                        decoding="async"
+                        onError={handleImageError}
+                        onDragStart={(event) => event.preventDefault()}
+                        className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
+                    />
+                )}
             </div>
             {isBatchRoot ? (
                 <button

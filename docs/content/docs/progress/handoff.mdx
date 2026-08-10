@@ -9,7 +9,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前 tag `v0.4.3`）
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前 tag `v0.4.4`）
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
 - **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`
@@ -25,7 +25,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.4.3（`VERSION` 文件，tag `v0.4.3`）
+- **当前版本**：v0.4.4（`VERSION` 文件，tag `v0.4.4`）
 
 ## 2. 数据存储
 
@@ -186,6 +186,14 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 ### 3.19 v0.4.3 变更要点
 
 - **镜头模块移入设置区右列**（`image/index.tsx`、`video/index.tsx` GenerationSettings）：桌面端外层为 `sm:grid-cols-2` 两列，此前整个 GenerationSettings 占左列（内部再分模型/镜头），**右列整行空白**（用户截图黄框位置）。本次把「模型」「镜头」拆为外层 grid 的两个独立列——模型占左列、镜头整体移入右列（与模型同排、标题同高），`ImageSettingsPanel` 仍跨两列；移动端 Drawer（外层同为 2 列）模型/镜头继续左右并排。**坑**：GenerationSettings 的 fragment 子元素直接参与外层 grid 排布，模型/镜头 div 不得再设 `col-span-2`（否则又回到单列内部排布）；v0.4.2 的 `grid-cols-[minmax(0,1fr)_auto]` 内部分列实现已被此方案取代。
+
+### 3.20 v0.4.4 变更要点
+
+- **画布图片黑块修复（关闭/重开项目有概率出现）**：根因是**共享 storageKey 被误删**——生图工作台记录「添加到资产」时资产与记录共享同一 `storageKey`（`pages/image/index.tsx` saveResultToAssets），资产插入画布后画布节点也引用它；删除工作台记录时 `deleteStoredImages` **不检查其他引用**，直接 revoke blob URL + 删 IndexedDB blob → 当前会话图片已解码仍显示，但关闭/重开项目重新水合时 `resolveImageUrl` 找不到 blob 返回失效 URL → 节点透明背景透出画布底色 = 黑块。
+  - **修复 A**（`pages/image/index.tsx` `deleteSelectedImages`）：删除前用 `collectImageStorageKeys({ assets, projects })` 收集仍被资产/画布引用的 key，仍被引用的 blob 保留（记录本身照常删除）。
+  - **修复 B**（`components/canvas/canvas-node.tsx` ImageContent）：图片加载失败自动降级——缩略图失败回退原图 → 原图失败按 `storageKey` 调 `resolveImageUrl` 从 IndexedDB 重新解析 → 仍失败显示「图片加载失败」占位（不再黑块）。`onError` 触发后 setState 换 src，无循环。
+  - **坑**：① 所有「结果图 → 资产/参考图 → 画布」共享 storageKey 的链路，删除任一端都要先查其他引用；② 旧版本已把 blob 删掉的黑块节点数据无法找回，只能显示占位；③ 视频/音频节点（`file-storage.ts` 的 media key）理论上存在同样的共享删除风险，当前未处理（无对应删除入口触发）。
+- **画布库项目拖动排序**（`pages/canvas/index.tsx` + `stores/canvas/use-canvas-store.ts`）：卡片可拖拽自定义排序，`reorderProjects(id, targetId, before)` 移动项目并持久化（projects 数组顺序即展示顺序）；网格内按卡片对角线判断插入前/后（`(clientY-top)/height < (clientX-left)/width` → 之前），换行到上下行也正确；被拖卡片半透明、目标卡片边缘显示蓝色插入指示线（`inset 3px` boxShadow）；从按钮/输入框上不触发拖动（`closest("button, input, a")` 拦截）。**坑**：新建项目仍 push 到数组最前（用户可再拖走）；排序状态是本地 state，`dragend`/`drop` 都要清理。
 
 ## 4. 常用命令
 

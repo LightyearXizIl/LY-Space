@@ -27,6 +27,8 @@ type CanvasStore = {
     importProject: (project: Partial<CanvasProject>) => string;
     openProject: (id: string) => CanvasProject | null;
     renameProject: (id: string, title: string) => void;
+    // 手动排序:把 id 项目移动到 targetId 项目之前(before=true)或之后(before=false),顺序持久化
+    reorderProjects: (id: string, targetId: string, before: boolean) => void;
     deleteProjects: (ids: string[]) => void;
     replaceProjects: (projects: CanvasProject[]) => void;
     updateProject: (id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport">>) => void;
@@ -103,6 +105,19 @@ export const useCanvasStore = create<CanvasStore>()(
                 set((state) => ({
                     projects: state.projects.map((project) => (project.id === id ? { ...project, title: title.trim() || project.title, updatedAt: new Date().toISOString() } : project)),
                 })),
+            reorderProjects: (id, targetId, before) =>
+                set((state) => {
+                    const projects = [...state.projects];
+                    const from = projects.findIndex((project) => project.id === id);
+                    const target = projects.findIndex((project) => project.id === targetId);
+                    if (from < 0 || target < 0 || from === target) return {};
+                    const [moved] = projects.splice(from, 1);
+                    // 移除后重算目标索引,再决定插到目标之前/之后
+                    let to = projects.findIndex((project) => project.id === targetId);
+                    if (!before) to += 1;
+                    projects.splice(to, 0, moved);
+                    return { projects };
+                }),
             deleteProjects: (ids) =>
                 set((state) => {
                     const projects = state.projects.filter((project) => !ids.includes(project.id));

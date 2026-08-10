@@ -88,7 +88,9 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
             />
 
             {mode === "image" || mode === "video" ? (
-                <div className="mt-1.5 flex items-center justify-end gap-1.5">
+                // 提示词工具行：提示词库 + 优化文本模型 + 优化按钮（左对齐，避免与下方工具栏右侧控件堆叠）
+                <div className="mt-2 flex min-w-0 items-center gap-2">
+                    <CanvasPromptLibrary onSelect={updatePrompt} />
                     <ModelPicker config={config} value={config.textModel || config.model} onChange={(model) => onConfigChange(node.id, { textModel: model })} capability="text" className="!h-6 !min-w-[7rem] !px-2 !text-xs" />
                     <Tooltip title="优化提示词">
                         <Button type="text" size="small" className="!h-6 !w-6" icon={<Wand2 className="size-4" />} loading={optimizing} onClick={() => void optimize()} />
@@ -98,7 +100,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
 
             <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
-                    <CanvasPromptLibrary onSelect={updatePrompt} />
+                    {mode !== "image" && mode !== "video" ? <CanvasPromptLibrary onSelect={updatePrompt} /> : null}
                     {mode === "image" ? (
                         <>
                             <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="image" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />

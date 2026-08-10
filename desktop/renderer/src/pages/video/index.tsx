@@ -696,7 +696,7 @@ export default function VideoPage() {
                                 </Button>
                             </div>
 
-                            <div className="hidden gap-4 sm:grid sm:grid-cols-2">
+                            <div className="hidden gap-4 sm:grid sm:grid-cols-[minmax(0,1fr)_auto]">
                                 <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} cameraValue={prompt} onCameraChange={setPrompt} />
                             </div>
                         </div>
@@ -741,7 +741,7 @@ export default function VideoPage() {
                 <LogPanel logs={logs} selectedLogIds={selectedLogIds} activeLogId={previewLog?.id} onSelectedLogIdsChange={setSelectedLogIds} onCreateSession={createSession} onDeleteSelected={() => setDeleteConfirmOpen(true)} onPreviewLog={previewGenerationLog} />
             </Drawer>
             <Drawer title="参数" placement="bottom" height="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
-                <div className="grid grid-cols-2 gap-3 pb-4">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 pb-4">
                     <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} cameraValue={prompt} onCameraChange={setPrompt} />
                 </div>
             </Drawer>

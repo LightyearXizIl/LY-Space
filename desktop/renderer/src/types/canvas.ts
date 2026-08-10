@@ -65,6 +65,7 @@ export type CanvasNodeMetadata = {
     bytes?: number;
     durationMs?: number;
     groupId?: string;
+    pinned?: boolean; // 组节点固定:组内所有成员节点(含后续加入)不可移动
     interactive?: boolean; // 插件节点「交互 ⇄ 移动」开关状态(见 CanvasNodeDefinition.interactionToggle)
 };
 

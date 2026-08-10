@@ -9,7 +9,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前 tag `v0.4.4`）
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前 tag `v0.4.5`）
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
 - **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`
@@ -25,7 +25,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.4.4（`VERSION` 文件，tag `v0.4.4`）
+- **当前版本**：v0.4.5（`VERSION` 文件，tag `v0.4.5`）
 
 ## 2. 数据存储
 
@@ -194,6 +194,16 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - **修复 B**（`components/canvas/canvas-node.tsx` ImageContent）：图片加载失败自动降级——缩略图失败回退原图 → 原图失败按 `storageKey` 调 `resolveImageUrl` 从 IndexedDB 重新解析 → 仍失败显示「图片加载失败」占位（不再黑块）。`onError` 触发后 setState 换 src，无循环。
   - **坑**：① 所有「结果图 → 资产/参考图 → 画布」共享 storageKey 的链路，删除任一端都要先查其他引用；② 旧版本已把 blob 删掉的黑块节点数据无法找回，只能显示占位；③ 视频/音频节点（`file-storage.ts` 的 media key）理论上存在同样的共享删除风险，当前未处理（无对应删除入口触发）。
 - **画布库项目拖动排序**（`pages/canvas/index.tsx` + `stores/canvas/use-canvas-store.ts`）：卡片可拖拽自定义排序，`reorderProjects(id, targetId, before)` 移动项目并持久化（projects 数组顺序即展示顺序）；网格内按卡片对角线判断插入前/后（`(clientY-top)/height < (clientX-left)/width` → 之前），换行到上下行也正确；被拖卡片半透明、目标卡片边缘显示蓝色插入指示线（`inset 3px` boxShadow）；从按钮/输入框上不触发拖动（`closest("button, input, a")` 拦截）。**坑**：新建项目仍 push 到数组最前（用户可再拖走）；排序状态是本地 state，`dragend`/`drop` 都要清理。
+
+### 3.21 v0.4.5 变更要点
+
+- **画布工具栏「编辑/取消生成」**（`canvas-node-hover-toolbar.tsx` + `project.tsx`）：① `canOpenDialog` 由 `hasImage` 改为 `isImage`——生成中/空内容图片节点也有「编辑」入口（原条件 `isText || hasImage || isVideo`，加载中节点没有 content 导致面板打不开）；② 新增「取消生成」状态工具：`status === "loading"` 时显示，`onCancelGenerate` 直接调 `stopGenerationByRunningId(node.id)`（无确认弹窗，单节点/批量子节点 runningNodeId 都是节点自身 id）；③ 取消生成不参与图片快捷工具开关过滤（`hasImage && loading` 的重新生成场景也要显示），`selectableImageToolbarTools` 同步排除。
+- **图片详情弹窗任意缩放可拖动**（`canvas-image-preview-modal.tsx`）：移除 `scale <= 1` 时禁止拖动的限制，任意缩放级别（20%–500%）都可按住拖动平移；光标恒为 grab/grabbing。**坑**：滚轮缩放 ±10%/步、重置同时清位置、按钮区不参与拖动的既有行为保持不变。
+- **组装提示词编辑框（Composer）镜头弹层化**（`canvas-config-composer.tsx`）：移除内联平铺的 `<CameraModule>`（5 行 27 按钮），复用 `CanvasCameraPopover` 按钮+弹层，放在底部操作行左侧（模型选择器旁），与画布节点面板/工作台样式统一。**坑**：Composer 编辑器有焦点时 value 变化跳过 DOM 重建的既有机制不受影响（镜头按钮点击会先失焦）。
+- **视频/图片节点编辑面板拆两行**（`canvas-node-prompt-panel.tsx`）：图片/视频节点的提示词工具行（提示词库 + 优化文本模型 + 优化按钮）改为**左对齐**放在提示词框下方，生成工具栏（模型/设置/镜头/生成按钮）独立一行——此前 gpt-5.5 行右对齐悬在「镜头/发送」上方形成双层冲突；音频/文本节点保持原布局（提示词库仍在生成工具栏左侧）。
+- **生图/视频工作台「模型/镜头」行**（`pages/image/index.tsx`、`pages/video/index.tsx`）：设置区外层 grid 由 `sm:grid-cols-2` 改为 `sm:grid-cols-[minmax(0,1fr)_auto]`（移动端 Drawer 同样），模型下拉占满剩余宽度不再截断，镜头按钮紧凑靠右。**坑**：v0.4.3 的 50/50 两列布局被此方案取代；`ImageSettingsPanel` 的 `col-span-2` 仍跨两列不受影响。
+- **画布复制/克隆只复制选中节点**（`project.tsx` Alt 克隆 + `pasteCopiedNodes`）：① 批量组根节点被选中时其 `batchChildIds` 子图不再随 Alt 克隆（`selectedBatchRootIds` 过滤），副本根节点 `batchChildIds` 清空（显示为单图）；② **输入连线同步**：源节点不在复制集合时，复制一条连线指向原源头节点（`fromNodeId` 保留原 id、`toNodeId` 映射新 id）——「只要线不要源头节点」，Alt 克隆与 Ctrl+C/V 粘贴行为一致；③ Alt 单击未拖动撤销逻辑（`altCloneIdsRef`）已覆盖新增输入连线。**坑**：拖拽（非 Alt）移动组时 `dragIds` 仍含批量子图（不变）；两端都在复制集合的连线仍按原逻辑重映射。
+- **组节点固定（钉子）**（`types/canvas.ts` + `canvas-node.tsx` + `project.tsx`）：`CanvasNodeMetadata.pinned?: boolean`；组节点右上角（「N 个节点」标签旁）新增 Pin 按钮，点击固定/取消；`isNodeLocked` 动态判定——组 pinned 时组自身及所有 `groupId` 指向该组的成员（含后续拖入/新建）不可拖动；`handleNodeMouseDown` 计算 `dragIds` 后若有任一锁定节点直接 return（不建 dragRef、不触发 Alt 克隆）。**坑**：① 锁定只拦移动，选中/删除/调整组帧大小/连线仍可用；② 框选拖拽含锁定节点时整组拖动被拦（安全优先）；③ pin 状态随节点持久化，重开项目保留。
 
 ## 4. 常用命令
 

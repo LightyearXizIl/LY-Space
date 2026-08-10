@@ -8,7 +8,7 @@ import type { CanvasNodeData } from "@/types/canvas";
 
 /**
  * 图片详情预览：双击/工具栏/侧栏放大预览入口共用。
- * 鼠标滚轮直接放大缩小（0.2x–5x），放大后可按住拖动查看（scale > 1 生效），
+ * 鼠标滚轮直接放大缩小（0.2x–5x），可按住图片拖动平移查看（任意缩放级别），
  * 底部显示缩放比例与重置按钮。
  */
 
@@ -40,9 +40,8 @@ export function CanvasImagePreviewModal({ node, open, onClose }: CanvasImagePrev
         setScale((current) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, current * (event.deltaY < 0 ? 1.1 : 0.9))));
     };
 
-    // 放大（scale > 1）后按住图片拖动平移查看（按钮区域不参与拖动）
+    // 按住图片拖动平移查看（任意缩放级别都生效，按钮区域不参与拖动）
     const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-        if (scale <= 1) return;
         if (event.target instanceof Element && event.target.closest("button")) return;
         event.preventDefault();
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -85,7 +84,7 @@ export function CanvasImagePreviewModal({ node, open, onClose }: CanvasImagePrev
                     onPointerMove={handlePointerMove}
                     onPointerUp={endDrag}
                     onPointerCancel={endDrag}
-                    style={{ cursor: scale > 1 ? (dragging ? "grabbing" : "grab") : "default", touchAction: "none" }}
+                    style={{ cursor: dragging ? "grabbing" : "grab", touchAction: "none" }}
                 >
                     <img
                         src={node.metadata.content}

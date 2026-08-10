@@ -910,9 +910,15 @@ function InfiniteCanvasPage() {
         });
 
         const pastedNodes = nextNodes.map((node) => {
-            const groupId = node.metadata?.groupId;
-            if (!groupId) return node;
-            return { ...node, metadata: { ...node.metadata, groupId: idMap.get(groupId) } };
+            const metadata = node.metadata;
+            if (!metadata) return node;
+            const nextMetadata = {
+                ...metadata,
+                ...(metadata.groupId && idMap.has(metadata.groupId) ? { groupId: idMap.get(metadata.groupId) } : {}),
+                // 子图不在剪贴板时清空 batchChildIds，粘贴的根节点只保留自身内容（不带后方生成的子图）
+                ...(metadata.batchChildIds?.length && !metadata.batchChildIds.some((childId) => idMap.has(childId)) ? { batchChildIds: undefined } : {}),
+            };
+            return nextMetadata === metadata ? node : { ...node, metadata: nextMetadata };
         });
 
         const nextConnections = clipboard.connections.flatMap((connection, index) => {
@@ -928,9 +934,16 @@ function InfiniteCanvasPage() {
                 },
             ];
         });
+        // 同步输入连线：源节点不在剪贴板时保留原节点为连线起点（只要线不要源头节点），保证粘贴节点左侧连线不断
+        const incomingConnections = connectionsRef.current.flatMap((connection, index) => {
+            if (idMap.has(connection.fromNodeId)) return [];
+            const toNodeId = idMap.get(connection.toNodeId);
+            if (!toNodeId) return [];
+            return [{ ...connection, id: `conn-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`, fromNodeId: connection.fromNodeId, toNodeId }];
+        });
 
         setNodes((prev) => [...prev, ...pastedNodes]);
-        setConnections((prev) => [...prev, ...nextConnections]);
+        setConnections((prev) => [...prev, ...nextConnections, ...incomingConnections]);
         setSelectedNodeIds(new Set(pastedNodes.map((node) => node.id)));
         setSelectedConnectionId(null);
         setContextMenu(null);
@@ -1115,6 +1128,17 @@ function InfiniteCanvasPage() {
         [selectNodeByEvent],
     );
 
+    const toggleGroupPin = useCallback((nodeId: string) => {
+        setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, pinned: !node.metadata?.pinned } } : node)));
+    }, []);
+
+    // 固定判定:组节点自身 pinned 时,组内所有成员节点(含后续拖入/新建的节点)都不可移动
+    const isNodeLocked = useCallback((node: CanvasNodeData, allNodes = nodesRef.current) => {
+        if (node.metadata?.pinned) return true;
+        if (!node.metadata?.groupId) return false;
+        return Boolean(allNodes.find((item) => item.id === node.metadata?.groupId)?.metadata?.pinned);
+    }, []);
+
     const handleNodeMouseDown = useCallback((event: ReactMouseEvent, nodeId: string) => {
         event.stopPropagation();
         // 选中已由 capture 阶段完成;这里只负责建立拖拽。若因故没走 capture,则兜底再选一次。
@@ -1131,6 +1155,9 @@ function InfiniteCanvasPage() {
                 });
             }
         });
+        // 固定组:组节点自身及其所有成员（含后续加入的节点）不可拖动
+        const anyLocked = currentNodes.some((node) => dragIds.has(node.id) && isNodeLocked(node, currentNodes));
+        if (anyLocked) return;
         dragRef.current = {
             isDraggingNode: true,
             hasMoved: false,
@@ -1141,10 +1168,16 @@ function InfiniteCanvasPage() {
 
         // Alt+左键拖拽 = 复制节点（原节点不动，拖拽副本；框选组同样生效）
         if (event.altKey) {
+            // 批量组根节点被选中时，其后方的子图不随复制（只复制选中节点本身）
+            const selectedBatchRootIds = new Set(currentNodes.filter((node) => nextSelected.has(node.id) && Boolean(node.metadata?.isBatchRoot)).map((node) => node.id));
+            const cloneSourceIds = [...dragIds].filter((id) => {
+                const sourceNode = currentNodes.find((node) => node.id === id);
+                return !sourceNode?.metadata?.batchRootId || !selectedBatchRootIds.has(sourceNode.metadata.batchRootId);
+            });
             const idMap = new Map<string, string>();
             const now = Date.now();
             const clones = currentNodes
-                .filter((node) => dragIds.has(node.id))
+                .filter((node) => cloneSourceIds.includes(node.id))
                 .map((node) => {
                     const newId = `${node.type}-${now}-${Math.random().toString(36).slice(2, 7)}`;
                     idMap.set(node.id, newId);
@@ -1157,17 +1190,20 @@ function InfiniteCanvasPage() {
                         ...metadata,
                         ...(metadata.groupId && idMap.has(metadata.groupId) ? { groupId: idMap.get(metadata.groupId) } : {}),
                         ...(metadata.batchChildIds?.some((childId) => idMap.has(childId)) ? { batchChildIds: metadata.batchChildIds.map((childId) => idMap.get(childId) ?? childId) } : {}),
+                        // 子图未随复制时清空 batchChildIds，副本只保留根节点自身内容（不带后方生成的子图）
+                        ...(metadata.batchChildIds?.length && !metadata.batchChildIds.some((childId) => idMap.has(childId)) ? { batchChildIds: undefined } : {}),
                     };
                     return nextMetadata === metadata ? node : { ...node, metadata: nextMetadata };
                 });
             const cloneIds = new Set(clones.map((node) => node.id));
             setNodes((prev) => [...prev, ...clones]);
-            // 复制两端都在克隆集合内的连线（与 Ctrl+C/V 粘贴行为一致，避免副本成孤岛）
+            // 复制两端都在克隆集合内的连线；输入连线源节点不在克隆集合时保留原节点为起点（只要线不要源头节点），保证副本左侧连线不断
             const nextConnections = connectionsRef.current.flatMap((connection, index) => {
                 const fromNodeId = idMap.get(connection.fromNodeId);
                 const toNodeId = idMap.get(connection.toNodeId);
-                if (!fromNodeId || !toNodeId) return [];
-                return [{ ...connection, id: `conn-${now}-${index}-${Math.random().toString(36).slice(2, 7)}`, fromNodeId, toNodeId }];
+                if (fromNodeId && toNodeId) return [{ ...connection, id: `conn-${now}-${index}-${Math.random().toString(36).slice(2, 7)}`, fromNodeId, toNodeId }];
+                if (!fromNodeId && toNodeId) return [{ ...connection, id: `conn-${now}-${index}-${Math.random().toString(36).slice(2, 7)}`, fromNodeId: connection.fromNodeId, toNodeId }];
+                return [];
             });
             setConnections((prev) => [...prev, ...nextConnections]);
             setSelectedNodeIds(cloneIds);
@@ -3055,6 +3091,7 @@ function InfiniteCanvasPage() {
                             onResize={handleNodeResize}
                             onContentChange={handleNodeContentChange}
                             onTitleChange={handleNodeTitleChange}
+                            onToggleGroupPin={toggleGroupPin}
                             onToggleBatch={toggleBatchExpanded}
                             onSetBatchPrimary={setBatchPrimary}
                             onRetry={handleNodeRetry}
@@ -3115,6 +3152,7 @@ function InfiniteCanvasPage() {
                     onViewImage={(node) => setPreviewNodeId(node.id)}
                     onReversePrompt={createImageReversePromptNodes}
                     onRetry={(node) => void handleRetryNode(node)}
+                    onCancelGenerate={(node) => stopGenerationByRunningId(node.id)}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
                     onDelete={(node) => deleteNodes(new Set([node.id]))}
                 />

@@ -3,7 +3,7 @@ import type { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent } from "rea
 import { Button, Image, Tooltip } from "antd";
 import { FileText, Image as ImageIcon, Music2, Video, Wand2, X } from "lucide-react";
 
-import { CameraModule } from "@/components/camera-module";
+import { CanvasCameraPopover } from "./canvas-camera-popover";
 import { ModelPicker } from "@/components/model-picker";
 import { usePromptOptimizer } from "@/hooks/use-prompt-optimizer";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -196,21 +196,23 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
                 />
                 {mention && candidates.length ? <MentionMenu inputs={candidates} allInputs={inputs} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} /> : null}
             </div>
-            <CameraModule value={value} onChange={onChange} theme={theme} showTitle={false} className="mt-2" />
-            <div className="mt-1.5 flex items-center justify-end gap-1.5">
-                <ModelPicker
-                    config={{ ...globalConfig, textModel }}
-                    value={textModel}
-                    onChange={(model) => {
-                        setTextModel(model);
-                        onConfigChange?.({ textModel: model });
-                    }}
-                    capability="text"
-                    className="!h-6 !min-w-[7rem] !px-2 !text-xs"
-                />
-                <Tooltip title="优化提示词">
-                    <Button type="text" size="small" className="!h-6 !w-6" icon={<Wand2 className="size-4" />} loading={optimizing} onClick={() => void optimize()} />
-                </Tooltip>
+            <div className="mt-1.5 flex items-center justify-between gap-1.5">
+                <CanvasCameraPopover value={value} onChange={onChange} buttonClassName="!h-6 !rounded-full !px-2 !text-xs" />
+                <div className="flex items-center gap-1.5">
+                    <ModelPicker
+                        config={{ ...globalConfig, textModel }}
+                        value={textModel}
+                        onChange={(model) => {
+                            setTextModel(model);
+                            onConfigChange?.({ textModel: model });
+                        }}
+                        capability="text"
+                        className="!h-6 !min-w-[7rem] !px-2 !text-xs"
+                    />
+                    <Tooltip title="优化提示词">
+                        <Button type="text" size="small" className="!h-6 !w-6" icon={<Wand2 className="size-4" />} loading={optimizing} onClick={() => void optimize()} />
+                    </Tooltip>
+                </div>
             </div>
             {imagePreview ? <Image src={imagePreview} alt="引用图片预览" style={{ display: "none" }} preview={{ visible: true, src: imagePreview, onVisibleChange: (visible) => !visible && setImagePreview(null) }} /> : null}
         </div>

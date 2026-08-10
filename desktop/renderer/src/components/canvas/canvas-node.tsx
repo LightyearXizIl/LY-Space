@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ChevronRight, Group, Image as ImageIcon, Music2, Puzzle, RefreshCw, Star, Video } from "lucide-react";
+import { ChevronRight, Group, Image as ImageIcon, Music2, Pin, Puzzle, RefreshCw, Star, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
@@ -51,6 +51,7 @@ type CanvasNodeProps = {
     onTitleChange: (nodeId: string, title: string) => void;
     onToggleBatch?: (nodeId: string) => void;
     onSetBatchPrimary?: (node: CanvasNodeData) => void;
+    onToggleGroupPin?: (nodeId: string) => void;
     onRetry?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
     onViewImage?: (node: CanvasNodeData) => void;
@@ -77,6 +78,7 @@ type NodeContentRendererProps = {
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
     groupChildCount: number;
+    onToggleGroupPin?: (nodeId: string) => void;
 };
 
 export const CanvasNode = React.memo(function CanvasNode({
@@ -111,6 +113,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     onTitleChange,
     onToggleBatch,
     onSetBatchPrimary,
+    onToggleGroupPin,
     onRetry,
     onGenerateImage,
     onViewImage,
@@ -413,6 +416,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onGenerateImage={onGenerateImage}
                         onToggleBatch={() => onToggleBatch?.(data.id)}
                         onSetBatchPrimary={() => onSetBatchPrimary?.(data)}
+                        onToggleGroupPin={onToggleGroupPin}
                         groupChildCount={groupChildCount}
                     />
                 </div>
@@ -462,7 +466,8 @@ const nodeContentRenderers = {
     [CanvasNodeType.Group]: GroupNodeContent,
 } satisfies Record<CanvasNodeType, (props: NodeContentRendererProps) => ReactNode>;
 
-function GroupNodeContent({ node, theme, groupChildCount }: NodeContentRendererProps) {
+function GroupNodeContent({ node, theme, groupChildCount, onToggleGroupPin }: NodeContentRendererProps) {
+    const pinned = Boolean(node.metadata?.pinned);
     return (
         <div className="pointer-events-none flex h-full w-full flex-col p-4">
             <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: theme.node.text }}>
@@ -470,7 +475,21 @@ function GroupNodeContent({ node, theme, groupChildCount }: NodeContentRendererP
                     <Group className="size-4" />
                 </span>
                 <span>组</span>
-                <span className="ml-auto rounded-full px-2 py-1 text-[11px] font-medium" style={{ background: theme.node.fill, color: theme.node.muted }}>
+                <button
+                    type="button"
+                    title={pinned ? "取消固定（组内所有节点恢复可移动）" : "固定组（组内所有节点不可移动）"}
+                    className="pointer-events-auto ml-auto grid size-6 cursor-pointer place-items-center rounded-full transition hover:opacity-70"
+                    style={{ color: pinned ? theme.node.activeStroke : theme.node.muted }}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        onToggleGroupPin?.(node.id);
+                    }}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onPointerDown={(event) => event.stopPropagation()}
+                >
+                    <Pin className="size-3.5" fill={pinned ? "currentColor" : "none"} />
+                </button>
+                <span className="rounded-full px-2 py-1 text-[11px] font-medium" style={{ background: theme.node.fill, color: theme.node.muted }}>
                     {groupChildCount} 个节点
                 </span>
             </div>

@@ -6,7 +6,8 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const { restoreBridgeBackup } = require("./storage-migration.cjs");
-const { buildInstallerArgs, createPersistenceFlushCoordinator } = require("./update-install-coordinator.cjs");
+const { assertWritableDirectory, ensureStorageDirectories: ensureConfiguredStorageDirectories, readStorageSettingsFile, writeStorageSettingsFile } = require("./storage-settings.cjs");
+const { buildInstallerArgs, buildInstallerLaunchOptions, createPersistenceFlushCoordinator } = require("./update-install-coordinator.cjs");
 
 protocol.registerSchemesAsPrivileged([
     { scheme: "lyspace", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
@@ -265,8 +266,8 @@ function requestPersistenceFlush(action, details = {}) {
 
 function launchUpdateInstaller(installerPath, installDir) {
     return new Promise((resolve, reject) => {
-        // assisted NSIS 仅在静默模式同时带 --force-run 时才会安装后重开应用；/D= 必须保持最后一个参数。
-        const child = spawn(installerPath, buildInstallerArgs(installDir), { detached: true, stdio: "ignore", windowsHide: true });
+        // 使用 assisted NSIS 向导，让用户看见并确认安装过程；/D= 必须保持最后一个参数。
+        const child = spawn(installerPath, buildInstallerArgs(installDir), buildInstallerLaunchOptions());
         child.once("error", reject);
         child.once("spawn", () => {
             child.unref();
@@ -321,40 +322,16 @@ function defaultStorageSettings() {
     return { resultRoot, cacheRoot, defaultResultRoot: resultRoot, defaultCacheRoot: cacheRoot };
 }
 
-function isPreviousDefaultRoot(value, folder, previousInstallDir) {
-    if (!value) return false;
-    const resolved = path.resolve(value);
-    const candidates = [
-        path.join(path.dirname(process.execPath), folder),
-        previousInstallDir ? path.join(previousInstallDir, folder) : "",
-        path.join("E:/Software/LY Space", folder),
-        ...(folder === "Data cache" ? [path.join(app.getPath("userData"), "app-data", folder), path.join(app.getPath("documents"), "LY Space", folder)] : []),
-    ].filter(Boolean);
-    return candidates.some((candidate) => path.resolve(candidate) === resolved);
-}
-
-function readStorageSettings(previousInstallDir = "") {
-    const defaults = defaultStorageSettings();
-    try {
-        const saved = JSON.parse(fs.readFileSync(storageConfigFile(), "utf8"));
-        const resultRoot = !saved.resultRoot || isPreviousDefaultRoot(saved.resultRoot, "Result", previousInstallDir) ? defaults.resultRoot : saved.resultRoot;
-        const cacheRoot = !saved.cacheRoot || isPreviousDefaultRoot(saved.cacheRoot, "Data cache", previousInstallDir) ? defaults.cacheRoot : saved.cacheRoot;
-        return { ...defaults, resultRoot, cacheRoot, pendingCacheRoot: saved.pendingCacheRoot || "", lastError: saved.lastError || "" };
-    } catch {
-        return { ...defaults, pendingCacheRoot: "", lastError: "" };
-    }
+function readStorageSettings() {
+    return readStorageSettingsFile(storageConfigFile(), defaultStorageSettings());
 }
 
 function writeStorageSettings() {
-    fs.mkdirSync(path.dirname(storageConfigFile()), { recursive: true });
-    fs.writeFileSync(storageConfigFile(), JSON.stringify({ resultRoot: storageSettings.resultRoot, cacheRoot: storageSettings.cacheRoot, pendingCacheRoot: storageSettings.pendingCacheRoot || "", lastError: storageSettings.lastError || "" }, null, 2), "utf8");
+    writeStorageSettingsFile(storageConfigFile(), storageSettings);
 }
 
 function ensureStorageDirectories(settings = storageSettings) {
-    fs.mkdirSync(settings.resultRoot, { recursive: true });
-    Object.values(RESULT_FOLDERS).forEach((folder) => fs.mkdirSync(path.join(settings.resultRoot, folder), { recursive: true }));
-    fs.mkdirSync(settings.cacheRoot, { recursive: true });
-    fs.mkdirSync(path.join(settings.cacheRoot, "Cache"), { recursive: true });
+    ensureConfiguredStorageDirectories(settings, RESULT_FOLDERS);
 }
 
 function isNestedPath(left, right) {
@@ -363,11 +340,7 @@ function isNestedPath(left, right) {
 }
 
 function assertStoragePath(value, label) {
-    if (!value || !path.isAbsolute(value)) throw new Error(`${label}必须是绝对路径`);
-    const resolved = path.resolve(value);
-    fs.mkdirSync(resolved, { recursive: true });
-    fs.accessSync(resolved, fs.constants.W_OK);
-    return resolved;
+    return assertWritableDirectory(value, label);
 }
 
 function collisionFreePath(target) {
@@ -398,13 +371,13 @@ function copyDirectory(source, target) {
 }
 
 function configureStorageBeforeReady() {
-    const bridge = restoreBridgeBackup({
+    restoreBridgeBackup({
         userData: app.getPath("userData"),
         localAppData: process.env.LOCALAPPDATA || path.dirname(app.getPath("appData")),
         documents: app.getPath("documents"),
         storageConfigFile: storageConfigFile(),
     });
-    storageSettings = readStorageSettings(bridge.installDir);
+    storageSettings = readStorageSettings();
     loadLastSaveDirectory();
     if (storageSettings.pendingCacheRoot) {
         try {
@@ -422,11 +395,8 @@ function configureStorageBeforeReady() {
     }
     try {
         ensureStorageDirectories();
-    } catch {
-        storageSettings.resultRoot = path.join(app.getPath("documents"), "LY Space", "Result");
-        storageSettings.cacheRoot = path.join(app.getPath("userData"), "Data cache");
-        storageSettings.pendingCacheRoot = "";
-        ensureStorageDirectories();
+    } catch (error) {
+        throw new Error(`无法访问用户配置的存储目录，程序未修改路径也不会使用空白数据启动。${error instanceof Error ? error.message : error}`);
     }
     writeStorageSettings();
     // sessionData 包含 IndexedDB、Local Storage、Cookie 与 Chromium 会话数据，必须在 ready 前固定到用户目录。

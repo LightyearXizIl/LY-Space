@@ -1,6 +1,6 @@
 {
   "name": "ly-space-desktop",
-  "version": "0.4.9",
+  "version": "0.4.10",
   "description": "LY Space desktop creative workspace",
   "author": "LY Space",
   "private": true,
@@ -27,6 +27,7 @@
     "files": [
       "main.cjs",
       "storage-migration.cjs",
+      "storage-settings.cjs",
       "update-install-coordinator.cjs",
       "preload.cjs",
       "build/icon.png",
@@ -47,6 +48,7 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
+      "runAfterFinish": true,
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
       "shortcutName": "LY Space",

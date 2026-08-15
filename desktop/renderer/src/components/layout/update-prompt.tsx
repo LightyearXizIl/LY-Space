@@ -105,7 +105,7 @@ export function UpdatePrompt() {
                     <div className="flex justify-end gap-2">
                         {downloaded || installing ? (
                             <Button type="primary" loading={installing} disabled={installing} onClick={() => void window.lySpaceDesktop?.installDownloadedUpdate().catch(() => undefined)}>
-                                {installing ? "正在保存并重启..." : "重启并安装"}
+                                {installing ? "正在保存并打开安装程序..." : "重启并安装"}
                             </Button>
                         ) : downloading ? (
                             <Button onClick={() => void window.lySpaceDesktop?.pauseUpdateDownload()}>暂停</Button>

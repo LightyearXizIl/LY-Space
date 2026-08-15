@@ -95,6 +95,40 @@ test("用户自定义路径保持不变且不写入新默认目录", () => {
     }
 });
 
+test("旧默认目录恢复完成后才原子写入新的稳定目录", () => {
+    const data = fixture();
+    try {
+        write(data.storageConfigFile, JSON.stringify({
+            cacheRoot: path.join(data.installDir, "Data cache"),
+            resultRoot: path.join(data.installDir, "Result"),
+            keep: "保留其他配置",
+        }));
+        runBackup(data);
+
+        restoreBridgeBackup(data);
+        const saved = JSON.parse(fs.readFileSync(data.storageConfigFile, "utf8"));
+        assert.equal(saved.cacheRoot, path.join(data.userData, "Data cache"));
+        assert.equal(saved.resultRoot, path.join(data.documents, "LY Space", "Result"));
+        assert.equal(saved.keep, "保留其他配置");
+    } finally {
+        fs.rmSync(data.root, { recursive: true, force: true });
+    }
+});
+
+test("损坏的存储配置阻止恢复且不会写入迁移状态", () => {
+    const data = fixture();
+    try {
+        runBackup(data);
+        write(data.storageConfigFile, "{broken");
+
+        assert.throws(() => restoreBridgeBackup(data), SyntaxError);
+        assert.equal(fs.readFileSync(data.storageConfigFile, "utf8"), "{broken");
+        assert.equal(fs.existsSync(path.join(data.userData, "app-data", "migration-v0.4.7.json")), false);
+    } finally {
+        fs.rmSync(data.root, { recursive: true, force: true });
+    }
+});
+
 test("安装目录内的自定义路径会备份并恢复到原位置", () => {
     const data = fixture();
     try {

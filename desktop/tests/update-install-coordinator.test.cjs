@@ -1,12 +1,20 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { buildInstallerArgs, createPersistenceFlushCoordinator } = require("../update-install-coordinator.cjs");
+const { buildInstallerArgs, buildInstallerLaunchOptions, createPersistenceFlushCoordinator } = require("../update-install-coordinator.cjs");
 
-test("静默更新参数要求安装后重启，且 /D= 保持最后", () => {
+test("可见更新安装器仅预填当前安装目录，且 /D= 保持最后", () => {
     const args = buildInstallerArgs("D:\\Software\\LY Space");
-    assert.deepEqual(args, ["/S", "--force-run", "/D=D:\\Software\\LY Space"]);
+    assert.deepEqual(args, ["/D=D:\\Software\\LY Space"]);
     assert.match(args.at(-1), /^\/D=/);
+    assert.equal(args.includes("/S"), false);
+    assert.equal(args.includes("--force-run"), false);
+});
+
+test("可见更新安装器不隐藏窗口", () => {
+    const options = buildInstallerLaunchOptions();
+    assert.deepEqual(options, { detached: true, stdio: "ignore" });
+    assert.equal(Object.hasOwn(options, "windowsHide"), false);
 });
 
 test("持久化回执必须匹配当前请求且成功后不会重复执行", async () => {

@@ -50,7 +50,11 @@ function createPersistenceFlushCoordinator({ timeoutMs = 15000, onTimeout = () =
 }
 
 function buildInstallerArgs(installDir) {
-    return ["/S", "--force-run", `/D=${installDir}`];
+    return [`/D=${installDir}`];
 }
 
-module.exports = { buildInstallerArgs, createPersistenceFlushCoordinator };
+function buildInstallerLaunchOptions() {
+    return { detached: true, stdio: "ignore" };
+}
+
+module.exports = { buildInstallerArgs, buildInstallerLaunchOptions, createPersistenceFlushCoordinator };

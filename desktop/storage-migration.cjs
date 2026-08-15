@@ -182,10 +182,9 @@ function restoreBridgeBackup({ userData, localAppData, documents, storageConfigF
     }
 
     let saved = {};
-    try {
+    if (fs.existsSync(storageConfigFile)) {
         saved = readJson(storageConfigFile);
-    } catch {
-        // v0.4.6 默认安装没有 storage-settings.json。
+        if (!saved || typeof saved !== "object" || Array.isArray(saved)) throw new Error(`存储配置格式无效，未修改任何用户路径：${storageConfigFile}`);
     }
     const defaultCacheRoot = path.join(userData, "Data cache");
     const defaultResultRoot = path.join(documents, "LY Space", "Result");
@@ -202,6 +201,16 @@ function restoreBridgeBackup({ userData, localAppData, documents, storageConfigF
         const resultMigrated = (useDefaultResult || current.result?.restoreTarget) && current.result
             ? replaceDirectoryFromSnapshot({ source: path.join(bridge.backupRoot, current.result.directory), target: resultTarget, expected: current.result.files, backupRoot: bridge.backupRoot, label: "Result" })
             : false;
+        let settingsChanged = false;
+        if (cacheMigrated && isOldDefault(saved.cacheRoot, bridge.manifest.installDir, "Data cache")) {
+            saved.cacheRoot = cacheTarget;
+            settingsChanged = true;
+        }
+        if (resultMigrated && isOldDefault(saved.resultRoot, bridge.manifest.installDir, "Result")) {
+            saved.resultRoot = resultTarget;
+            settingsChanged = true;
+        }
+        if (settingsChanged) writeJsonAtomic(storageConfigFile, saved);
         writeJsonAtomic(stateFile, { version: MIGRATION_VERSION, status: "completed", backupRoot: bridge.backupRoot, cacheMigrated, resultMigrated, completedAt: new Date().toISOString() });
         return { migrated: cacheMigrated || resultMigrated, installDir: bridge.manifest.installDir, backupRoot: bridge.backupRoot };
     } catch (error) {

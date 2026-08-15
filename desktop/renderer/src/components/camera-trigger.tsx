@@ -2,29 +2,28 @@ import { Aperture } from "lucide-react";
 import { Popover } from "antd";
 
 import { CameraModule } from "@/components/camera-module";
+import type { CameraSelection } from "@/lib/camera";
 import { cn } from "@/lib/utils";
 
 /**
  * 页面场景（生图/视频工作台）镜头按钮：按钮 + 点击展开 popover。
- * 内容复用 CameraModule（默认明暗样式），点击选项把描述插入提示词。
+ * 内容复用 CameraModule（默认明暗样式），镜头选择在生成时随请求发送。
  */
 
 type CameraTriggerProps = {
-    /** 当前提示词文本（受控） */
-    value: string;
-    /** 更新提示词文本 */
-    onChange: (next: string) => void;
+    selection?: CameraSelection;
+    onSelectionChange: (next: CameraSelection) => void;
     buttonClassName?: string;
     placement?: "topLeft" | "top" | "topRight" | "bottomLeft" | "bottom" | "bottomRight";
 };
 
-export function CameraTrigger({ value, onChange, buttonClassName, placement = "bottomRight" }: CameraTriggerProps) {
+export function CameraTrigger({ selection, onSelectionChange, buttonClassName, placement = "bottomRight" }: CameraTriggerProps) {
     return (
         <Popover
             trigger="click"
             placement={placement}
             arrow={false}
-            content={<CameraModule value={value} onChange={onChange} className="w-72" />}
+            content={<CameraModule selection={selection} onSelectionChange={onSelectionChange} className="w-72" />}
         >
             <button
                 type="button"

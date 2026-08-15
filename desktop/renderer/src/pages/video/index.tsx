@@ -11,6 +11,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoSizeLabel } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { buildCameraPrompt, formatCameraSelection, normalizeCameraSelection, type CameraSelection } from "@/lib/camera";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS, SEEDANCE_VIDEO_MIME_TYPES } from "@/lib/seedance-video";
 import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
@@ -51,6 +52,7 @@ type GenerationLog = {
     createdAt: number;
     title: string;
     prompt: string;
+    camera?: CameraSelection;
     time: string;
     model: string;
     config: GenerationLogConfig;
@@ -100,6 +102,7 @@ export default function VideoPage() {
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const addAsset = useAssetStore((state) => state.addAsset);
     const [prompt, setPrompt] = useState("");
+    const [camera, setCamera] = useState<CameraSelection>({});
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [videoReferences, setVideoReferences] = useState<ReferenceVideo[]>([]);
     const [audioReferences, setAudioReferences] = useState<ReferenceAudio[]>([]);
@@ -147,9 +150,10 @@ export default function VideoPage() {
 
     useEffect(() => {
         let active = true;
-        void loadWorkbenchSession<{ prompt: string; references: ReferenceImage[]; videoReferences: ReferenceVideo[]; audioReferences: ReferenceAudio[]; results: GenerationResult[]; elapsedMs: number }>(SESSION_STORE_KEY).then((session) => {
+        void loadWorkbenchSession<{ prompt: string; camera?: CameraSelection; references: ReferenceImage[]; videoReferences: ReferenceVideo[]; audioReferences: ReferenceAudio[]; results: GenerationResult[]; elapsedMs: number }>(SESSION_STORE_KEY).then((session) => {
             if (!active || !session) return;
             setPrompt(session.prompt || "");
+            setCamera(normalizeCameraSelection(session.camera));
             setReferences(session.references || []);
             setVideoReferences(session.videoReferences || []);
             setAudioReferences(session.audioReferences || []);
@@ -165,8 +169,8 @@ export default function VideoPage() {
     // 每次结果/输入变化(含生成结束的最终状态)仍会保存，保存时闭包中的 elapsedMs 为最新渲染值。
     useEffect(() => {
         if (!sessionHydrated) return;
-        void saveWorkbenchSession(SESSION_STORE_KEY, { prompt, references, videoReferences, audioReferences, results, elapsedMs });
-    }, [audioReferences, prompt, references, results, sessionHydrated, videoReferences]);
+        void saveWorkbenchSession(SESSION_STORE_KEY, { prompt, camera, references, videoReferences, audioReferences, results, elapsedMs });
+    }, [audioReferences, camera, prompt, references, results, sessionHydrated, videoReferences]);
 
     // 消费参考图 handoff（精修图片 / 阿里云设置添加的公网 URL），支持 url 直接加入
     const consumeReferenceHandoffs = async () => {
@@ -189,7 +193,7 @@ export default function VideoPage() {
         }
         if (nextReferences !== referencesRef.current) {
             setReferences(nextReferences);
-            void saveWorkbenchSession(SESSION_STORE_KEY, { prompt, references: nextReferences, videoReferences, audioReferences, results, elapsedMs });
+            void saveWorkbenchSession(SESSION_STORE_KEY, { prompt, camera, references: nextReferences, videoReferences, audioReferences, results, elapsedMs });
             message.success("参考图已加入");
         }
     };
@@ -335,14 +339,14 @@ export default function VideoPage() {
                 setReferences(publicReferences);
                 message.success(`已自动上传 ${hostedCount} 张本地参考图`);
             }
-            const task = await createVideoGenerationTask(snapshot.config, snapshot.text, publicReferences, snapshot.videoReferences, snapshot.audioReferences);
-            const log = buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: publicReferences, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: 0, status: "生成中", task });
+            const task = await createVideoGenerationTask(snapshot.config, snapshot.requestText, publicReferences, snapshot.videoReferences, snapshot.audioReferences);
+            const log = buildLog({ prompt: snapshot.text, camera: snapshot.camera, model, config: snapshot.config, references: publicReferences, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: 0, status: "生成中", task });
             await saveLog(log, false);
             void pollGenerationLog(log, snapshot.config);
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "生成失败";
             setResults([{ id: nanoid(), status: "failed", error: errorMessage }]);
-            await saveLog(buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: performance.now() - batchStartedAt, status: "失败", error: errorMessage }));
+            await saveLog(buildLog({ prompt: snapshot.text, camera: snapshot.camera, model, config: snapshot.config, references: snapshot.references, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: performance.now() - batchStartedAt, status: "失败", error: errorMessage }));
             message.error(errorMessage);
             setRunning(false);
         }
@@ -364,7 +368,8 @@ export default function VideoPage() {
             message.error(`${videoReferenceError}。${seedanceVideoReferenceHint}`);
             return null;
         }
-        return { text, config: buildVideoConfig(effectiveConfig, model), references: [...references], videoReferences: [...videoReferences], audioReferences: [...audioReferences] };
+        const selection = normalizeCameraSelection(camera);
+        return { text, requestText: buildCameraPrompt(text, selection), camera: selection, config: buildVideoConfig(effectiveConfig, model), references: [...references], videoReferences: [...videoReferences], audioReferences: [...audioReferences] };
     };
 
     const retryResult = () => {
@@ -404,6 +409,7 @@ export default function VideoPage() {
 
     const createSession = () => {
         setPrompt("");
+        setCamera({});
         setReferences([]);
         setVideoReferences([]);
         setAudioReferences([]);
@@ -507,6 +513,7 @@ export default function VideoPage() {
         setPreviewLog(log);
         setLogsOpen(false);
         setPrompt(log.prompt);
+        setCamera(normalizeCameraSelection(log.camera));
         setReferences(log.references || []);
         setVideoReferences(log.videoReferences || []);
         setAudioReferences(log.audioReferences || []);
@@ -697,7 +704,7 @@ export default function VideoPage() {
                             </div>
 
                             <div className="hidden gap-4 sm:grid sm:grid-cols-[minmax(0,1fr)_auto]">
-                                <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} cameraValue={prompt} onCameraChange={setPrompt} />
+                                <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} camera={camera} onCameraChange={setCamera} />
                             </div>
                         </div>
 
@@ -742,7 +749,7 @@ export default function VideoPage() {
             </Drawer>
             <Drawer title="参数" placement="bottom" height="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 pb-4">
-                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} cameraValue={prompt} onCameraChange={setPrompt} />
+                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} camera={camera} onCameraChange={setCamera} />
                 </div>
             </Drawer>
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
@@ -754,7 +761,7 @@ export default function VideoPage() {
     );
 }
 
-function GenerationSettings({ config, model, updateConfig, openConfigDialog, cameraValue, onCameraChange }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void; cameraValue: string; onCameraChange: (value: string) => void }) {
+function GenerationSettings({ config, model, updateConfig, openConfigDialog, camera, onCameraChange }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void; camera: CameraSelection; onCameraChange: (value: CameraSelection) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
     return (
@@ -765,7 +772,7 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog, cam
             </div>
             <div className="min-w-0">
                 <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">镜头</span>
-                <CameraTrigger value={cameraValue} onChange={onCameraChange} />
+                <CameraTrigger selection={camera} onSelectionChange={onCameraChange} />
             </div>
             <div className="col-span-2">
                 <VideoSettingsPanel config={config} model={model} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
@@ -886,6 +893,7 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
                         <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.size}</Tag>
                         <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.resolution}p</Tag>
                         <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.seconds}s</Tag>
+                        {log.camera && formatCameraSelection(log.camera) !== "自动" ? <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">镜头：{formatCameraSelection(log.camera)}</Tag> : null}
                     </div>
                 </div>
                 <div className="grid justify-items-end gap-2">
@@ -940,6 +948,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         createdAt: log.createdAt || Date.now(),
         title: log.title || log.model || "未命名",
         prompt: log.prompt || "",
+        camera: normalizeCameraSelection(log.camera),
         time: log.time || new Date().toLocaleString("zh-CN", { hour12: false }),
         model: log.model || config.videoModel || "",
         config,
@@ -1021,7 +1030,7 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
     };
 }
 
-function buildLog({ prompt, model, config, references, videoReferences, audioReferences, durationMs, status, task, video, error }: { prompt: string; model: string; config: AiConfig; references: ReferenceImage[]; videoReferences: ReferenceVideo[]; audioReferences: ReferenceAudio[]; durationMs: number; status: GenerationLog["status"]; task?: VideoGenerationTask; video?: GeneratedVideo; error?: string }): GenerationLog {
+function buildLog({ prompt, camera, model, config, references, videoReferences, audioReferences, durationMs, status, task, video, error }: { prompt: string; camera: CameraSelection; model: string; config: AiConfig; references: ReferenceImage[]; videoReferences: ReferenceVideo[]; audioReferences: ReferenceAudio[]; durationMs: number; status: GenerationLog["status"]; task?: VideoGenerationTask; video?: GeneratedVideo; error?: string }): GenerationLog {
     const logConfig = {
         model: config.model,
         videoModel: config.videoModel,
@@ -1036,6 +1045,7 @@ function buildLog({ prompt, model, config, references, videoReferences, audioRef
         createdAt: Date.now(),
         title: prompt.slice(0, 12) || "未命名",
         prompt,
+        camera: normalizeCameraSelection(camera),
         time: new Date().toLocaleString("zh-CN", { hour12: false }),
         model,
         config: logConfig,

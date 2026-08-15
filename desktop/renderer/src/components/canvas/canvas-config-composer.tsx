@@ -4,6 +4,7 @@ import { Button, Image, Tooltip } from "antd";
 import { FileText, Image as ImageIcon, Music2, Video, Wand2, X } from "lucide-react";
 
 import { CanvasCameraPopover } from "./canvas-camera-popover";
+import type { CameraSelection } from "@/lib/camera";
 import { ModelPicker } from "@/components/model-picker";
 import { usePromptOptimizer } from "@/hooks/use-prompt-optimizer";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -19,6 +20,7 @@ type CanvasConfigComposerProps = {
     onClose: () => void;
     /** 生成模式（决定提示词优化文案），缺省按生图 */
     mode?: CanvasGenerationMode;
+    camera?: CameraSelection;
     /** 把提示词优化选择的文本模型持久化到节点 metadata */
     onConfigChange?: (patch: Partial<CanvasNodeMetadata>) => void;
 };
@@ -33,7 +35,7 @@ type MentionState = {
 
 export const CONFIG_REFERENCE_PATTERN = /@\[node:([^\]]+)\]/g;
 
-export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = "image", onConfigChange }: CanvasConfigComposerProps) {
+export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = "image", camera, onConfigChange }: CanvasConfigComposerProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const globalConfig = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
@@ -197,7 +199,7 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
                 {mention && candidates.length ? <MentionMenu inputs={candidates} allInputs={inputs} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} /> : null}
             </div>
             <div className="mt-1.5 flex items-center justify-between gap-1.5">
-                <CanvasCameraPopover value={value} onChange={onChange} buttonClassName="!h-6 !rounded-full !px-2 !text-xs" />
+                {mode === "image" || mode === "video" ? <CanvasCameraPopover selection={camera} onSelectionChange={(next) => onConfigChange?.({ camera: next })} buttonClassName="!h-6 !rounded-full !px-2 !text-xs" /> : <span />}
                 <div className="flex items-center gap-1.5">
                     <ModelPicker
                         config={{ ...globalConfig, textModel }}

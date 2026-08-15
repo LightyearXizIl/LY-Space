@@ -8,6 +8,7 @@ import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { fetchImageBlob, imageToDataUrl, imageToFile } from "@/services/image-storage";
 import { notifyStorageError, saveGeneratedBlob, saveGeneratedText } from "@/services/desktop-storage";
 import type { ReferenceImage } from "@/types/image";
+import { readRequestError, readUpstreamError } from "./error-message";
 
 export type AiTextMessage = {
     role: "system" | "user" | "assistant";
@@ -240,8 +241,10 @@ function resolveImageDataUrl(item: Record<string, unknown>) {
 }
 
 function parseImagePayload(payload: ImageApiResponse) {
+    const upstreamError = readUpstreamError(payload.error);
+    if (upstreamError) throw new Error(upstreamError);
     if (typeof payload.code === "number" && payload.code !== 0) {
-        throw new Error(payload.msg || "请求失败");
+        throw new Error(readUpstreamError(payload) || "请求失败");
     }
     // 支持 data / images / results 三种返回字段（兼容不同 API）
     const imageList = payload.data
@@ -363,52 +366,11 @@ async function persistGeneratedText(text: string) {
 }
 
 function readApiErrorMessage(value: unknown): string {
-    if (!value) return "";
-    if (typeof value === "string") {
-        // 可能是 JSON 字符串（如 error.message 被序列化）或纯文本错误
-        try {
-            const parsed = JSON.parse(value);
-            const inner = readApiErrorMessage(parsed) || value;
-            // 如果 JSON 解析后得到 "{}" 这种空对象，返回原始字符串
-            if (inner === value && typeof parsed === "object" && Object.keys(parsed).length === 0) return "";
-            return inner;
-        } catch {
-            // 检查是否是 HTML 错误页面
-            if (/<[a-z][\s\S]*>/i.test(value)) return `服务返回了 HTML 错误页面（${value.slice(0, 80)}...）。Base URL 可能填成了网页地址，请改为 API 地址（如 https://apihub.agnes-ai.cn）`;
-            return value;
-        }
-    }
-    if (typeof value !== "object") return "";
-    const payload = value as { msg?: unknown; message?: unknown; error?: unknown; detail?: unknown };
-    // error 可能是字符串或含 message 的对象
-    const errorMsg =
-        typeof payload.error === "string"
-            ? payload.error
-            : (payload.error as { message?: unknown })?.message;
-    return (
-        readApiErrorMessage(payload.msg) ||
-        readApiErrorMessage(payload.message) ||
-        readApiErrorMessage(errorMsg) ||
-        readApiErrorMessage(payload.detail) ||
-        ""
-    );
+    return readUpstreamError(value);
 }
 
 function readAxiosError(error: unknown, fallback: string) {
-    if (axios.isCancel(error)) return "请求已取消";
-    if (axios.isAxiosError(error)) {
-        const responseData = error.response?.data;
-        // 优先从响应体提取业务错误
-        const apiMsg = readApiErrorMessage(responseData);
-        if (apiMsg) return apiMsg;
-        // 响应体无法提取时用 HTTP 状态推断
-        const statusMsg = readStatusError(error.response?.status, fallback);
-        if (statusMsg) return statusMsg;
-        // 最后用 axios 自身的错误文本
-        return error.message || fallback;
-    }
-    if (error instanceof DOMException && error.name === "AbortError") return "请求已取消";
-    return error instanceof Error ? readApiErrorMessage(error.message) || error.message : fallback;
+    return readRequestError(error, fallback, readStatusError);
 }
 
 function readStatusError(status: number | undefined, fallback: string) {
@@ -523,8 +485,8 @@ function stringValue(value: unknown) {
 }
 
 function validateResponsePayload(payload: ResponseApiPayload) {
-    if (typeof payload.code === "number" && payload.code !== 0) throw new Error(payload.msg || "请求失败");
-    if (payload.error?.message) throw new Error(payload.error.message);
+    if (typeof payload.code === "number" && payload.code !== 0) throw new Error(readUpstreamError(payload) || "请求失败");
+    if (payload.error?.message) throw new Error(readUpstreamError(payload.error) || payload.error.message);
 }
 
 function validateGeminiPayload(payload: GeminiPayload) {
@@ -535,11 +497,7 @@ function validateGeminiPayload(payload: GeminiPayload) {
 async function readFetchError(response: Response, fallback: string) {
     const text = await response.text();
     if (!text) return readStatusError(response.status, fallback);
-    try {
-        return responseErrorMessage(JSON.parse(text)) || readStatusError(response.status, fallback);
-    } catch {
-        return text.slice(0, 300) || readStatusError(response.status, fallback);
-    }
+    return readUpstreamError(text) || readStatusError(response.status, fallback);
 }
 
 function consumeResponseStreamBlock(block: string, state: ResponseStreamState, onDelta?: (text: string) => void) {

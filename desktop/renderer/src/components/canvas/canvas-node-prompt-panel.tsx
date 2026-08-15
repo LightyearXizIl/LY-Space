@@ -101,7 +101,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                                 onMissingConfig={() => openConfigDialog(true)}
                                 onOpenChange={onImageSettingsOpenChange}
                             />
-                            <CanvasCameraPopover value={prompt} onChange={updatePrompt} buttonClassName="!h-10 !max-w-[110px] !justify-start !rounded-full !px-3" />
+                            <CanvasCameraPopover selection={node.metadata?.camera} onSelectionChange={(camera) => onConfigChange(node.id, { camera })} buttonClassName="!h-10 !max-w-[110px] !justify-start !rounded-full !px-3" />
                             {/* 优化提示模块放在生成按钮左边 */}
                             <ModelPicker config={config} value={config.textModel || config.model} onChange={(model) => onConfigChange(node.id, { textModel: model })} capability="text" className="!h-6 !min-w-[7rem] !px-2 !text-xs" />
                             <Tooltip title="优化提示词">
@@ -112,7 +112,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                         <>
                             <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="video" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
                             <CanvasVideoSettingsPopover config={config} buttonClassName="!h-10 !max-w-[170px] !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
-                            <CanvasCameraPopover value={prompt} onChange={updatePrompt} buttonClassName="!h-10 !max-w-[110px] !justify-start !rounded-full !px-3" />
+                            <CanvasCameraPopover selection={node.metadata?.camera} onSelectionChange={(camera) => onConfigChange(node.id, { camera })} buttonClassName="!h-10 !max-w-[110px] !justify-start !rounded-full !px-3" />
                             {/* 优化提示模块放在生成按钮左边 */}
                             <ModelPicker config={config} value={config.textModel || config.model} onChange={(model) => onConfigChange(node.id, { textModel: model })} capability="text" className="!h-6 !min-w-[7rem] !px-2 !text-xs" />
                             <Tooltip title="优化提示词">

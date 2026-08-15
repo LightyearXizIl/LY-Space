@@ -4,20 +4,19 @@ import { Aperture } from "lucide-react";
 import { Button } from "antd";
 
 import { CameraModule } from "@/components/camera-module";
+import type { CameraSelection } from "@/lib/camera";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 
 type CanvasCameraPopoverProps = {
-    /** 当前提示词文本（受控） */
-    value: string;
-    /** 更新提示词文本 */
-    onChange: (next: string) => void;
+    selection?: CameraSelection;
+    onSelectionChange: (next: CameraSelection) => void;
     onOpenChange?: (open: boolean) => void;
     buttonClassName?: string;
     placement?: "topLeft" | "top" | "topRight" | "bottomLeft" | "bottom" | "bottomRight";
 };
 
-export function CanvasCameraPopover({ value, onChange, onOpenChange, buttonClassName, placement = "topLeft" }: CanvasCameraPopoverProps) {
+export function CanvasCameraPopover({ selection, onSelectionChange, onOpenChange, buttonClassName, placement = "topLeft" }: CanvasCameraPopoverProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const buttonRef = useRef<HTMLSpanElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
@@ -52,7 +51,7 @@ export function CanvasCameraPopover({ value, onChange, onOpenChange, buttonClass
         };
     }, [onOpenChange, open]);
 
-    const panel = open && buttonRect ? <CameraPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} value={value} onChange={onChange} /> : null;
+    const panel = open && buttonRect ? <CameraPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} selection={selection} onSelectionChange={onSelectionChange} /> : null;
 
     return (
         <>
@@ -71,15 +70,15 @@ function CameraPortal({
     panelRef,
     placement,
     theme,
-    value,
-    onChange,
+    selection,
+    onSelectionChange,
 }: {
     buttonRect: DOMRect;
     panelRef: RefObject<HTMLDivElement | null>;
     placement: CanvasCameraPopoverProps["placement"];
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
-    value: string;
-    onChange: (next: string) => void;
+    selection?: CameraSelection;
+    onSelectionChange: (next: CameraSelection) => void;
 }) {
     const width = 340;
     const gap = 8;
@@ -111,7 +110,7 @@ function CameraPortal({
             onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => event.stopPropagation()}
         >
-            <CameraModule value={value} onChange={onChange} theme={theme} showTitle={false} />
+            <CameraModule selection={selection} onSelectionChange={onSelectionChange} theme={theme} showTitle={false} />
         </div>,
         document.body,
     );

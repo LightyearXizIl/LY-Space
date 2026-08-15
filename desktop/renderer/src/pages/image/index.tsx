@@ -10,6 +10,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { buildCameraPrompt, formatCameraSelection, normalizeCameraSelection, type CameraSelection } from "@/lib/camera";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -47,6 +48,7 @@ type GenerationLog = {
     createdAt: number;
     title: string;
     prompt: string;
+    camera?: CameraSelection;
     time: string;
     model: string;
     config: GenerationLogConfig;
@@ -103,6 +105,7 @@ export default function ImagePage() {
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const addAsset = useAssetStore((state) => state.addAsset);
     const [prompt, setPrompt] = useState("");
+    const [camera, setCamera] = useState<CameraSelection>({});
     const [references, setReferences] = useState<ReferenceImage[]>([]);
     const [results, setResults] = useState<GenerationResult[]>([]);
     const [logs, setLogs] = useState<GenerationLog[]>([]);
@@ -119,7 +122,7 @@ export default function ImagePage() {
     const [isReferenceDragActive, setIsReferenceDragActive] = useState(false);
     const [sessionHydrated, setSessionHydrated] = useState(false);
     const generationControllersRef = useRef(new Map<string, AbortController>());
-    const lastBatchRef = useRef<{ prompt: string; config: GenerationLogConfig; references: ReferenceImage[]; durationMs: number; images: GeneratedImage[] } | null>(null);
+    const lastBatchRef = useRef<{ prompt: string; camera: CameraSelection; config: GenerationLogConfig; references: ReferenceImage[]; durationMs: number; images: GeneratedImage[] } | null>(null);
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
     const canGenerate = Boolean(prompt.trim());
@@ -172,10 +175,11 @@ export default function ImagePage() {
 
     useEffect(() => {
         let active = true;
-        void loadWorkbenchSession<{ prompt: string; references: ReferenceImage[]; results: GenerationResult[]; elapsedMs: number }>(SESSION_STORE_KEY)
+        void loadWorkbenchSession<{ prompt: string; camera?: CameraSelection; references: ReferenceImage[]; results: GenerationResult[]; elapsedMs: number }>(SESSION_STORE_KEY)
             .then((session) => {
                 if (!active || !session) return;
                 setPrompt(session.prompt || "");
+                setCamera(normalizeCameraSelection(session.camera));
                 setReferences(session.references || []);
                 setResults((prev) => {
                     const restored = (session.results || []).map((result) => {
@@ -206,8 +210,8 @@ export default function ImagePage() {
     // 每次结果/输入变化（含生成结束的最终状态）仍会保存。
     useEffect(() => {
         if (!sessionHydrated) return;
-        void saveWorkbenchSession(SESSION_STORE_KEY, { prompt, references, results, elapsedMs }).catch(() => undefined);
-    }, [prompt, references, results, sessionHydrated]);
+        void saveWorkbenchSession(SESSION_STORE_KEY, { prompt, camera, references, results, elapsedMs }).catch(() => undefined);
+    }, [camera, prompt, references, results, sessionHydrated]);
 
     useEffect(() => {
         if (!sessionHydrated) return;
@@ -218,7 +222,7 @@ export default function ImagePage() {
                 const dataUrl = await resolveImageUrl(handoff.storageKey);
                 if (!dataUrl) continue;
                 nextReferences = [...nextReferences, { id: nanoid(), name: handoff.name, type: handoff.type, dataUrl, storageKey: handoff.storageKey }];
-                await saveWorkbenchSession(SESSION_STORE_KEY, { prompt, references: nextReferences, results, elapsedMs }).catch(() => undefined);
+                await saveWorkbenchSession(SESSION_STORE_KEY, { prompt, camera, references: nextReferences, results, elapsedMs }).catch(() => undefined);
                 await acknowledgeReferenceHandoff(handoff.id);
             }
             if (nextReferences !== references) {
@@ -316,13 +320,14 @@ export default function ImagePage() {
                     return { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
                 }),
             );
-            lastBatchRef.current = { prompt: text, config: { ...snapshot.config, count: String(generationCount) }, references: snapshot.references, durationMs: performance.now() - batchStartedAt, images: logImages };
+            lastBatchRef.current = { prompt: text, camera: snapshot.camera, config: { ...snapshot.config, count: String(generationCount) }, references: snapshot.references, durationMs: performance.now() - batchStartedAt, images: logImages };
             // 结果图转存 IndexedDB 并回写 storageKey，跨重启/跨模块切换恢复时走本地存储，不依赖 base64/http URL
             const storedImagesById = new Map(logImages.map((item) => [item.id, item]));
             setResults((value) => value.map((result) => (result.image && storedImagesById.has(result.image.id) ? { ...result, image: storedImagesById.get(result.image.id) } : result)));
             saveLog(
                 buildLog({
                     prompt: text,
+                    camera: snapshot.camera,
                     model,
                     config: { ...snapshot.config, count: String(generationCount) },
                     references: snapshot.references,
@@ -340,7 +345,7 @@ export default function ImagePage() {
         } catch (error) {
             // 落库失败时用原始成功图片设置兜底，保证刚生成的图片右键详情仍可用
             if (successImages.length) {
-                lastBatchRef.current = { prompt: text, config: { ...snapshot.config, count: String(generationCount) }, references: snapshot.references, durationMs: performance.now() - batchStartedAt, images: successImages };
+                lastBatchRef.current = { prompt: text, camera: snapshot.camera, config: { ...snapshot.config, count: String(generationCount) }, references: snapshot.references, durationMs: performance.now() - batchStartedAt, images: successImages };
             }
             message.error(error instanceof Error ? `生成完成但保存记录失败：${error.message}` : "生成完成但保存记录失败");
         } finally {
@@ -445,7 +450,7 @@ export default function ImagePage() {
         if (matchedStored) return matchedStored;
         const batch = lastBatchRef.current;
         if (batch && batch.images.some((item) => item.id === image.id)) {
-            return buildLog({ prompt: batch.prompt, model, config: batch.config, references: batch.references, durationMs: batch.durationMs, successCount: batch.images.length, failCount: 0, cancelCount: 0, status: "成功", images: batch.images });
+            return buildLog({ prompt: batch.prompt, camera: batch.camera, model, config: batch.config, references: batch.references, durationMs: batch.durationMs, successCount: batch.images.length, failCount: 0, cancelCount: 0, status: "成功", images: batch.images });
         }
         return null;
     };
@@ -464,6 +469,7 @@ export default function ImagePage() {
         }
         // 将该次生成操作恢复到工作台：提示词、参考图与参数逐项还原，不自动触发生成
         setPrompt(log.prompt);
+        setCamera(normalizeCameraSelection(log.camera));
         setReferences(log.references || []);
         const { config: logConfig } = log;
         if (logConfig.imageModel) updateConfig("imageModel", logConfig.imageModel);
@@ -633,10 +639,11 @@ export default function ImagePage() {
             openConfigDialog(true);
             return null;
         }
-        return { text, config: { ...effectiveConfig, model, count: "1" }, references: [...references] };
+        const selection = normalizeCameraSelection(camera);
+        return { text, requestText: buildCameraPrompt(text, selection), camera: selection, config: { ...effectiveConfig, model, count: "1" }, references: [...references] };
     };
 
-    const runGenerationSlot = async (id: string, snapshot: { text: string; config: AiConfig; references: ReferenceImage[] }) => {
+    const runGenerationSlot = async (id: string, snapshot: { text: string; requestText: string; camera: CameraSelection; config: AiConfig; references: ReferenceImage[] }) => {
         const itemStartedAt = performance.now();
         const controller = new AbortController();
         generationControllersRef.current.set(id, controller);
@@ -644,7 +651,7 @@ export default function ImagePage() {
         emitImageTasks();
         try {
             const requestOptions = { signal: controller.signal };
-            const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references, undefined, requestOptions) : await requestGeneration(snapshot.config, snapshot.text, requestOptions);
+            const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.requestText, snapshot.references, undefined, requestOptions) : await requestGeneration(snapshot.config, snapshot.requestText, requestOptions);
             const image = result[0];
             if (!image) throw new Error("接口没有返回图片");
             const meta = await readImageMeta(image.dataUrl);
@@ -689,6 +696,7 @@ export default function ImagePage() {
             saveLog(
                 buildLog({
                     prompt: snapshot.text,
+                    camera: snapshot.camera,
                     model,
                     config: { ...snapshot.config, count: "1" },
                     references: snapshot.references,
@@ -700,12 +708,12 @@ export default function ImagePage() {
                     images: [logImage],
                 }),
             );
-            lastBatchRef.current = { prompt: snapshot.text, config: { ...snapshot.config, count: "1" }, references: snapshot.references, durationMs: performance.now() - retryStartedAt, images: [logImage] };
+            lastBatchRef.current = { prompt: snapshot.text, camera: snapshot.camera, config: { ...snapshot.config, count: "1" }, references: snapshot.references, durationMs: performance.now() - retryStartedAt, images: [logImage] };
             message.success("重试成功");
         } catch {
             // 落库失败时用重试成功图片设置兜底，保证右键详情仍可用（runGenerationSlot 已更新卡片状态）
             if (retriedImage) {
-                lastBatchRef.current = { prompt: snapshot.text, config: { ...snapshot.config, count: "1" }, references: snapshot.references, durationMs: performance.now() - retryStartedAt, images: [retriedImage] };
+                lastBatchRef.current = { prompt: snapshot.text, camera: snapshot.camera, config: { ...snapshot.config, count: "1" }, references: snapshot.references, durationMs: performance.now() - retryStartedAt, images: [retriedImage] };
             }
         }
     };
@@ -835,7 +843,7 @@ export default function ImagePage() {
                             </div>
 
                             <div className="hidden gap-4 sm:grid sm:grid-cols-[minmax(0,1fr)_auto]">
-                                <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} cameraValue={prompt} onCameraChange={setPrompt} />
+                                <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} camera={camera} onCameraChange={setCamera} />
                             </div>
                         </div>
 
@@ -917,7 +925,7 @@ export default function ImagePage() {
             />
             <Drawer title="参数" placement="bottom" size="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 pb-4">
-                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} cameraValue={prompt} onCameraChange={setPrompt} />
+                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} camera={camera} onCameraChange={setCamera} />
                 </div>
             </Drawer>
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
@@ -929,7 +937,7 @@ export default function ImagePage() {
     );
 }
 
-function GenerationSettings({ config, model, updateConfig, openConfigDialog, cameraValue, onCameraChange }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void; cameraValue: string; onCameraChange: (value: string) => void }) {
+function GenerationSettings({ config, model, updateConfig, openConfigDialog, camera, onCameraChange }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void; camera: CameraSelection; onCameraChange: (value: CameraSelection) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
     return (
@@ -940,7 +948,7 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog, cam
             </div>
             <div className="min-w-0">
                 <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">镜头</span>
-                <CameraTrigger value={cameraValue} onChange={onCameraChange} />
+                <CameraTrigger selection={camera} onSelectionChange={onCameraChange} />
             </div>
             <div className="col-span-2">
                 <ImageSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />
@@ -1098,6 +1106,7 @@ function LogDetail({ log, storageSettings }: { log: GenerationLog; storageSettin
                 </div>
                 <div className="whitespace-pre-wrap rounded-lg border border-stone-200 bg-stone-50 p-3 text-sm dark:border-stone-800 dark:bg-stone-900">{log.prompt}</div>
             </div>
+            <LogDetailInfo label="镜头" value={formatCameraSelection(log.camera)} />
             {log.references?.length ? (
                 <div>
                     <div className="mb-1 text-sm font-medium text-stone-500 dark:text-stone-400">参考图（{log.references.length} 张）</div>
@@ -1199,6 +1208,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         createdAt: log.createdAt || Date.now(),
         title: log.title || log.model || "未命名",
         prompt: log.prompt || log.title || "",
+        camera: normalizeCameraSelection(log.camera),
         time: log.time || new Date().toLocaleString("zh-CN", { hour12: false }),
         model: log.model || config.imageModel || "",
         config,
@@ -1257,6 +1267,7 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
 
 function buildLog({
     prompt,
+    camera,
     model,
     config,
     references,
@@ -1268,6 +1279,7 @@ function buildLog({
     images,
 }: {
     prompt: string;
+    camera: CameraSelection;
     model: string;
     config: GenerationLogConfig;
     references: ReferenceImage[];
@@ -1292,6 +1304,7 @@ function buildLog({
         createdAt: Date.now(),
         title: prompt.slice(0, 12) || "未命名",
         prompt,
+        camera: normalizeCameraSelection(camera),
         time: new Date().toLocaleString("zh-CN", { hour12: false }),
         model,
         config: logConfig,

@@ -1,4 +1,4 @@
-import { CanvasNodeType, type CanvasNodeData, type ConnectionHandle } from "@/types/canvas";
+import { CanvasNodeType, type CanvasNodeData, type ConnectionHandle, type ConnectionSide } from "@/types/canvas";
 
 export function nodeBounds(nodes: CanvasNodeData[]) {
     return nodes.reduce(
@@ -56,23 +56,30 @@ export function findContainingGroupId(node: CanvasNodeData, nodes: CanvasNodeDat
     );
 }
 
-export function getConnectionTargetAnchor(node: CanvasNodeData, current: ConnectionHandle) {
+export function getConnectionTargetAnchor(node: CanvasNodeData, current: ConnectionHandle, side?: ConnectionSide) {
     return {
-        x: current.handleType === "source" ? node.position.x : node.position.x + node.width,
+        x: side === "left" || (!side && current.handleType === "source") ? node.position.x : node.position.x + node.width,
         y: node.position.y + node.height / 2,
     };
 }
 
-export function normalizeConnection(firstNodeId: string, secondNodeId: string, nodes: CanvasNodeData[], firstHandleType: "source" | "target") {
+export function nearestConnectionSide(node: CanvasNodeData, x: number): ConnectionSide {
+    return x < node.position.x + node.width / 2 ? "left" : "right";
+}
+
+export function normalizeConnection(firstNodeId: string, secondNodeId: string, nodes: CanvasNodeData[], firstHandleType: "source" | "target", secondSide?: ConnectionSide) {
     const first = nodes.find((node) => node.id === firstNodeId);
     const second = nodes.find((node) => node.id === secondNodeId);
     if (!first || !second || first.id === second.id) return null;
     if (first.type === CanvasNodeType.Group || second.type === CanvasNodeType.Group) return null;
     if (first.type === CanvasNodeType.Config && second.type === CanvasNodeType.Config) return null;
-    if (second.type === CanvasNodeType.Config) return { fromNodeId: first.id, toNodeId: second.id };
-    if (first.type === CanvasNodeType.Config && firstHandleType === "target") return { fromNodeId: second.id, toNodeId: first.id };
-    if (first.type === CanvasNodeType.Config) return { fromNodeId: first.id, toNodeId: second.id };
-    return { fromNodeId: first.id, toNodeId: second.id };
+    const firstSide: ConnectionSide = firstHandleType === "source" ? "right" : "left";
+    if (second.type === CanvasNodeType.Config) return { fromNodeId: first.id, toNodeId: second.id, fromSide: firstSide, toSide: secondSide };
+    if (first.type === CanvasNodeType.Config && firstHandleType === "target") return { fromNodeId: second.id, toNodeId: first.id, fromSide: secondSide, toSide: firstSide };
+    if (first.type === CanvasNodeType.Config) return { fromNodeId: first.id, toNodeId: second.id, fromSide: firstSide, toSide: secondSide };
+    return firstHandleType === "source"
+        ? { fromNodeId: first.id, toNodeId: second.id, fromSide: firstSide, toSide: secondSide }
+        : { fromNodeId: second.id, toNodeId: first.id, fromSide: secondSide, toSide: firstSide };
 }
 
 export function isHiddenBatchChild(node: CanvasNodeData, nodes: CanvasNodeData[], collapsingBatchIds?: Set<string>) {

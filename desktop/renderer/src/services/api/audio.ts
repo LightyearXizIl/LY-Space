@@ -5,6 +5,7 @@ import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { saveGeneratedBlob } from "@/services/desktop-storage";
 import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
+import { readRequestError, readUpstreamError } from "./error-message";
 
 type RequestOptions = { signal?: AbortSignal };
 
@@ -39,7 +40,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
             });
             return await audioPluginBlob(result, format);
         } catch (error) {
-            throw new Error(readAxiosError(error, "音频生成失败"));
+            throw new Error(await readAxiosError(error, "音频生成失败"));
         }
     }
     assertAudioConfig(requestConfig, model);
@@ -61,7 +62,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
         await assertAudioBlob(response.data);
         return response.data.type.startsWith("audio/") ? response.data : new Blob([response.data], { type: audioMimeType(format) });
     } catch (error) {
-        throw new Error(readAxiosError(error, "音频生成失败"));
+        throw new Error(await readAxiosError(error, "音频生成失败"));
     }
 }
 
@@ -101,50 +102,20 @@ async function assertAudioBlob(blob: Blob) {
     } catch {
         return;
     }
-    if (typeof payload.code === "number" && payload.code !== 0) throw new Error(payload.msg || "音频生成失败");
-    if (payload.error?.message) throw new Error(payload.error.message);
+    if (typeof payload.code === "number" && payload.code !== 0) throw new Error(readUpstreamError(payload) || "音频生成失败");
+    if (payload.error?.message) throw new Error(readUpstreamError(payload.error) || payload.error.message);
 }
 
 function readApiErrorMessage(value: unknown): string {
-    if (!value) return "";
-    if (typeof value === "string") {
-        try {
-            const parsed = JSON.parse(value);
-            const inner = readApiErrorMessage(parsed) || value;
-            if (inner === value && typeof parsed === "object" && Object.keys(parsed).length === 0) return "";
-            return inner;
-        } catch {
-            if (/<[a-z][\s\S]*>/i.test(value)) return `服务返回了 HTML 错误页面（${value.slice(0, 80)}...）`;
-            return value;
-        }
-    }
-    if (typeof value !== "object") return "";
-    const payload = value as { msg?: unknown; message?: unknown; error?: unknown; detail?: unknown };
-    const errorMsg =
-        typeof payload.error === "string"
-            ? payload.error
-            : (payload.error as { message?: unknown })?.message;
-    return (
-        readApiErrorMessage(payload.msg) ||
-        readApiErrorMessage(payload.message) ||
-        readApiErrorMessage(errorMsg) ||
-        readApiErrorMessage(payload.detail) ||
-        ""
-    );
+    return readUpstreamError(value);
 }
 
-function readAxiosError(error: unknown, fallback: string) {
-    if (axios.isCancel(error)) return "请求已取消";
-    if (axios.isAxiosError(error)) {
-        const responseData = error.response?.data;
-        const apiMsg = readApiErrorMessage(responseData);
-        if (apiMsg) return apiMsg;
-        const statusMsg = statusMessage(error.response?.status, fallback);
-        if (statusMsg) return statusMsg;
-        return error.message || fallback;
+async function readAxiosError(error: unknown, fallback: string) {
+    if (axios.isAxiosError(error) && error.response?.data instanceof Blob) {
+        const upstreamError = readUpstreamError(await error.response.data.text());
+        if (upstreamError) return upstreamError;
     }
-    if (error instanceof DOMException && error.name === "AbortError") return "请求已取消";
-    return error instanceof Error ? readApiErrorMessage(error.message) || error.message : fallback;
+    return readRequestError(error, fallback, statusMessage);
 }
 
 function statusMessage(status: number | undefined, fallback: string) {

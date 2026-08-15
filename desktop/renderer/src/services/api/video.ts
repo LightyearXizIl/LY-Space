@@ -8,6 +8,7 @@ import { imageToDataUrl, imageToFile } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
+import { readRequestError, readUpstreamError } from "./error-message";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -198,7 +199,7 @@ async function pollAgnesVideoTask(config: AiConfig, task: VideoGenerationTask, o
         const state = unwrapEnvelope(payload, "Agnes 接口没有返回视频任务");
         const resultUrl = videoResultUrl(state) || state.metadata?.url || state.metadata?.video_url;
         if (resultUrl) return { status: "completed", result: await videoResultFromUrl(resultUrl, options) };
-        if (["failed", "cancelled", "error"].includes((state.status || "").toLowerCase())) return { status: "failed", error: readApiErrorMessage(state.error?.message) || "Agnes 视频生成失败" };
+        if (["failed", "cancelled", "error"].includes((state.status || "").toLowerCase())) return { status: "failed", error: readApiErrorMessage(state.error) || "Agnes 视频生成失败" };
         return { status: "pending" };
     } catch (error) {
         // 限流（429 / rate limit）时视为暂时不可查询，返回 pending 由轮询层稍后重试，不中断生成
@@ -309,7 +310,7 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
             await assertVideoBlob(content.data);
             return { status: "completed", result: { blob: content.data } };
         }
-        if (video.status === "failed" || video.status === "cancelled") return { status: "failed", error: readApiErrorMessage(video.error?.message) || "视频生成失败" };
+        if (video.status === "failed" || video.status === "cancelled") return { status: "failed", error: readApiErrorMessage(video.error) || "视频生成失败" };
         return { status: "pending" };
     } catch (error) {
         throw new Error(readAxiosError(error, "视频任务查询失败"));
@@ -349,7 +350,7 @@ async function pollSeedanceTask(config: AiConfig, task: VideoGenerationTask, opt
         const url = videoResultUrl(state);
         if (url) return { status: "completed", result: await videoResultFromUrl(url, options) };
         if (state.status === "succeeded" || state.status === "completed") return { status: "failed", error: "Seedance 任务成功但没有返回视频 URL" };
-        if (state.status === "failed" || state.status === "cancelled" || state.status === "expired") return { status: "failed", error: readApiErrorMessage(state.error?.message) || `Seedance 视频生成${state.status === "expired" ? "超时" : "失败"}` };
+        if (state.status === "failed" || state.status === "cancelled" || state.status === "expired") return { status: "failed", error: readApiErrorMessage(state.error) || `Seedance 视频生成${state.status === "expired" ? "超时" : "失败"}` };
         return { status: "pending" };
     } catch (error) {
         throw new Error(readAxiosError(error, "Seedance 任务查询失败"));
@@ -484,46 +485,11 @@ function videoResultUrl(payload: VideoResponse | SeedanceTask) {
 }
 
 function readApiErrorMessage(value: unknown): string {
-    if (!value) return "";
-    if (typeof value === "string") {
-        try {
-            const parsed = JSON.parse(value);
-            const inner = readApiErrorMessage(parsed) || value;
-            if (inner === value && typeof parsed === "object" && Object.keys(parsed).length === 0) return "";
-            return inner;
-        } catch {
-            if (/<[a-z][\s\S]*>/i.test(value)) return `服务返回了 HTML 错误页面（${value.slice(0, 80)}...）。Base URL 可能填成了网页地址，请改为 API 地址（如 https://apihub.agnes-ai.cn）`;
-            return value;
-        }
-    }
-    if (typeof value !== "object") return "";
-    const payload = value as { msg?: unknown; message?: unknown; error?: unknown; detail?: unknown };
-    // error 可能是字符串或含 message 的对象
-    const errorMsg =
-        typeof payload.error === "string"
-            ? payload.error
-            : (payload.error as { message?: unknown })?.message;
-    return (
-        readApiErrorMessage(payload.msg) ||
-        readApiErrorMessage(payload.message) ||
-        readApiErrorMessage(errorMsg) ||
-        readApiErrorMessage(payload.detail) ||
-        ""
-    );
+    return readUpstreamError(value);
 }
 
 function readAxiosError(error: unknown, fallback: string) {
-    let message: string;
-    if (axios.isCancel(error)) message = "请求已取消";
-    else if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; message?: string; code?: number | string }>(error)) {
-        const responseData = error.response?.data;
-        message = responseData !== undefined ? readApiErrorMessage(responseData) || statusMessage(error.response?.status, fallback) : error.message || fallback;
-    } else if (error instanceof DOMException && error.name === "AbortError") message = "请求已取消";
-    else if (error instanceof Error) message = readApiErrorMessage(error.message) || error.message;
-    else message = `${fallback}（${String(error)}）`;
-    // Agnes 服务端（litellm 网关）异常引导
-    if (/litellm|UploadFile|InternalServerError/i.test(message)) return `${message}；Agnes 服务端异常（可能正在维护），请稍后重试或检查 API 网关状态`;
-    return message;
+    return readRequestError(error, fallback, statusMessage);
 }
 
 function statusMessage(status: number | undefined, fallback: string) {

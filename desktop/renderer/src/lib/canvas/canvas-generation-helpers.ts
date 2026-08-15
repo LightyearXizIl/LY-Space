@@ -132,6 +132,11 @@ export function findRetrySourceNode(nodeId: string, nodes: CanvasNodeData[], con
     return null;
 }
 
+export function failedBatchChildren(root: CanvasNodeData, nodes: CanvasNodeData[]) {
+    const childIds = new Set(root.metadata?.batchChildIds || []);
+    return nodes.filter((node) => childIds.has(node.id) && node.metadata?.status === "error");
+}
+
 export function sourceNodeReferenceImages(node: CanvasNodeData | null) {
     if (!node || node.type !== CanvasNodeType.Image || !node.metadata?.content) return [];
     return [

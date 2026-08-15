@@ -1,3 +1,5 @@
+import type { CameraSelection } from "@/lib/camera";
+
 export type Position = {
     x: number;
     y: number;
@@ -29,6 +31,8 @@ export type CanvasNodeMetadata = {
     content?: string;
     composerContent?: string;
     prompt?: string;
+    requestPrompt?: string;
+    camera?: CameraSelection;
     status?: CanvasNodeStatus;
     errorDetails?: string;
     fontSize?: number;
@@ -83,7 +87,11 @@ export type CanvasConnection = {
     id: string;
     fromNodeId: string;
     toNodeId: string;
+    fromSide?: ConnectionSide;
+    toSide?: ConnectionSide;
 };
+
+export type ConnectionSide = "left" | "right";
 
 export type CanvasAssistantReference = {
     id: string;

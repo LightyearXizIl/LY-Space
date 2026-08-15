@@ -798,7 +798,8 @@ function InfiniteCanvasPage() {
                     const independentNode = batchRootId && allIds.has(batchRootId) ? { ...detachedNode, metadata: { ...detachedNode.metadata, batchRootId: undefined } } : detachedNode;
                     const childIds = independentNode.metadata?.batchChildIds?.filter((childId) => !allIds.has(childId));
                     if (!independentNode.metadata?.isBatchRoot || childIds?.length === independentNode.metadata.batchChildIds?.length) return independentNode;
-                    const primaryImageId = childIds?.includes(node.metadata.primaryImageId || "") ? node.metadata.primaryImageId : childIds?.[0];
+                    const currentPrimaryImageId = independentNode.metadata?.primaryImageId;
+                    const primaryImageId = childIds?.includes(currentPrimaryImageId || "") ? currentPrimaryImageId : childIds?.[0];
                     const primaryNode = next.find((item) => item.id === primaryImageId);
                     return {
                         ...independentNode,

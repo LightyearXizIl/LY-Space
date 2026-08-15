@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.4.9`；发布 tag 指向提交 `9e226d0`）
-- **最新发布状态**：`v0.4.9` 已于 2026-08-15 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `31871497602` 为 `completed/success`，Release 的 exe、blockmap、`latest.yml` 均已上传并返回 HTTP 200。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.4.10`；发布 tag 指向提交 `d4513d7`）
+- **最新发布状态**：`v0.4.10` 已于 2026-08-15 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `31873023645` 为 `completed/success`，Release 的 exe、blockmap、`latest.yml` 均已上传。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
 - **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`
@@ -26,7 +26,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.4.9（`VERSION`、两个 package 版本与 tag 已一致；tag 指向提交 `9e226d0`）
+- **当前版本**：v0.4.10（`VERSION`、两个 package 版本与 tag 已一致；tag 指向提交 `d4513d7`）
 
 ## 2. 数据存储
 
@@ -111,7 +111,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 ### 3.10 v0.3.6 更新下载断点续传与弹窗改造
 
 - **自研断点续传下载器**（`desktop/main.cjs`）：保留 electron-updater 的版本检查（`update-available` 事件缓存 `files[0]` 的 url/sha512/size），下载改为 `net.request` + `Range: bytes=N-` 续传写 `userData/updates/<文件名>.part`，暂停保留 `.part`（`pauseUpdateDownload` → abort + flush，状态 `paused`），继续调用 `downloadUpdate()` 自动从断点续传；完成后 sha512（base64 去 padding）校验，通过才改名为 `.exe` 进入 `downloaded`，校验失败删 `.part` 报错。
-- **安装方式变更**：`requestUpdateInstall` 不再用 `autoUpdater.quitAndInstall`，改为 `persistence-flushed` 后 `spawn(安装器, ["/S", `/D=${path.dirname(app.getPath("exe"))}`])` + `app.quit()`（NSIS 静默安装到当前安装目录，`runAfterFinish` 自动重启应用）。**坑**：`/D=` 必须作为最后一个整体参数（含空格路径）；下载文件 URL 拼 `https://github.com/LightyearXizIl/LY-Space/releases/download/<tag>/<files[0].url>`（tag 带 v，文件名不带 v）。
+- **安装方式变更**：`requestUpdateInstall` 不再用 `autoUpdater.quitAndInstall`，改为 `persistence-flushed` 后启动 assisted NSIS 安装器并 `app.quit()`；当前只传 `/D=${path.dirname(app.getPath("exe"))}`（必须作为最后一个整体参数），不传 `/S` 或 `--force-run`，也不隐藏窗口，因此用户可见安装向导并在完成页重新运行应用。下载文件 URL 拼 `https://github.com/LightyearXizIl/LY-Space/releases/download/<tag>/<files[0].url>`（tag 带 v，文件名不带 v）。
 - **三端同步**：IPC `lyspace:cancel-update-download` → `lyspace:pause-update-download`（`pauseUpdateDownload`）；`AppUpdateStatus` 新增 `"paused"`（desktop.d.ts + 主进程状态机）。
 - **弹窗**（`update-prompt.tsx`）：`styles.wrapper` flex 强制正中心（替代仅 `centered`）；`maskClosable={false}` `keyboard={false}`；`open` 覆盖 available/downloading/paused/downloaded/error（下载失败、暂停均驻留，仅「稍后」关闭）；下载中「暂停」、暂停后「继续下载」+「稍后」、失败显示错误 +「重试」。
 - **关于页**（`about-panel.tsx`）：下载中「取消下载」→「暂停」；`paused` 显示「已暂停 x / y」+「继续下载」；检查按钮 disabled 适配 paused。
@@ -226,6 +226,13 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - 批次子节点只在仍保持「根节点→子节点」连接时随根节点级联删除；连接线已删除的子节点会保留并清除失效的 `batchRootId`。
 - **验证与发布**：发布前已执行定向 Vitest `tests/grsai-image.test.ts`（12 项）与 `tests/canvas-retry-connection.test.ts`（4 项）；新增的 `tests/canvas-node-deletion.test.ts` 未执行，人工画布验收仍在待测文档。首次 CI 因可选 `metadata` 的 TypeScript 收窄失败，提交 `9e226d0` 修复后，第二次 CI 的版本校验、类型检查、渲染构建、Windows NSIS 打包与包验证均通过。
 - **发布物**：Release `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.4.9`；远程资产为 `LY-Space-Setup-0.4.9.exe`（92532493 字节）、对应 blockmap 与 `latest.yml`。`latest.yml` 的 version/path/size/sha512 已与 EXE 核对；本地未另行打包。
+
+### 3.26 v0.4.10 更新可见安装与存储路径保护
+
+- **存储路径是权威配置**：新增 `desktop/storage-settings.cjs`。有效 `storage-settings.json` 中的 `resultRoot`、`cacheRoot` 会原样保留；仅配置不存在或字段缺失时补默认值。配置损坏、无效或目录不可写时主进程停止启动，绝不写回空白默认路径。保存时保留未知配置字段。
+- **一次性迁移**：`storage-migration.cjs` 仅在旧安装目录默认数据完成快照、逐文件校验与原子恢复后，才把相应配置字段改为稳定默认路径；外部自定义路径及安装目录内自定义子目录保持原值。
+- **可见更新安装**：更新器去除 `/S`、`--force-run` 与 `windowsHide`，继续等待持久化回执后启动可见的 NSIS 向导，预填当前程序安装目录；完成页默认提供重新运行。弹窗状态改为「正在保存并打开安装程序...」。
+- **验证与发布**：Node 数据保护/安装状态机共 19 项通过，版本一致性通过。`Publish LY Space Desktop` 运行 `31873023645` 成功；Release `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.4.10` 为正式版，包含 `LY-Space-Setup-0.4.10.exe`（92533428 字节）、对应 blockmap 与 `latest.yml`。`latest.yml` 的 version/path/size 与远端 EXE 一致且含 SHA-512；GitHub API 提供的 EXE SHA-256 为 `07777677265e3a3f60059d19400970ec90bc490c310fbb4d9bc24331b6719ff8`。本地 NSIS 打包因构建依赖请求超时失败，未取得本地 v0.4.10 安装包；真实用户数据升级与可见安装器仍需在隔离环境人工验收。
 
 ### 3.23 v0.4.7 变更要点
 

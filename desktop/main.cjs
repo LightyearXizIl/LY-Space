@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
+const { restoreBridgeBackup } = require("./storage-migration.cjs");
 
 protocol.registerSchemesAsPrivileged([
     { scheme: "lyspace", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
@@ -275,39 +276,30 @@ function defaultSaveDirectory() {
     return lastSaveDirectory || app.getPath("downloads");
 }
 
-function storageBaseDirectory() {
-    return app.isPackaged ? path.dirname(process.execPath) : path.resolve(__dirname, "..");
-}
-
 function defaultStorageSettings() {
-    // 数据默认跟随安装目录：Result 与 Data cache 位于安装目录下，换目录安装自动迁移
-    const base = storageBaseDirectory();
-    return { resultRoot: path.join(base, "Result"), cacheRoot: path.join(base, "Data cache"), defaultResultRoot: path.join(base, "Result"), defaultCacheRoot: path.join(base, "Data cache") };
+    const resultRoot = path.join(app.getPath("documents"), "LY Space", "Result");
+    const cacheRoot = path.join(app.getPath("userData"), "Data cache");
+    return { resultRoot, cacheRoot, defaultResultRoot: resultRoot, defaultCacheRoot: cacheRoot };
 }
 
-/** 是否为历史默认结果目录（E 盘固定目录、documents/LY Space/Result），命中则切换为新默认（安装目录/Result）。 */
-function isLegacyDefaultResultRoot(value) {
+function isPreviousDefaultRoot(value, folder, previousInstallDir) {
     if (!value) return false;
     const resolved = path.resolve(value);
-    const candidates = ["E:/Software/LY Space/Result", path.join(app.getPath("documents"), "LY Space", "Result")];
+    const candidates = [
+        path.join(path.dirname(process.execPath), folder),
+        previousInstallDir ? path.join(previousInstallDir, folder) : "",
+        path.join("E:/Software/LY Space", folder),
+        ...(folder === "Data cache" ? [path.join(app.getPath("userData"), "app-data", folder), path.join(app.getPath("documents"), "LY Space", folder)] : []),
+    ].filter(Boolean);
     return candidates.some((candidate) => path.resolve(candidate) === resolved);
 }
 
-/** 是否为历史默认缓存目录（E 盘固定目录、userData/app-data/Data cache、documents/LY Space/Data cache），命中则切换为新默认（安装目录/Data cache）。 */
-function isLegacyDefaultCacheRoot(value) {
-    if (!value) return false;
-    const resolved = path.resolve(value);
-    const candidates = ["E:/Software/LY Space/Data cache", path.join(app.getPath("userData"), "app-data", "Data cache"), path.join(app.getPath("documents"), "LY Space", "Data cache")];
-    return candidates.some((candidate) => path.resolve(candidate) === resolved);
-}
-
-function readStorageSettings() {
+function readStorageSettings(previousInstallDir = "") {
     const defaults = defaultStorageSettings();
     try {
         const saved = JSON.parse(fs.readFileSync(storageConfigFile(), "utf8"));
-        // 以用户设置地址为准：仅首次安装（无配置）才默认跟随安装目录；用户设置过的路径（含历史 E 盘目录）一律保留
-        const resultRoot = saved.resultRoot || defaults.resultRoot;
-        const cacheRoot = saved.cacheRoot || defaults.cacheRoot;
+        const resultRoot = !saved.resultRoot || isPreviousDefaultRoot(saved.resultRoot, "Result", previousInstallDir) ? defaults.resultRoot : saved.resultRoot;
+        const cacheRoot = !saved.cacheRoot || isPreviousDefaultRoot(saved.cacheRoot, "Data cache", previousInstallDir) ? defaults.cacheRoot : saved.cacheRoot;
         return { ...defaults, resultRoot, cacheRoot, pendingCacheRoot: saved.pendingCacheRoot || "", lastError: saved.lastError || "" };
     } catch {
         return { ...defaults, pendingCacheRoot: "", lastError: "" };
@@ -366,72 +358,14 @@ function copyDirectory(source, target) {
     }
 }
 
-/** 历史默认结果目录（安装目录/Result 等）已有文件自动迁移到新默认目录：合并复制、重名不覆盖，成功后持久化新路径。 */
-function migrateLegacyResultIfNeeded() {
-    let savedRoot = "";
-    try {
-        savedRoot = String((JSON.parse(fs.readFileSync(storageConfigFile(), "utf8")).resultRoot || "")).trim();
-    } catch {
-        return;
-    }
-    if (!isLegacyDefaultResultRoot(savedRoot)) return;
-    if (path.resolve(savedRoot) === path.resolve(storageSettings.resultRoot)) return;
-    if (!fs.existsSync(savedRoot)) return;
-    try {
-        copyDirectory(savedRoot, storageSettings.resultRoot);
-        storageSettings.lastError = "";
-        // 迁移成功才持久化新路径，失败时配置保持旧值以便下次启动重试
-        writeStorageSettings();
-    } catch (error) {
-        storageSettings.lastError = `旧结果目录迁移失败：${error.message || error}`;
-        // 不写盘：配置仍为旧默认路径，下次启动自动重试迁移
-    }
-}
-
-/** 历史默认缓存目录（安装目录/Data cache 等）已有数据自动迁移到新默认目录：合并复制、重名不覆盖，成功后持久化新路径。 */
-function migrateLegacyCacheIfNeeded() {
-    let savedRoot = "";
-    try {
-        savedRoot = String((JSON.parse(fs.readFileSync(storageConfigFile(), "utf8")).cacheRoot || "")).trim();
-    } catch {
-        return;
-    }
-    if (!isLegacyDefaultCacheRoot(savedRoot)) return;
-    if (path.resolve(savedRoot) === path.resolve(storageSettings.cacheRoot)) return;
-    if (!fs.existsSync(savedRoot)) return;
-    if (!isIndexedDbIntact(savedRoot)) {
-        // 旧库损坏（如升级清空安装目录导致 leveldb 不完整）时跳过迁移，避免把坏数据带到新目录
-        storageSettings.lastError = "旧缓存目录中的 IndexedDB 数据不完整，已跳过迁移（可重新生成）";
-        return;
-    }
-    try {
-        copyDirectory(savedRoot, storageSettings.cacheRoot);
-        storageSettings.lastError = "";
-        // 迁移成功才持久化新路径，失败时配置保持旧值以便下次启动重试
-        writeStorageSettings();
-    } catch (error) {
-        storageSettings.lastError = `旧缓存目录迁移失败：${error.message || error}`;
-        // 不写盘：配置仍为旧默认路径，下次启动自动重试迁移
-    }
-}
-
-/** 检查缓存目录中的 IndexedDB 库文件是否完整（存在 .indexeddb.leveldb 目录时必须含 CURRENT 文件）。 */
-function isIndexedDbIntact(directory) {
-    const indexDbDir = path.join(directory, "IndexedDB");
-    if (!fs.existsSync(indexDbDir)) return true;
-    try {
-        for (const entry of fs.readdirSync(indexDbDir, { withFileTypes: true })) {
-            if (!entry.isDirectory() || !entry.name.includes(".indexeddb.leveldb")) continue;
-            if (!fs.existsSync(path.join(indexDbDir, entry.name, "CURRENT"))) return false;
-        }
-    } catch {
-        return false;
-    }
-    return true;
-}
-
 function configureStorageBeforeReady() {
-    storageSettings = readStorageSettings();
+    const bridge = restoreBridgeBackup({
+        userData: app.getPath("userData"),
+        localAppData: process.env.LOCALAPPDATA || path.dirname(app.getPath("appData")),
+        documents: app.getPath("documents"),
+        storageConfigFile: storageConfigFile(),
+    });
+    storageSettings = readStorageSettings(bridge.installDir);
     loadLastSaveDirectory();
     if (storageSettings.pendingCacheRoot) {
         try {
@@ -451,105 +385,13 @@ function configureStorageBeforeReady() {
         ensureStorageDirectories();
     } catch {
         storageSettings.resultRoot = path.join(app.getPath("documents"), "LY Space", "Result");
-        storageSettings.cacheRoot = path.join(app.getPath("userData"), "app-data", "Data cache");
+        storageSettings.cacheRoot = path.join(app.getPath("userData"), "Data cache");
         storageSettings.pendingCacheRoot = "";
         ensureStorageDirectories();
-        writeStorageSettings();
     }
-    // 数据跟随安装目录：换目录安装/更新后自动把旧安装目录的数据迁移到当前安装目录。
-    migrateDataToCurrentInstall();
-    // 旧默认结果目录（安装目录/Result 等）存在历史文件时自动迁移到新默认目录（放最后，失败提示不被后续逻辑覆盖）
-    migrateLegacyResultIfNeeded();
-    // 旧默认缓存目录（IndexedDB/localStorage）迁移到新默认目录，必须在 sessionData 指向新目录之前完成
-    migrateLegacyCacheIfNeeded();
-    // sessionData（IndexedDB/localStorage）指向缓存目录（默认跟随安装目录：安装目录/Data cache）
+    writeStorageSettings();
+    // sessionData 包含 IndexedDB、Local Storage、Cookie 与 Chromium 会话数据，必须在 ready 前固定到用户目录。
     app.setPath("sessionData", storageSettings.cacheRoot);
-    app.setPath("cache", path.join(storageSettings.cacheRoot, "Cache"));
-}
-
-const DATA_LOCATION_MARKER_FILE = () => path.join(app.getPath("userData"), "app-data", "data-location.json");
-
-/** 数据跟随安装目录：把旧安装目录（marker 记录）与 v0.0.9 userData 中的历史数据迁移到当前安装目录。 */
-function migrateDataToCurrentInstall() {
-    const currentInstallDir = path.dirname(process.execPath);
-    const sources = [];
-    try {
-        const marker = JSON.parse(fs.readFileSync(DATA_LOCATION_MARKER_FILE(), "utf8"));
-        if (marker && typeof marker.dataDirectory === "string" && path.resolve(marker.dataDirectory) !== path.resolve(currentInstallDir) && fs.existsSync(marker.dataDirectory)) {
-            sources.push(marker.dataDirectory);
-        }
-    } catch {
-        // 首次运行无 marker
-    }
-    if (path.resolve(app.getPath("userData")) !== path.resolve(currentInstallDir)) sources.push(app.getPath("userData"));
-    for (const source of sources) migrateFromSource(source, currentInstallDir);
-    try {
-        fs.mkdirSync(path.dirname(DATA_LOCATION_MARKER_FILE()), { recursive: true });
-        fs.writeFileSync(DATA_LOCATION_MARKER_FILE(), JSON.stringify({ dataDirectory: currentInstallDir }), "utf8");
-    } catch {
-        // 忽略 marker 写入失败
-    }
-    updateStoragePathsAfterMigration(sources, currentInstallDir);
-}
-
-function migrateFromSource(source, currentInstallDir) {
-    // 数据默认跟随安装目录；仅当结果/缓存目录位于安装目录体系内（当前或旧安装目录）时才迁移，
-    // 避免默认安装目录配置外（如用户自定义路径）时把旧目录数据复制到安装目录
-    const currentResult = path.join(currentInstallDir, "Result");
-    const legacyResult = path.join(source, "Result");
-    const resultIsInstallDir = path.resolve(storageSettings.resultRoot) === path.resolve(currentResult) || path.resolve(storageSettings.resultRoot) === path.resolve(legacyResult);
-    if (resultIsInstallDir && fs.existsSync(legacyResult) && !fs.existsSync(currentResult)) {
-        try {
-            copyDirectory(legacyResult, currentResult);
-        } catch {
-            // 单项失败不阻塞
-        }
-    }
-    const currentCache = path.join(currentInstallDir, "Data cache");
-    const legacyCacheDir = path.join(source, "Data cache");
-    const cacheIsInstallDir = path.resolve(storageSettings.cacheRoot) === path.resolve(currentCache) || path.resolve(storageSettings.cacheRoot) === path.resolve(legacyCacheDir);
-    // 旧安装目录的 Data cache（IndexedDB/localStorage/sessionData/Cache）
-    if (cacheIsInstallDir && fs.existsSync(legacyCacheDir) && !fs.existsSync(currentCache)) {
-        try {
-            copyDirectory(legacyCacheDir, currentCache);
-        } catch {
-            // 单项失败不阻塞
-        }
-    }
-    // userData 根目录的 Chromium web 数据（v0.0.9 的 sessionData 曾在 userData 根）→ 合并到当前生效的缓存目录
-    const targetCache = storageSettings.cacheRoot;
-    for (const name of ["IndexedDB", "Local Storage", "Session Storage", "Cookies", "Preferences"]) {
-        const legacyWeb = path.join(source, name);
-        const targetWeb = path.join(targetCache, name);
-        if (!fs.existsSync(legacyWeb) || fs.existsSync(targetWeb)) continue;
-        try {
-            fs.mkdirSync(targetCache, { recursive: true });
-            if (fs.statSync(legacyWeb).isDirectory()) copyDirectory(legacyWeb, targetWeb);
-            else fs.copyFileSync(legacyWeb, targetWeb);
-        } catch {
-            // 单项失败不阻塞
-        }
-    }
-}
-
-function updateStoragePathsAfterMigration(sources, currentInstallDir) {
-    let changed = false;
-    for (const source of sources) {
-        const legacyResult = path.join(source, "Result");
-        const legacyCache = path.join(source, "Data cache");
-        if (storageSettings.resultRoot && path.resolve(storageSettings.resultRoot) === path.resolve(legacyResult)) {
-            storageSettings.resultRoot = path.join(currentInstallDir, "Result");
-            changed = true;
-        }
-        if (storageSettings.cacheRoot && path.resolve(storageSettings.cacheRoot) === path.resolve(legacyCache)) {
-            storageSettings.cacheRoot = path.join(currentInstallDir, "Data cache");
-            changed = true;
-        }
-    }
-    if (changed) {
-        storageSettings.lastError = "";
-        writeStorageSettings();
-    }
 }
 
 function storageInfo() {
@@ -676,9 +518,15 @@ function createTray() {
 }
 
 app.setName("LY Space");
+app.setPath("userData", path.join(app.getPath("appData"), "LY Space"));
 app.setAppUserModelId("com.lyspace.desktop");
 if (!app.requestSingleInstanceLock()) app.quit();
-configureStorageBeforeReady();
+try {
+    configureStorageBeforeReady();
+} catch (error) {
+    dialog.showErrorBox("LY Space 用户数据保护", error instanceof Error ? error.message : String(error));
+    throw error;
+}
 app.on("second-instance", () => {
     if (mainWindow) {
         if (!mainWindow.isVisible()) mainWindow.show();

@@ -276,7 +276,7 @@ function grsaiAspectRatio(config: AiConfig) {
     return dimensions ? closestGeminiAspectRatio(`${dimensions.width}:${dimensions.height}`) : closestGeminiAspectRatio(value);
 }
 
-function grsaiRequestBody(config: AiConfig, prompt: string, images: string[]) {
+export function grsaiRequestBody(config: AiConfig, prompt: string, images: string[]) {
     const model = config.model.trim();
     const lowerModel = model.toLowerCase();
     const isGptImage = lowerModel === "gpt-image-2" || lowerModel === "gpt-image-2-vip";
@@ -295,6 +295,21 @@ function grsaiRequestBody(config: AiConfig, prompt: string, images: string[]) {
         ...(isGptImage ? {} : { imageSize: grsaiImageSize(config.imageResolution) }),
         replyType: "json",
     };
+}
+
+export function normalizeGrsaiReference(value: string) {
+    const reference = value.trim();
+    if (/^https?:\/\//i.test(reference)) return reference;
+    const dataUrl = reference.match(/^data:image\/[a-z0-9.+-]+;base64,([a-z0-9+/=\s]+)$/i);
+    const base64 = (dataUrl?.[1] || reference).replace(/\s+/g, "");
+    if (!base64 || !/^[a-z0-9+/]+={0,2}$/i.test(base64)) throw new Error("GRS AI 参考图格式无效，请重新添加图片");
+    return base64;
+}
+
+export async function grsaiReferenceValue(image: ReferenceImage) {
+    const remoteUrl = image.url || image.dataUrl;
+    if (!image.storageKey && /^https?:\/\//i.test(remoteUrl)) return remoteUrl;
+    return normalizeGrsaiReference(await imageToDataUrl(image));
 }
 
 async function requestGrsaiImageOnce(config: AiConfig, prompt: string, images: string[], options?: RequestOptions) {
@@ -1032,7 +1047,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
     if (requestConfig.apiFormat === "grsai") {
         if (mask) throw new Error("GRS AI 当前接口不支持蒙版编辑，请移除蒙版后使用参考图编辑");
-        const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
+        const refs = await Promise.all(references.map(grsaiReferenceValue));
         return await requestGrsaiImages(requestConfig, requestPrompt, refs, n, options);
     }
     if (requestConfig.apiFormat === "gemini") {

@@ -4,6 +4,7 @@ import { Button, Modal, Progress, Tag } from "antd";
 import { parseChangelog, type ReleaseInfo } from "@/lib/release";
 
 function getTagColor(type: string) {
+    if (type === "重要") return "red";
     if (type === "新增") return "green";
     if (type === "修复") return "red";
     if (type === "调整") return "blue";

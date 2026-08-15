@@ -1,0 +1,162 @@
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const MIGRATION_VERSION = "v0.4.7";
+
+function readJson(file) {
+    return JSON.parse(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
+}
+
+function writeJsonAtomic(file, value) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const temporary = `${file}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(value, null, 2), "utf8");
+    fs.renameSync(temporary, file);
+}
+
+function directoryManifest(directory) {
+    if (!fs.existsSync(directory)) return [];
+    const root = path.resolve(directory);
+    const files = [];
+    const visit = (current) => {
+        for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+            const target = path.join(current, entry.name);
+            if (entry.isSymbolicLink()) throw new Error(`数据目录包含不支持的链接：${target}`);
+            if (entry.isDirectory()) visit(target);
+            else if (entry.isFile()) {
+                const bytes = fs.readFileSync(target);
+                files.push({ path: path.relative(root, target).replace(/\\/g, "/"), length: bytes.length, sha256: crypto.createHash("sha256").update(bytes).digest("hex") });
+            }
+        }
+    };
+    visit(root);
+    return files.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function sameManifest(left, right) {
+    const normalize = (items) => (items || [])
+        .map((item) => ({ path: String(item.path), length: Number(item.length), sha256: String(item.sha256).toLowerCase() }))
+        .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+}
+
+function assertManifest(directory, expected, label) {
+    const actual = directoryManifest(directory);
+    if (!sameManifest(actual, expected || [])) throw new Error(`${label}文件校验失败`);
+    return actual;
+}
+
+function assertChildPath(target, parent, label) {
+    const resolvedTarget = path.resolve(target);
+    const resolvedParent = path.resolve(parent);
+    const relative = path.relative(resolvedParent, resolvedTarget);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`${label}路径越界`);
+    return resolvedTarget;
+}
+
+function removeChildDirectory(target, parent) {
+    const resolved = assertChildPath(target, parent, "清理临时目录");
+    if (fs.existsSync(resolved)) fs.rmSync(resolved, { recursive: true, force: true });
+}
+
+function copyDirectoryExact(source, target) {
+    if (!fs.existsSync(source)) return;
+    fs.mkdirSync(target, { recursive: true });
+    for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+        const sourcePath = path.join(source, entry.name);
+        const targetPath = path.join(target, entry.name);
+        if (entry.isSymbolicLink()) throw new Error(`数据目录包含不支持的链接：${sourcePath}`);
+        if (entry.isDirectory()) copyDirectoryExact(sourcePath, targetPath);
+        else if (entry.isFile()) fs.copyFileSync(sourcePath, targetPath);
+    }
+}
+
+function replaceDirectoryFromSnapshot({ source, target, expected, backupRoot, label }) {
+    if (!expected?.length) return false;
+    assertManifest(source, expected, `${label}快照`);
+    const parent = path.dirname(target);
+    const stage = `${target}.migrating-${MIGRATION_VERSION}`;
+    fs.mkdirSync(parent, { recursive: true });
+    removeChildDirectory(stage, parent);
+    copyDirectoryExact(source, stage);
+    assertManifest(stage, expected, `${label}迁移副本`);
+
+    let replaced = "";
+    try {
+        if (fs.existsSync(target)) {
+            replaced = path.join(backupRoot, "replaced-destinations", label);
+            if (!fs.existsSync(replaced)) {
+                copyDirectoryExact(target, replaced);
+                assertManifest(replaced, directoryManifest(target), `${label}原目标备份`);
+            }
+            removeChildDirectory(target, parent);
+        }
+        fs.renameSync(stage, target);
+        assertManifest(target, expected, `${label}最终目录`);
+        return true;
+    } catch (error) {
+        if (!fs.existsSync(target) && replaced && fs.existsSync(replaced)) copyDirectoryExact(replaced, target);
+        throw error;
+    } finally {
+        removeChildDirectory(stage, parent);
+    }
+}
+
+function loadBridgeBackup(localAppData) {
+    const base = path.join(localAppData, "LY Space", "Backups");
+    const latestFile = path.join(base, "latest.json");
+    if (!fs.existsSync(latestFile)) return null;
+    const latest = readJson(latestFile);
+    const backupRoot = assertChildPath(String(latest.backupRoot || ""), base, "升级备份");
+    const manifestFile = path.join(backupRoot, "manifest.json");
+    const manifest = readJson(manifestFile);
+    if (manifest.version !== MIGRATION_VERSION || manifest.status !== "ready") return null;
+    return { backupRoot, manifestFile, manifest };
+}
+
+function isOldDefault(value, installDir, folder) {
+    return Boolean(value && installDir && path.resolve(value) === path.resolve(installDir, folder));
+}
+
+function restoreBridgeBackup({ userData, localAppData, documents, storageConfigFile }) {
+    const bridge = loadBridgeBackup(localAppData);
+    if (!bridge) return { migrated: false, installDir: "", backupRoot: "" };
+    const stateFile = path.join(userData, "app-data", "migration-v0.4.7.json");
+    if (fs.existsSync(stateFile)) {
+        const state = readJson(stateFile);
+        if (state.status === "completed" && path.resolve(state.backupRoot) === path.resolve(bridge.backupRoot)) {
+            return { migrated: false, installDir: bridge.manifest.installDir, backupRoot: bridge.backupRoot };
+        }
+    }
+
+    let saved = {};
+    try {
+        saved = readJson(storageConfigFile);
+    } catch {
+        // v0.4.6 默认安装没有 storage-settings.json。
+    }
+    const defaultCacheRoot = path.join(userData, "Data cache");
+    const defaultResultRoot = path.join(documents, "LY Space", "Result");
+    const useDefaultCache = !saved.cacheRoot || isOldDefault(saved.cacheRoot, bridge.manifest.installDir, "Data cache");
+    const useDefaultResult = !saved.resultRoot || isOldDefault(saved.resultRoot, bridge.manifest.installDir, "Result");
+    const current = bridge.manifest.snapshots?.currentInstall || {};
+
+    try {
+        const cacheTarget = current.dataCache?.restoreTarget || defaultCacheRoot;
+        const resultTarget = current.result?.restoreTarget || defaultResultRoot;
+        const cacheMigrated = (useDefaultCache || current.dataCache?.restoreTarget) && current.dataCache
+            ? replaceDirectoryFromSnapshot({ source: path.join(bridge.backupRoot, current.dataCache.directory), target: cacheTarget, expected: current.dataCache.files, backupRoot: bridge.backupRoot, label: "Data cache" })
+            : false;
+        const resultMigrated = (useDefaultResult || current.result?.restoreTarget) && current.result
+            ? replaceDirectoryFromSnapshot({ source: path.join(bridge.backupRoot, current.result.directory), target: resultTarget, expected: current.result.files, backupRoot: bridge.backupRoot, label: "Result" })
+            : false;
+        writeJsonAtomic(stateFile, { version: MIGRATION_VERSION, status: "completed", backupRoot: bridge.backupRoot, cacheMigrated, resultMigrated, completedAt: new Date().toISOString() });
+        return { migrated: cacheMigrated || resultMigrated, installDir: bridge.manifest.installDir, backupRoot: bridge.backupRoot };
+    } catch (error) {
+        writeJsonAtomic(stateFile, { version: MIGRATION_VERSION, status: "failed", backupRoot: bridge.backupRoot, error: error instanceof Error ? error.message : String(error), failedAt: new Date().toISOString() });
+        throw new Error(`用户数据恢复失败，程序未使用空白数据启动。备份位置：${bridge.backupRoot}。${error instanceof Error ? error.message : error}`);
+    }
+}
+
+module.exports = { MIGRATION_VERSION, assertManifest, copyDirectoryExact, directoryManifest, loadBridgeBackup, restoreBridgeBackup, sameManifest };

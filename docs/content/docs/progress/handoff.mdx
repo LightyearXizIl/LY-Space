@@ -9,7 +9,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前 tag `v0.4.6`）
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.4.7`）
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
 - **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`
@@ -25,20 +25,20 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.4.6（`VERSION` 文件，tag `v0.4.6`）
+- **当前版本**：v0.4.7（`VERSION` 文件；发布后 tag `v0.4.7`）
 
 ## 2. 数据存储
 
 | 项 | 默认位置 | 说明 |
 |---|---|---|
-| 生成结果文件 | `安装目录\Result\`（Picture/Video/text/Audio 四文件夹） | 生成后立即自动落盘 |
-| 数据缓存（IndexedDB） | `安装目录\Data cache\` | 生成记录、结果、配置缓存；`sessionData` 指向它 |
+| 生成结果文件 | `文档\LY Space\Result\`（Picture/Video/text/Audio 四文件夹） | 生成后立即自动落盘 |
+| 数据缓存（IndexedDB/Local Storage） | `%APPDATA%\LY Space\Data cache\` | 画布、设置、素材、生成记录与媒体 Blob；`sessionData` 指向它 |
 | 存储配置 | `%APPDATA%\LY Space\app-data\storage-settings.json` | 用户可改 resultRoot/cacheRoot |
 | 上次下载目录 | `%APPDATA%\LY Space\app-data\last-save-directory.txt` | 下载对话框默认沿用上次目录 |
 
-- **存储策略（v0.2.7 起）**：**用户设置地址优先**——仅首次安装（无配置）默认跟随安装目录；用户设置过的结果/缓存目录（含历史 E 盘目录）一律保留，换目录安装不覆盖用户设置
-- **升级保护**：`desktop/build/nsis-custom.nsh` 的 `customRemoveFiles` 宏（CopyFiles 跨卷安全）保证覆盖升级/自动更新时 `Data cache`、`Result` 不被 NSIS 卸载器清空
-- **历史教训**：NSIS 升级会清空安装目录 → 数据曾放 E 盘（v0.1.5）→ v0.1.9 跟随安装目录 + NSIS 宏保护。**不要再把默认目录改回 E 盘**（用户自定义除外）
+- **存储策略（v0.4.7 起）**：默认用户数据与程序文件彻底分离；用户自定义过的结果/缓存目录保持不变，换目录安装不覆盖用户设置。
+- **首次升级保护**：`customInit` 在旧卸载器运行前，把当前安装目录数据和旧 AppData 分别保存到 `%LOCALAPPDATA%\LY Space\Backups\v0.4.7-*`，逐文件 SHA-256 校验；新版只从当前安装数据快照恢复，旧 LevelDB 不合并，备份不自动删除。
+- **历史教训**：NSIS `CopyFiles "$INSTDIR\目录\*.*"` 不会递归复制子目录，旧 `customRemoveFiles` 随后执行 `RMDir /r` 会丢失嵌套数据。不得再把用户数据放回安装目录，也不得用通配符复制冒充递归备份。
 
 ## 3. 关键链路与已修复的坑
 
@@ -141,7 +141,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **连线拖拽改回同步更新**（`project.tsx`）：移除 `connectionDragRef`/`connectionFrameRef` rAF 合并，mousemove 直接 `setMouseWorld` + `setConnectionTargetNodeId`（连线是单条低频交互，同步最跟手；框选的 rAF 合并保留）。`connectNodes` 补反馈：连自己提示「不能连接到自身」、重复连接提示「该连接已存在」。
 - **窗口标题栏跟随应用主题**：主进程 `nativeTheme.themeSource`（IPC `lyspace:set-native-theme`，preload `setNativeTheme`）；`AppProviders` 主题变化时同步调用——Windows 标题栏/原生控件明暗随应用内浅/暗切换。
 - **关于页更新区**：核对 stone + `dark:` 变体已全适配，无硬编码颜色。
-- **更新不删用户数据（保障确认）**：① NSIS `customRemoveFiles` 宏保护安装目录 `Data cache`/`Result`（升级卸载时复制到临时再移回），自研静默安装（`/S /D=`）走同一 NSIS 脚本同样受保护；② 画布/渠道/会话等 userData（IndexedDB/localStorage，`%APPDATA%\LY Space`）不在安装目录天然保留；③ 升级前 `flush-persistence` 落盘。
+- **当时的数据保护结论已被 v0.4.7 推翻**：旧 `customRemoveFiles` 的 `CopyFiles *.*` 实际不递归，无法保护安装目录里的 IndexedDB/Local Storage/Result 子目录；以 3.23 的双快照迁移方案为准。升级前 `flush-persistence` 仍保留。
 
 ### 3.15 v0.3.9 镜头模块 + 画布节点提示词优化
 
@@ -204,6 +204,13 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **生图/视频工作台「模型/镜头」行**（`pages/image/index.tsx`、`pages/video/index.tsx`）：设置区外层 grid 由 `sm:grid-cols-2` 改为 `sm:grid-cols-[minmax(0,1fr)_auto]`（移动端 Drawer 同样），模型下拉占满剩余宽度不再截断，镜头按钮紧凑靠右。**坑**：v0.4.3 的 50/50 两列布局被此方案取代；`ImageSettingsPanel` 的 `col-span-2` 仍跨两列不受影响。
 - **画布复制/克隆只复制选中节点**（`project.tsx` Alt 克隆 + `pasteCopiedNodes`）：① 批量组根节点被选中时其 `batchChildIds` 子图不再随 Alt 克隆（`selectedBatchRootIds` 过滤），副本根节点 `batchChildIds` 清空（显示为单图）；② **输入连线同步**：源节点不在复制集合时，复制一条连线指向原源头节点（`fromNodeId` 保留原 id、`toNodeId` 映射新 id）——「只要线不要源头节点」，Alt 克隆与 Ctrl+C/V 粘贴行为一致；③ Alt 单击未拖动撤销逻辑（`altCloneIdsRef`）已覆盖新增输入连线。**坑**：拖拽（非 Alt）移动组时 `dragIds` 仍含批量子图（不变）；两端都在复制集合的连线仍按原逻辑重映射。
 - **组节点固定（钉子）**（`types/canvas.ts` + `canvas-node.tsx` + `project.tsx`）：`CanvasNodeMetadata.pinned?: boolean`；组节点右上角（「N 个节点」标签旁）新增 Pin 按钮，点击固定/取消；`isNodeLocked` 动态判定——组 pinned 时组自身及所有 `groupId` 指向该组的成员（含后续拖入/新建）不可拖动；`handleNodeMouseDown` 计算 `dragIds` 后若有任一锁定节点直接 return（不建 dragRef、不触发 Alt 克隆）。**坑**：① 锁定只拦移动，选中/删除/调整组帧大小/连线仍可用；② 框选拖拽含锁定节点时整组拖动被拦（安全优先）；③ pin 状态随节点持久化，重开项目保留。
+
+### 3.23 v0.4.7 变更要点
+
+- **升级数据保护重做**（`desktop/build/nsis-custom.nsh` + `backup-user-data.ps1` + `storage-migration.cjs`）：安装前等待旧进程退出，对安装目录 `Data cache` / `Result` 和旧 AppData 分别做递归 SHA-256 快照；复制或校验失败时安装器立即中止。新版首次启动使用临时目录校验并原子替换，只恢复当前安装数据，旧 AppData 单独留档且不混合 LevelDB。
+- **默认数据移出安装目录**（`desktop/main.cjs`）：`sessionData` 固定到 `%APPDATA%\LY Space\Data cache`，生成结果固定到“文档\LY Space\Result”，自定义路径不变；移除旧的安装目录迁移与 `app.setPath("cache")` 覆盖，后续更新只替换程序文件。
+- **GRS AI 参考图适配**（`services/api/image.ts`）：新版 `/v1/api/generate` 的 `images` 中，本地参考图发送裸 Base64、HTTP(S) URL 原样传递；请求体回归覆盖六个默认图片模型。
+- **发版硬门槛**：升级前后逐文件哈希一致、应用重开后所有本地数据可读、GRS AI 两个模型家族最小真实调用成功，任一失败不发布。v0.4.7 Release 日志首条必须保留升级前人工备份提醒。
 
 ### 3.22 v0.4.6 变更要点
 

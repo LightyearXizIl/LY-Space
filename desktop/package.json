@@ -1,6 +1,6 @@
 {
   "name": "ly-space-desktop",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "LY Space desktop creative workspace",
   "author": "LY Space",
   "private": true,
@@ -8,6 +8,7 @@
   "scripts": {
     "icon": "node scripts/generate-icon.cjs",
     "check": "pnpm --dir renderer run typecheck",
+    "test": "node --test tests/*.test.cjs && pnpm --dir renderer run test",
     "verify:package": "node scripts/verify-package.cjs",
     "pack:win": "pnpm run check && pnpm --dir renderer run build && pnpm run icon && electron-builder --win nsis --x64 --publish never && pnpm run verify:package",
     "publish:win": "pnpm run check && pnpm --dir renderer run build && pnpm run icon && electron-builder --win nsis --x64 --publish always && pnpm run verify:package",
@@ -25,6 +26,7 @@
     "executableName": "LY Space",
     "files": [
       "main.cjs",
+      "storage-migration.cjs",
       "preload.cjs",
       "build/icon.png",
       "renderer/dist/**/*"

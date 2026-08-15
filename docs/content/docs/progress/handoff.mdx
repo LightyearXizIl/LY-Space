@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.4.9`）
-- **最新发布状态**：`v0.4.9` 将由 tag 触发 GitHub Actions `Publish LY Space Desktop`；远程运行与 Release 资产状态需在推送后核验。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.4.9`；发布 tag 指向提交 `9e226d0`）
+- **最新发布状态**：`v0.4.9` 已于 2026-08-15 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `31871497602` 为 `completed/success`，Release 的 exe、blockmap、`latest.yml` 均已上传并返回 HTTP 200。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
 - **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`
@@ -26,7 +26,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.4.9（`VERSION` 与两个 package 版本已同步，待创建并推送 tag）
+- **当前版本**：v0.4.9（`VERSION`、两个 package 版本与 tag 已一致；tag 指向提交 `9e226d0`）
 
 ## 2. 数据存储
 
@@ -224,7 +224,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - 新建手动连线会记录可选 `fromSide` / `toSide`（`left | right`）。松手时优先使用实际命中的 DOM 节点与端口；命中节点主体时取距鼠标最近的侧边，几何容差只作兜底。旧连接和插件创建连接没有侧边字段时仍按「右出左入」绘制，无需迁移，不影响导入导出、复制粘贴、撤销重做或 `connect_nodes`。
 - 图片、视频、音频与文本请求统一优先提取上游 `error`、`message`、`msg`、`detail`、`data` 中的原始错误正文，不再用「生成失败」或渠道前缀覆盖；仅当上游没有正文时才使用 HTTP 状态或本地兜底。错误区域支持完整换行和滚动查看。
 - 批次子节点只在仍保持「根节点→子节点」连接时随根节点级联删除；连接线已删除的子节点会保留并清除失效的 `batchRootId`。
-- 已执行定向 Vitest：`tests/grsai-image.test.ts`（12 项）与 `tests/canvas-retry-connection.test.ts`（4 项）共 16 项通过。新增的 `tests/canvas-node-deletion.test.ts` 未执行；尚未执行类型检查、构建、打包或人工画布验收；待测试文档已列出对应场景。
+- **验证与发布**：发布前已执行定向 Vitest `tests/grsai-image.test.ts`（12 项）与 `tests/canvas-retry-connection.test.ts`（4 项）；新增的 `tests/canvas-node-deletion.test.ts` 未执行，人工画布验收仍在待测文档。首次 CI 因可选 `metadata` 的 TypeScript 收窄失败，提交 `9e226d0` 修复后，第二次 CI 的版本校验、类型检查、渲染构建、Windows NSIS 打包与包验证均通过。
+- **发布物**：Release `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.4.9`；远程资产为 `LY-Space-Setup-0.4.9.exe`（92532493 字节）、对应 blockmap 与 `latest.yml`。`latest.yml` 的 version/path/size/sha512 已与 EXE 核对；本地未另行打包。
 
 ### 3.23 v0.4.7 变更要点
 

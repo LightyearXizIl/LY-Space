@@ -42,6 +42,7 @@ export function AboutPanel() {
     const downloading = updateState.status === "downloading";
     const paused = updateState.status === "paused";
     const downloaded = updateState.status === "downloaded";
+    const installing = updateState.status === "installing";
     const progress = updateState.progress;
     const latestVersion = updateState.version || APP_VERSION;
 
@@ -103,8 +104,8 @@ export function AboutPanel() {
                 <div className="mb-3 flex items-center justify-between gap-3">
                     <div className="text-sm font-semibold">版本更新</div>
                     <div className="flex items-center gap-2">
-                        <Button icon={<RefreshCw className="size-4" />} disabled={!updateState.supported || checking || downloading || paused || downloaded} onClick={() => void checkUpdate()}>
-                            {checking ? "检查中..." : downloading ? "正在下载..." : paused ? "已暂停" : downloaded ? "已下载" : "检查更新"}
+                        <Button icon={<RefreshCw className="size-4" />} disabled={!updateState.supported || checking || downloading || paused || downloaded || installing} onClick={() => void checkUpdate()}>
+                            {checking ? "检查中..." : downloading ? "正在下载..." : paused ? "已暂停" : installing ? "正在重启..." : downloaded ? "已下载" : "检查更新"}
                         </Button>
                         {downloading ? <Button danger onClick={() => void pauseUpdateDownload()}>暂停</Button> : null}
                         {paused ? <Button type="primary" onClick={() => void downloadUpdate()}>继续下载</Button> : null}
@@ -142,16 +143,19 @@ export function AboutPanel() {
                         <Progress percent={Math.round(progress?.percent || 0)} size="small" />
                     </div>
                 ) : null}
-                {downloaded ? (
+                {downloaded || installing ? (
                     <Alert
                         className="mb-3"
-                        type="success"
+                        type={downloaded && updateState.error ? "error" : "success"}
                         showIcon
-                        message={`${latestVersion} 已下载完成`}
+                        message={installing ? "正在保存本地数据并启动安装程序" : downloaded && updateState.error ? "安装未启动" : `${latestVersion} 已下载完成`}
                         description={
-                            <Button size="small" className="mt-2" onClick={() => void installDownloadedUpdate()}>
-                                重启并安装
-                            </Button>
+                            installing ? "请稍候，保存完成后应用会自动退出并安装。" : (
+                                <div>
+                                    {updateState.error ? <div className="mb-2">{updateState.error}</div> : null}
+                                    <Button size="small" onClick={() => void installDownloadedUpdate()}>重启并安装</Button>
+                                </div>
+                            )
                         }
                     />
                 ) : null}

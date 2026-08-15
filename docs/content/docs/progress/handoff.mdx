@@ -9,7 +9,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.4.7`）
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.4.8`）
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
 - **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`
@@ -25,7 +25,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.4.7（`VERSION` 文件；发布后 tag `v0.4.7`）
+- **当前版本**：v0.4.8（`VERSION` 文件；发布后 tag `v0.4.8`）
 
 ## 2. 数据存储
 
@@ -204,6 +204,12 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **生图/视频工作台「模型/镜头」行**（`pages/image/index.tsx`、`pages/video/index.tsx`）：设置区外层 grid 由 `sm:grid-cols-2` 改为 `sm:grid-cols-[minmax(0,1fr)_auto]`（移动端 Drawer 同样），模型下拉占满剩余宽度不再截断，镜头按钮紧凑靠右。**坑**：v0.4.3 的 50/50 两列布局被此方案取代；`ImageSettingsPanel` 的 `col-span-2` 仍跨两列不受影响。
 - **画布复制/克隆只复制选中节点**（`project.tsx` Alt 克隆 + `pasteCopiedNodes`）：① 批量组根节点被选中时其 `batchChildIds` 子图不再随 Alt 克隆（`selectedBatchRootIds` 过滤），副本根节点 `batchChildIds` 清空（显示为单图）；② **输入连线同步**：源节点不在复制集合时，复制一条连线指向原源头节点（`fromNodeId` 保留原 id、`toNodeId` 映射新 id）——「只要线不要源头节点」，Alt 克隆与 Ctrl+C/V 粘贴行为一致；③ Alt 单击未拖动撤销逻辑（`altCloneIdsRef`）已覆盖新增输入连线。**坑**：拖拽（非 Alt）移动组时 `dragIds` 仍含批量子图（不变）；两端都在复制集合的连线仍按原逻辑重映射。
 - **组节点固定（钉子）**（`types/canvas.ts` + `canvas-node.tsx` + `project.tsx`）：`CanvasNodeMetadata.pinned?: boolean`；组节点右上角（「N 个节点」标签旁）新增 Pin 按钮，点击固定/取消；`isNodeLocked` 动态判定——组 pinned 时组自身及所有 `groupId` 指向该组的成员（含后续拖入/新建）不可拖动；`handleNodeMouseDown` 计算 `dragIds` 后若有任一锁定节点直接 return（不建 dragRef、不触发 Alt 克隆）。**坑**：① 锁定只拦移动，选中/删除/调整组帧大小/连线仍可用；② 框选拖拽含锁定节点时整组拖动被拦（安全优先）；③ pin 状态随节点持久化，重开项目保留。
+
+### 3.24 v0.4.8 变更要点
+
+- **迁移竞态修复**（`storage-migration.cjs` + `main.cjs`）：没有取得 Electron 单实例锁的进程不再执行 `configureStorageBeforeReady`；迁移增加 PID 排他锁，目标已是完整快照时直接补完成标记，原子切换遇到并发空目录时安全重试，不同内容继续独立备份后再替换。v0.4.7 遗留的 `Data cache.migrating-v0.4.7*` 不自动删除，用户可直接覆盖安装重试。
+- **安装回执状态机**（`update-install-coordinator.cjs`）：每次 flush 带唯一 requestId，15 秒超时会撤销请求；迟到或重复回执只忽略，不得关闭应用或启动安装器。界面新增 `installing` 状态和可读错误，本地写 `app-data/update-install.log`。
+- **静默安装重开**：assisted NSIS 更新参数改为 `/S --force-run /D=...`（`/D=` 仍必须最后），安装完成后自动启动新版本。启动恢复失败只显示一次数据保护错误，不再继续抛出 Electron 主进程异常框。
 
 ### 3.23 v0.4.7 变更要点
 

@@ -48,10 +48,11 @@ export function UpdatePrompt() {
 
     // 下载中/已暂停/已下载/出错均保持弹窗驻留，仅「稍后」可关闭
     const status = state?.status;
-    const visible = Boolean(state && release && state.triggeredBy === "auto" && ["available", "downloading", "paused", "downloaded", "error"].includes(status || ""));
+    const visible = Boolean(state && release && state.triggeredBy === "auto" && ["available", "downloading", "paused", "downloaded", "installing", "error"].includes(status || ""));
     const downloading = status === "downloading";
     const paused = status === "paused";
     const downloaded = status === "downloaded";
+    const installing = status === "installing";
     const failed = status === "error";
     const progress = state?.progress;
 
@@ -96,15 +97,15 @@ export function UpdatePrompt() {
                             <Progress percent={Math.round(progress?.percent || 0)} size="small" />
                         </div>
                     ) : null}
-                    {failed ? (
+                    {failed || (downloaded && state?.error) ? (
                         <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600 dark:border-red-900 dark:bg-red-950 dark:text-red-400">
-                            下载失败：{state?.error || "未知错误"}
+                            {failed ? "下载失败" : "安装未启动"}：{state?.error || "未知错误"}
                         </div>
                     ) : null}
                     <div className="flex justify-end gap-2">
-                        {downloaded ? (
-                            <Button type="primary" onClick={() => void window.lySpaceDesktop?.installDownloadedUpdate()}>
-                                重启并安装
+                        {downloaded || installing ? (
+                            <Button type="primary" loading={installing} disabled={installing} onClick={() => void window.lySpaceDesktop?.installDownloadedUpdate().catch(() => undefined)}>
+                                {installing ? "正在保存并重启..." : "重启并安装"}
                             </Button>
                         ) : downloading ? (
                             <Button onClick={() => void window.lySpaceDesktop?.pauseUpdateDownload()}>暂停</Button>

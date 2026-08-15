@@ -6,6 +6,7 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const { restoreBridgeBackup } = require("./storage-migration.cjs");
+const { buildInstallerArgs, createPersistenceFlushCoordinator } = require("./update-install-coordinator.cjs");
 
 protocol.registerSchemesAsPrivileged([
     { scheme: "lyspace", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
@@ -15,13 +16,19 @@ let mainWindow = null;
 let tray = null; // 系统托盘（模块级引用防 GC）
 let storageSettings = null;
 let allowWindowClose = false;
-let installDownloadedUpdate = false;
 let updateFileInfo = null; // update-available 携带的安装包信息（files[0]: url/sha512/size）
 let updateDownloadRequest = null; // 自研断点续传下载的进行中请求
 let updateDownloadWriteStream = null;
 let updateDownloadAborted = false; // 用户暂停/中止下载标记
 let lastCheckSource = "manual";
 let updateState = { status: "idle", version: "", releaseDate: "", releaseNotes: "", progress: null, error: "", supported: false, triggeredBy: "" };
+const persistenceFlushCoordinator = createPersistenceFlushCoordinator({
+    timeoutMs: 15000,
+    onTimeout: (request, error) => {
+        writeUpdateInstallLog("flush-timeout", { id: request.id, action: request.action, error: error.message });
+        if (request.action === "install") updateSnapshot({ status: "downloaded", error: error.message });
+    },
+});
 
 const RESULT_FOLDERS = { image: "Picture", video: "Video", audio: "Audio", text: "text" };
 
@@ -38,6 +45,16 @@ function updateSnapshot(patch) {
 
 function updateError(error) {
     updateSnapshot({ status: "error", progress: null, error: error instanceof Error ? error.message : String(error || "更新失败") });
+}
+
+function writeUpdateInstallLog(event, details = {}) {
+    try {
+        const file = path.join(app.getPath("userData"), "app-data", "update-install.log");
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.appendFileSync(file, `${JSON.stringify({ time: new Date().toISOString(), event, ...details })}\n`, "utf8");
+    } catch {
+        // 日志失败不能影响安装或退出。
+    }
 }
 
 const UPDATE_OWNER = "LightyearXizIl";
@@ -96,7 +113,7 @@ function configureAutoUpdater() {
 // 暂停（pauseUpdateDownload）保留 .part 已下载字节，再次下载自动从断点继续。
 async function downloadUpdate() {
     if (!app.isPackaged) return updateState;
-    if (updateState.status === "downloading" || updateState.status === "downloaded") return updateState;
+    if (["downloading", "downloaded", "installing"].includes(updateState.status)) return updateState;
     if (!updateFileInfo || !updateState.version) return updateState;
 
     const dir = updateDownloadsDir();
@@ -227,7 +244,7 @@ function pauseUpdateDownload() {
 
 async function checkForUpdate(source = "manual") {
     if (!app.isPackaged) return updateSnapshot({ status: "idle", error: "", supported: false });
-    if (updateState.status === "downloaded" || updateState.status === "downloading") return updateState;
+    if (["downloaded", "downloading", "installing"].includes(updateState.status)) return updateState;
     lastCheckSource = source;
     try {
         await autoUpdater.checkForUpdates();
@@ -237,12 +254,34 @@ async function checkForUpdate(source = "manual") {
     return updateState;
 }
 
+function requestPersistenceFlush(action, details = {}) {
+    const started = persistenceFlushCoordinator.begin(action, details);
+    if (!started.reused) {
+        writeUpdateInstallLog("flush-requested", { id: started.request.id, action });
+        mainWindow.webContents.send("lyspace:flush-persistence", started.request);
+    }
+    return started.promise;
+}
+
+function launchUpdateInstaller(installerPath, installDir) {
+    return new Promise((resolve, reject) => {
+        // assisted NSIS 仅在静默模式同时带 --force-run 时才会安装后重开应用；/D= 必须保持最后一个参数。
+        const child = spawn(installerPath, buildInstallerArgs(installDir), { detached: true, stdio: "ignore", windowsHide: true });
+        child.once("error", reject);
+        child.once("spawn", () => {
+            child.unref();
+            resolve();
+        });
+    });
+}
+
 function requestUpdateInstall() {
     if (!app.isPackaged || updateState.status !== "downloaded") throw new Error("更新尚未下载完成");
     if (!mainWindow || mainWindow.isDestroyed()) throw new Error("主窗口不可用");
-    if (!fs.existsSync(updateExePath())) throw new Error("安装包不存在，请重新下载");
-    installDownloadedUpdate = true;
-    mainWindow.webContents.send("lyspace:flush-persistence");
+    const installerPath = updateExePath();
+    if (!fs.existsSync(installerPath)) throw new Error("安装包不存在，请重新下载");
+    updateSnapshot({ status: "installing", error: "" });
+    return requestPersistenceFlush("install", { installerPath, installDir: path.dirname(app.getPath("exe")), version: updateState.version });
 }
 
 function storageConfigFile() {
@@ -512,7 +551,10 @@ function createTray() {
             { label: "显示主界面", click: showMainWindow },
             { type: "separator" },
             // 关闭：走 flush 后退出流程（persistence-flushed 时 allowWindowClose=true 再真正关闭），保证数据落盘
-            { label: "关闭", click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("lyspace:flush-persistence"); } },
+            { label: "关闭", click: () => {
+                if (!mainWindow || mainWindow.isDestroyed()) return;
+                void requestPersistenceFlush("quit").catch((error) => writeUpdateInstallLog("quit-flush-failed", { error: error.message }));
+            } },
         ]),
     );
 }
@@ -520,13 +562,19 @@ function createTray() {
 app.setName("LY Space");
 app.setPath("userData", path.join(app.getPath("appData"), "LY Space"));
 app.setAppUserModelId("com.lyspace.desktop");
-if (!app.requestSingleInstanceLock()) app.quit();
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+    app.quit();
+} else {
+let storageReady = true;
 try {
     configureStorageBeforeReady();
 } catch (error) {
     dialog.showErrorBox("LY Space 用户数据保护", error instanceof Error ? error.message : String(error));
-    throw error;
+    storageReady = false;
+    app.quit();
 }
+if (storageReady) {
 app.on("second-instance", () => {
     if (mainWindow) {
         if (!mainWindow.isVisible()) mainWindow.show();
@@ -745,21 +793,30 @@ app.whenReady().then(async () => {
         const text = await response.text();
         return { status: response.status, data: text };
     });
-    ipcMain.handle("lyspace:persistence-flushed", () => {
-        if (!mainWindow || allowWindowClose) return;
-        if (installDownloadedUpdate) {
-            installDownloadedUpdate = false;
-            allowWindowClose = true;
-            // 自研安装：NSIS 静默安装到当前安装目录，runAfterFinish 自动重启应用（替代 autoUpdater.quitAndInstall）
-            const exePath = updateExePath();
-            const installDir = path.dirname(app.getPath("exe"));
-            const child = spawn(exePath, ["/S", `/D=${installDir}`], { detached: true, stdio: "ignore" });
-            child.unref();
-            app.quit();
-            return;
+    ipcMain.handle("lyspace:persistence-flushed", async (_event, requestId) => {
+        const pending = persistenceFlushCoordinator.acknowledge(String(requestId || ""));
+        if (!pending || !mainWindow || allowWindowClose) return { accepted: false };
+        writeUpdateInstallLog("flush-acknowledged", { id: pending.id, action: pending.action });
+        if (pending.action === "install") {
+            try {
+                await launchUpdateInstaller(pending.details.installerPath, pending.details.installDir);
+                writeUpdateInstallLog("installer-spawned", { id: pending.id, version: pending.details.version });
+                persistenceFlushCoordinator.succeed(pending);
+                allowWindowClose = true;
+                setImmediate(() => app.quit());
+                return { accepted: true };
+            } catch (error) {
+                const message = `无法启动安装程序：${error instanceof Error ? error.message : error}`;
+                writeUpdateInstallLog("installer-spawn-failed", { id: pending.id, error: message });
+                updateSnapshot({ status: "downloaded", error: message });
+                persistenceFlushCoordinator.fail(pending, new Error(message));
+                return { accepted: false };
+            }
         }
+        persistenceFlushCoordinator.succeed(pending);
         allowWindowClose = true;
         mainWindow.close();
+        return { accepted: true };
     });
     ipcMain.handle("lyspace:relaunch-after-flush", () => {
         app.relaunch();
@@ -770,3 +827,5 @@ app.whenReady().then(async () => {
     if (app.isPackaged) void checkForUpdate("auto");
 });
 app.on("window-all-closed", () => app.quit());
+}
+}

@@ -1,7 +1,7 @@
 export {};
 
 declare global {
-    type AppUpdateStatus = "idle" | "checking" | "available" | "downloading" | "paused" | "downloaded" | "upToDate" | "error";
+    type AppUpdateStatus = "idle" | "checking" | "available" | "downloading" | "paused" | "downloaded" | "installing" | "upToDate" | "error";
     type AppUpdateState = {
         status: AppUpdateStatus;
         version: string;
@@ -37,9 +37,9 @@ declare global {
             uploadFreeHost: (payload: { name?: string; mimeType?: string; bytes: ArrayBuffer }) => Promise<{ url: string }>;
             proxyRequest: (payload: { method?: string; url: string; headers?: Record<string, string>; body?: string }) => Promise<{ status: number; data: string }>;
             deleteGeneratedFiles: (paths: string[]) => Promise<{ deleted: number; missing: number; failed: number; skipped: number }>;
-            persistenceFlushed: () => Promise<void>;
+            persistenceFlushed: (requestId: string) => Promise<{ accepted: boolean }>;
             relaunchAfterFlush: () => Promise<void>;
-            onFlushPersistence: (listener: () => void) => () => void;
+            onFlushPersistence: (listener: (request: { id: string; action: "install" | "quit" }) => void) => () => void;
         };
     }
 }

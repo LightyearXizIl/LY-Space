@@ -60,6 +60,43 @@ function removeChildDirectory(target, parent) {
     if (fs.existsSync(resolved)) fs.rmSync(resolved, { recursive: true, force: true });
 }
 
+function nextBackupDirectory(base, expected) {
+    if (!fs.existsSync(base)) return base;
+    if (sameManifest(directoryManifest(base), expected)) return base;
+    for (let index = 2; index < 1000; index += 1) {
+        const candidate = `${base}-${index}`;
+        if (!fs.existsSync(candidate)) return candidate;
+        if (sameManifest(directoryManifest(candidate), expected)) return candidate;
+    }
+    throw new Error(`无法为原目标目录分配安全备份位置：${base}`);
+}
+
+function acquireMigrationLock(userData) {
+    const lockFile = path.join(userData, "app-data", `migration-${MIGRATION_VERSION}.lock`);
+    fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+            const handle = fs.openSync(lockFile, "wx");
+            fs.writeFileSync(handle, JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }), "utf8");
+            return () => {
+                try { fs.closeSync(handle); } catch { /* 已关闭 */ }
+                try { fs.rmSync(lockFile, { force: true }); } catch { /* 下次启动会清理陈旧锁 */ }
+            };
+        } catch (error) {
+            if (error?.code !== "EEXIST") throw error;
+            let ownerPid = 0;
+            try { ownerPid = Number(readJson(lockFile).pid) || 0; } catch { /* 损坏锁按陈旧锁处理 */ }
+            let ownerRunning = false;
+            if (ownerPid > 0 && ownerPid !== process.pid) {
+                try { process.kill(ownerPid, 0); ownerRunning = true; } catch { /* 进程已退出 */ }
+            }
+            if (ownerRunning) throw new Error("另一 LY Space 进程正在恢复用户数据，请等待其完成后重试");
+            fs.rmSync(lockFile, { force: true });
+        }
+    }
+    throw new Error("无法取得用户数据恢复锁，请关闭全部 LY Space 进程后重试");
+}
+
 function copyDirectoryExact(source, target) {
     if (!fs.existsSync(source)) return;
     fs.mkdirSync(target, { recursive: true });
@@ -75,8 +112,9 @@ function copyDirectoryExact(source, target) {
 function replaceDirectoryFromSnapshot({ source, target, expected, backupRoot, label }) {
     if (!expected?.length) return false;
     assertManifest(source, expected, `${label}快照`);
+    if (fs.existsSync(target) && sameManifest(directoryManifest(target), expected)) return false;
     const parent = path.dirname(target);
-    const stage = `${target}.migrating-${MIGRATION_VERSION}`;
+    const stage = `${target}.migrating-${MIGRATION_VERSION}-${process.pid}`;
     fs.mkdirSync(parent, { recursive: true });
     removeChildDirectory(stage, parent);
     copyDirectoryExact(source, stage);
@@ -85,14 +123,25 @@ function replaceDirectoryFromSnapshot({ source, target, expected, backupRoot, la
     let replaced = "";
     try {
         if (fs.existsSync(target)) {
-            replaced = path.join(backupRoot, "replaced-destinations", label);
+            const targetManifest = directoryManifest(target);
+            replaced = nextBackupDirectory(path.join(backupRoot, "replaced-destinations", label), targetManifest);
             if (!fs.existsSync(replaced)) {
                 copyDirectoryExact(target, replaced);
-                assertManifest(replaced, directoryManifest(target), `${label}原目标备份`);
+                assertManifest(replaced, targetManifest, `${label}原目标备份`);
             }
             removeChildDirectory(target, parent);
         }
-        fs.renameSync(stage, target);
+        try {
+            fs.renameSync(stage, target);
+        } catch (error) {
+            // 另一个进程若已完成同一份恢复，直接接受；仅自动清理竞态产生的空目录。
+            if (!fs.existsSync(target) || !["EEXIST", "ENOTEMPTY", "EPERM"].includes(error?.code)) throw error;
+            const racedManifest = directoryManifest(target);
+            if (sameManifest(racedManifest, expected)) return true;
+            if (racedManifest.length) throw error;
+            removeChildDirectory(target, parent);
+            fs.renameSync(stage, target);
+        }
         assertManifest(target, expected, `${label}最终目录`);
         return true;
     } catch (error) {
@@ -122,6 +171,8 @@ function isOldDefault(value, installDir, folder) {
 function restoreBridgeBackup({ userData, localAppData, documents, storageConfigFile }) {
     const bridge = loadBridgeBackup(localAppData);
     if (!bridge) return { migrated: false, installDir: "", backupRoot: "" };
+    const releaseLock = acquireMigrationLock(userData);
+    try {
     const stateFile = path.join(userData, "app-data", "migration-v0.4.7.json");
     if (fs.existsSync(stateFile)) {
         const state = readJson(stateFile);
@@ -156,6 +207,9 @@ function restoreBridgeBackup({ userData, localAppData, documents, storageConfigF
     } catch (error) {
         writeJsonAtomic(stateFile, { version: MIGRATION_VERSION, status: "failed", backupRoot: bridge.backupRoot, error: error instanceof Error ? error.message : String(error), failedAt: new Date().toISOString() });
         throw new Error(`用户数据恢复失败，程序未使用空白数据启动。备份位置：${bridge.backupRoot}。${error instanceof Error ? error.message : error}`);
+    }
+    } finally {
+        releaseLock();
     }
 }
 

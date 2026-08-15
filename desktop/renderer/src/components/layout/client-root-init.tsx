@@ -20,8 +20,8 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     useEffect(() => {
         const showStorageError = (event: Event) => message.warning(event instanceof CustomEvent ? String(event.detail || "生成结果保存到本地目录失败，请检查存储设置") : "生成结果保存到本地目录失败，请检查存储设置");
         window.addEventListener("lyspace:storage-error", showStorageError);
-        const unsubscribe = window.lySpaceDesktop?.onFlushPersistence(() => {
-            void flushPendingStorageWrites().finally(() => void window.lySpaceDesktop?.persistenceFlushed());
+        const unsubscribe = window.lySpaceDesktop?.onFlushPersistence((request) => {
+            void flushPendingStorageWrites().finally(() => void window.lySpaceDesktop?.persistenceFlushed(request.id));
         });
         return () => {
             window.removeEventListener("lyspace:storage-error", showStorageError);

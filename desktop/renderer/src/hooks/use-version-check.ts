@@ -19,7 +19,7 @@ export function useVersionCheck() {
     const [open, setOpen] = useState(false);
     const [releases, setReleases] = useState<ReleaseInfo[]>(localReleases);
     const [updateState, setUpdateState] = useState<AppUpdateState>(initialUpdateState);
-    const hasNewVersion = ["available", "downloading", "paused", "downloaded"].includes(updateState.status);
+    const hasNewVersion = ["available", "downloading", "paused", "downloaded", "installing"].includes(updateState.status);
 
     useEffect(() => {
         if (!window.lySpaceDesktop) return;
@@ -71,8 +71,8 @@ export function useVersionCheck() {
         if (!window.lySpaceDesktop) return;
         try {
             await window.lySpaceDesktop.installDownloadedUpdate();
-        } catch {
-            message.error("无法启动安装程序，请重试");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "无法启动安装程序，请重试");
         }
     }, [message]);
 

@@ -25,10 +25,10 @@ contextBridge.exposeInMainWorld("lySpaceDesktop", {
     uploadFreeHost: (payload) => ipcRenderer.invoke("lyspace:upload-free-host", payload),
     proxyRequest: (payload) => ipcRenderer.invoke("lyspace:proxy-request", payload),
     deleteGeneratedFiles: (paths) => ipcRenderer.invoke("lyspace:delete-generated-files", paths),
-    persistenceFlushed: () => ipcRenderer.invoke("lyspace:persistence-flushed"),
+    persistenceFlushed: (requestId) => ipcRenderer.invoke("lyspace:persistence-flushed", requestId),
     relaunchAfterFlush: () => ipcRenderer.invoke("lyspace:relaunch-after-flush"),
     onFlushPersistence: (listener) => {
-        const handler = () => listener();
+        const handler = (_event, request) => listener(request);
         ipcRenderer.on("lyspace:flush-persistence", handler);
         return () => ipcRenderer.removeListener("lyspace:flush-persistence", handler);
     },

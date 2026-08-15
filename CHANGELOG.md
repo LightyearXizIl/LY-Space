@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.4.8 - 2026-08-15
+
++ [重要] 升级前请完全退出 LY Space，并备份安装目录下的 `Data cache`、`Result` 和 `%APPDATA%\LY Space\app-data`；如 v0.4.7 启动时报 `ENOTEMPTY`，请勿删除 `Data cache`、`Data cache.migrating-v0.4.7*` 或 `%LOCALAPPDATA%\LY Space\Backups`，直接覆盖安装本版本重试恢复。备份可能含 API 密钥，请勿上传或公开。
++ [修复] v0.4.7 首次恢复遇到双进程或目标目录竞态时不再报 `ENOTEMPTY`：第二实例在迁移前退出，恢复过程增加排他锁、完整快照识别、空目录安全重试和原目标独立留档。
++ [修复] 「重启并安装」增加唯一回执、15 秒保存超时和迟到回执隔离，不再点击无反应或延迟误触发；静默安装带 `--force-run`，完成后自动重新打开应用，并记录本地安装日志。
+
 ## v0.4.7 - 2026-08-15
 
 + [重要] 升级前请完全退出 LY Space，并备份安装目录下的 `Data cache`、`Result` 和 `%APPDATA%\LY Space\app-data`；如修改过存储位置，以设置页显示的目录为准。`Data cache` 包含画布、设置、渠道/API 配置、素材和生成历史；备份可能含 API 密钥，请勿上传或公开。

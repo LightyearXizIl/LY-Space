@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const test = require("node:test");
 
 const { directoryManifest, loadBridgeBackup, restoreBridgeBackup, sameManifest } = require("../storage-migration.cjs");
@@ -159,6 +159,71 @@ test("恢复复制中断时保留原目标且修复后可以重试", () => {
         assert.equal(fs.readFileSync(path.join(data.userData, "Data cache", "Local Storage", "重名", "sentinel.bin"), "utf8"), "Local Storage 重名文件");
     } finally {
         fs.copyFileSync = originalCopyFileSync;
+        fs.rmSync(data.root, { recursive: true, force: true });
+    }
+});
+
+test("目标目录已是完整快照但完成标记缺失时直接补记完成", () => {
+    const data = fixture();
+    try {
+        const bridge = runBackup(data);
+        const expectedCache = bridge.manifest.snapshots.currentInstall.dataCache.files;
+        fs.rmSync(path.join(data.userData, "Data cache"), { recursive: true, force: true });
+        fs.mkdirSync(path.join(data.userData, "Data cache"), { recursive: true });
+        const source = path.join(bridge.backupRoot, bridge.manifest.snapshots.currentInstall.dataCache.directory);
+        fs.cpSync(source, path.join(data.userData, "Data cache"), { recursive: true });
+
+        const restored = restoreBridgeBackup(data);
+        assert.ok(sameManifest(directoryManifest(path.join(data.userData, "Data cache")), expectedCache));
+        const state = JSON.parse(fs.readFileSync(path.join(data.userData, "app-data", "migration-v0.4.7.json"), "utf8"));
+        assert.equal(state.status, "completed");
+        assert.equal(fs.existsSync(path.join(data.userData, "Data cache.migrating-v0.4.7")), false);
+        assert.equal(typeof restored.migrated, "boolean");
+    } finally {
+        fs.rmSync(data.root, { recursive: true, force: true });
+    }
+});
+
+test("原子切换前目标被并发创建为空目录时清理后重试", () => {
+    const data = fixture();
+    const originalRenameSync = fs.renameSync;
+    try {
+        runBackup(data);
+        fs.rmSync(path.join(data.userData, "Data cache"), { recursive: true, force: true });
+        let injected = false;
+        fs.renameSync = (source, target) => {
+            if (!injected && source.includes("Data cache.migrating-v0.4.7-") && target.endsWith("Data cache")) {
+                injected = true;
+                fs.mkdirSync(target, { recursive: true });
+                const error = new Error("Directory not empty");
+                error.code = "ENOTEMPTY";
+                throw error;
+            }
+            return originalRenameSync(source, target);
+        };
+
+        const restored = restoreBridgeBackup(data);
+        assert.equal(restored.migrated, true);
+        assert.equal(injected, true);
+        assert.ok(fs.existsSync(path.join(data.userData, "Data cache", "IndexedDB", "重名", "sentinel.bin")));
+    } finally {
+        fs.renameSync = originalRenameSync;
+        fs.rmSync(data.root, { recursive: true, force: true });
+    }
+});
+
+test("另一存活进程持有迁移锁时拒绝并发恢复", async () => {
+    const data = fixture();
+    const holder = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
+    try {
+        runBackup(data);
+        const lockFile = path.join(data.userData, "app-data", "migration-v0.4.7.lock");
+        write(lockFile, JSON.stringify({ pid: holder.pid, createdAt: new Date().toISOString() }));
+        assert.throws(() => restoreBridgeBackup(data), /另一 LY Space 进程正在恢复用户数据/);
+        assert.equal(fs.existsSync(lockFile), true);
+    } finally {
+        holder.kill();
+        await new Promise((resolve) => holder.once("exit", resolve));
         fs.rmSync(data.root, { recursive: true, force: true });
     }
 });

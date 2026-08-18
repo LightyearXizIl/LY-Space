@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v0.5.1 - 2026-08-18
+
++ [修复] 升级安装时若 LY Space 未完全退出（含系统托盘），备份失败提示补充操作指引，并写入诊断日志 `%LOCALAPPDATA%\LY Space\Backups\upgrade-backup-error.log`（静默升级失败也能定位原因）。
++ [修复] `backup-user-data.ps1` 改为 UTF-8 BOM 编码：PowerShell 5.1 对无 BOM 文件按 ANSI 解码，中文错误信息会乱码、部分中文字符会导致解析语法错误中止安装。
+
 ## v0.5.0 - 2026-08-15
 
 + [修复] 更新安装不再后台静默执行：点击「重启并安装」保存完成后会打开可见的安装向导，预填当前程序安装目录，完成页可重新运行 LY Space。

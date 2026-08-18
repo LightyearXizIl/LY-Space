@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)][string]$InstallDir,
     [Parameter(Mandatory = $true)][string]$AppDataDir,
     [Parameter(Mandatory = $true)][string]$LocalAppDataDir,
@@ -7,6 +7,16 @@ param(
 
 $ErrorActionPreference = "Stop"
 $version = "v0.4.7"
+
+# 任何中止原因都留下诊断日志（静默升级时用户看不到弹窗，靠此定位）
+trap {
+    $logFile = Join-Path $LocalAppDataDir "LY Space\Backups\upgrade-backup-error.log"
+    try {
+        New-Item -ItemType Directory -Path (Split-Path $logFile) -Force | Out-Null
+        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') upgrade aborted: $($_.Exception.Message)" | Out-File -FilePath $logFile -Encoding UTF8
+    } catch { }
+    throw
+}
 
 function Get-Sha256([string]$File) {
     $stream = [IO.File]::OpenRead($File)
@@ -65,7 +75,7 @@ do {
     if ($running.Count -eq 0) { break }
     Start-Sleep -Milliseconds 500
 } while ((Get-Date) -lt $deadline)
-if ($running.Count -gt 0) { throw "LY Space 尚未完全退出，已停止升级以保护数据" }
+if ($running.Count -gt 0) { throw "LY Space 尚未完全退出，已停止升级以保护数据。请右键点击系统托盘（任务栏右下角）中的 LY Space 图标选择「退出」，或在任务管理器中结束 LY Space.exe，然后重新运行安装程序" }
 
 $saved = $null
 $settingsFile = Join-Path $AppDataDir "app-data\storage-settings.json"

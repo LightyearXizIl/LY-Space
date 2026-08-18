@@ -9,7 +9,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.5.0`；发布 tag 指向提交 `058d203`）
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.5.1`）
 - **最新发布状态**：`v0.5.0` 已于 2026-08-15 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `31873942364` 为 `completed/success`，Release 的 exe、blockmap、`latest.yml` 均已上传。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
@@ -26,7 +26,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.5.0（`VERSION`、两个 package 版本与 tag 已一致；tag 指向提交 `058d203`）
+- **当前版本**：v0.5.1（`VERSION`、两个 package 版本与 tag 已一致）
 
 ## 2. 数据存储
 
@@ -233,6 +233,14 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **一次性迁移**：`storage-migration.cjs` 仅在旧安装目录默认数据完成快照、逐文件校验与原子恢复后，才把相应配置字段改为稳定默认路径；外部自定义路径及安装目录内自定义子目录保持原值。
 - **可见更新安装**：更新器去除 `/S`、`--force-run` 与 `windowsHide`，继续等待持久化回执后启动可见的 NSIS 向导，预填当前程序安装目录；完成页默认提供重新运行。弹窗状态改为「正在保存并打开安装程序...」。
 - **版本与验证**：版本号三段的每一位只允许 `0` 到 `9`；补丁位到 `10` 时进位为中间位（`0.4.9` → `0.5.0`），中间位到 `10` 时进位为主版本。Node 数据保护/安装状态机共 19 项通过，版本一致性通过；`Publish LY Space Desktop` 运行 `31873942364` 成功，正式 Release `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.5.0` 包含 `LY-Space-Setup-0.5.0.exe`（92533487 字节）、对应 blockmap 与 `latest.yml`。`latest.yml` 的 version/path/size 与远端 EXE 一致且含 SHA-512；GitHub API 提供的 EXE SHA-256 为 `426b09aa359afaaa9d19117ff0d33c91e762f7dbfe9eacdbfc44c9d34675e441`。误发的 `v0.4.10` Release 与 tag 已删除。真实用户数据升级与可见安装器仍需在隔离环境人工验收。
+
+### 3.27 旧版本（≤0.4.6）直接升级 0.5.0 的坑（2026-08-18 修复）
+
+- **升级前必须完全退出 LY Space（含系统托盘）**：`backup-user-data.ps1` 只等 90 秒，进程仍在就直接中止安装（弹「用户数据备份或校验失败，升级已停止」）。0.3.6+ 点窗口 X 只是隐藏到托盘，用户以为关了其实进程还在——这是 0.4.6 用户升级失败的第一大原因。0.4.6 应用内更新 spawn 安装器后立即 `app.quit()`，退出不干净同样触发。
+- **0.4.6 自动更新调 0.5.0 安装器仍传 `/S`（静默）**：备份失败时 MessageBox 被 `/SD IDOK` 自动关闭、安装直接 Abort，用户看不到任何报错。诊断日志在 `%LOCALAPPDATA%\LY Space\Backups\upgrade-backup-error.log`（本次新增 trap 写入）。
+- **ps1 必须带 UTF-8 BOM**：PowerShell 5.1 对无 BOM 文件按 ANSI 解码，中文错误信息会乱码（显示为「LY Space 源氤渣澹…」），且部分中文字符（如「右」）的字节序列会触发解析语法错误导致安装器误报。2026-08-18 起 `backup-user-data.ps1` 带 BOM；改动此文件后必须保留 BOM 并跑 `desktop/tests/storage-migration.test.cjs`。
+- **0.4.6 卸载器会破坏安装目录数据**（`CopyFiles` 不递归 + `RMDir /r`，嵌套子目录丢失）；升级安全完全依赖安装器先做的 SHA-256 快照备份，备份成功前任何环节中止都不删数据。
+- **「无法写入 …\Temp\nse*.tmp\app-64.7z」**：NSIS 解压 payload 失败，多为杀软拦截或 Temp 空间不足，与版本兼容性无关；建议临时关闭安全软件或清理 Temp 后重试。
 
 ### 3.23 v0.4.7 变更要点
 

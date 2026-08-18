@@ -8,7 +8,7 @@
     Pop $0
     Pop $1
     ${If} $0 != 0
-      MessageBox MB_OK|MB_ICONSTOP "用户数据备份或校验失败，升级已停止。原程序和原数据均未删除。错误：$1" /SD IDOK
+      MessageBox MB_OK|MB_ICONSTOP "用户数据备份或校验失败，升级已停止。原程序和原数据均未删除。请完全退出 LY Space（含系统托盘图标）后重新运行安装程序。错误：$1" /SD IDOK
       Abort
     ${EndIf}
   ${EndIf}

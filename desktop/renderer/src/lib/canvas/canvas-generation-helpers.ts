@@ -80,6 +80,12 @@ export function getGenerationCount(count: string) {
     return Math.max(1, Math.min(15, Math.floor(Math.abs(Number(count)) || 1)));
 }
 
+export function getTextGenerationCount(node: CanvasNodeData | undefined) {
+    if (!node) return 1;
+    if (node.metadata?.textCount !== undefined) return getGenerationCount(String(node.metadata.textCount));
+    return node.type === CanvasNodeType.Config ? getGenerationCount(String(node.metadata?.count)) : 1;
+}
+
 export function getInputSummary(inputs: NodeGenerationInput[]) {
     return {
         textCount: inputs.filter((input) => input.type === "text").length,

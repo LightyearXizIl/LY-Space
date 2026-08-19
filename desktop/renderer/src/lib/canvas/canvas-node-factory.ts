@@ -20,7 +20,7 @@ export function createCanvasNode(type: CanvasNodeTypeId, position: Position, met
         },
         width: spec.width,
         height: spec.height,
-        metadata: { ...spec.metadata, ...metadata },
+        metadata: { ...spec.metadata, ...(type === CanvasNodeType.Config ? { textCount: 1 } : {}), ...metadata },
     };
 }
 

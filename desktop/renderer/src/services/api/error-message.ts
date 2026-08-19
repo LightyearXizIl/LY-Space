@@ -17,7 +17,10 @@ export function readUpstreamError(value: unknown): string {
 
 export function readRequestError(error: unknown, fallback: string, statusMessage: (status: number | undefined, fallback: string) => string) {
     if (axios.isCancel(error)) return "请求已取消";
-    if (axios.isAxiosError(error)) return readUpstreamError(error.response?.data) || statusMessage(error.response?.status, fallback) || error.message || fallback;
+    if (axios.isAxiosError(error)) {
+        if (!error.response && error.code === "ERR_NETWORK") return "网络请求未到达服务端：请检查网络、DNS、TLS 证书和 Base URL；浏览器直连跨域接口时，还需确认服务端已允许 CORS。";
+        return readUpstreamError(error.response?.data) || statusMessage(error.response?.status, fallback) || error.message || fallback;
+    }
     if (error instanceof DOMException && error.name === "AbortError") return "请求已取消";
     return error instanceof Error ? readUpstreamError(error.message) || error.message : readUpstreamError(error) || fallback;
 }

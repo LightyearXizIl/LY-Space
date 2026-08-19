@@ -62,6 +62,7 @@ import {
     generationReferenceUrls,
     getGenerationCount,
     getInputSummary,
+    getTextGenerationCount,
     hydrateAssistantImages,
     hydrateCanvasImages,
     imageExtension,
@@ -263,6 +264,7 @@ function InfiniteCanvasPage() {
     const [collapsingBatchIds, setCollapsingBatchIds] = useState<Set<string>>(new Set());
     const [openingBatchIds, setOpeningBatchIds] = useState<Set<string>>(new Set());
     const [isNodeDragging, setIsNodeDragging] = useState(false);
+    const [isNodeResizing, setIsNodeResizing] = useState(false);
     const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
 
     const nodesRef = useRef(nodes);
@@ -1688,6 +1690,8 @@ function InfiniteCanvasPage() {
     const handleNodeResize = useCallback((nodeId: string, width: number, height: number, position?: Position) => {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, width, height, position: position || node.position } : node)));
     }, []);
+    const handleNodeResizeStart = useCallback(() => setIsNodeResizing(true), []);
+    const handleNodeResizeEnd = useCallback(() => setIsNodeResizing(false), []);
 
     const toggleNodeFreeResize = useCallback((nodeId: string) => {
         setNodes((prev) =>
@@ -2649,13 +2653,13 @@ function InfiniteCanvasPage() {
                 }
 
                 const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
-                const textCount = isConfigNode ? getGenerationCount(generationConfig.count) : 1;
+                const textCount = getTextGenerationCount(sourceNode);
                 const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : CanvasNodeType.Text];
                 const textConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Text];
                 const parentPosition = sourceNode?.position || { x: 0, y: 0 };
-                const childIds = isConfigNode || editingTextNode ? Array.from({ length: textCount }, () => nanoid()) : [];
+                const childIds = isConfigNode || editingTextNode || textCount > 1 ? Array.from({ length: textCount }, () => nanoid()) : [];
                 pendingChildIds = childIds;
-                if (isConfigNode || editingTextNode) {
+                if (childIds.length) {
                     const childNodes: CanvasNodeData[] = childIds.map((id, index) => ({
                         id,
                         type: CanvasNodeType.Text,
@@ -2706,8 +2710,8 @@ function InfiniteCanvasPage() {
                             ? answerByNodeId.has(node.id)
                                 ? { ...node, metadata: { ...node.metadata, content: answerByNodeId.get(node.id), status: NODE_STATUS_SUCCESS } }
                                 : node
-                            : node.id === nodeId && isConfigNode
-                              ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } }
+                            : node.id === nodeId && (isConfigNode || (!editingTextNode && childIds.length > 0))
+                               ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } }
                               : node.id === nodeId && !editingTextNode
                                 ? {
                                       ...node,
@@ -3229,7 +3233,7 @@ function InfiniteCanvasPage() {
                             isConnectionTarget={connectionTargetNodeId === node.id}
                             isConnecting={Boolean(connectingParams)}
                             editRequestNonce={editingNodeId === node.id ? editRequestNonce : 0}
-                            showPanel={dialogNodeId === node.id && !selectionBox && !getNodeDefinition(node.type)?.hidePanel}
+                            showPanel={!isNodeResizing && dialogNodeId === node.id && !selectionBox && !getNodeDefinition(node.type)?.hidePanel}
                             batchCount={batchChildCountById.get(node.id) || 0}
                             groupChildCount={groupChildCountById.get(node.id) || 0}
                             isGroupDropTarget={dropTargetGroupId === node.id}
@@ -3249,7 +3253,9 @@ function InfiniteCanvasPage() {
                             onHoverStart={handleNodeHoverStart}
                             onHoverEnd={handleNodeHoverEnd}
                             onConnectStart={handleConnectStart}
+                            onResizeStart={handleNodeResizeStart}
                             onResize={handleNodeResize}
+                            onResizeEnd={handleNodeResizeEnd}
                             onContentChange={handleNodeContentChange}
                             onTitleChange={handleNodeTitleChange}
                             onToggleGroupPin={toggleGroupPin}
@@ -3289,7 +3295,7 @@ function InfiniteCanvasPage() {
                 </InfiniteCanvas>
 
                 <CanvasNodeHoverToolbar
-                    node={isNodeDragging || nodeImageSettingsOpen ? null : toolbarNode}
+                    node={isNodeDragging || isNodeResizing || nodeImageSettingsOpen ? null : toolbarNode}
                     viewport={viewport}
                     position={toolbarPosition}
                     extraTools={toolbarNode ? buildNodeToolbarItems(toolbarNode) : undefined}

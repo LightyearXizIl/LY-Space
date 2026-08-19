@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.5.2`）
-- **最新发布状态**：`v0.5.2` 已于 2026-08-19 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `32212303375` 为 `completed/success`，Release 的 exe、blockmap、`latest.yml` 均已上传。v0.5.2 包含画布单节点取消生成、原图复制、画布库排序和设置运行日志（详见 3.28）。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.5.3`）
+- **最新发布状态**：`v0.5.3` 已于 2026-08-19 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `32222933180` 为 `completed/success`，Release 的 exe、blockmap、`latest.yml` 均已上传。v0.5.3 包含画布缩放稳定性、提示词展开编辑、独立文本生成数量、网络提示与默认关闭的新提示词源（详见 3.29）。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
 - **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`
@@ -26,7 +26,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.5.2（`VERSION`、两个 package 版本与 tag 已一致）
+- **当前版本**：v0.5.3（`VERSION`、两个 package 版本与 tag 已一致）
 
 ## 2. 数据存储
 
@@ -249,6 +249,13 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **画布库排序**：拖动目标卡片按水平中线判定前后插入，提示线和松手重排使用同一函数；松手时直接重算，避免 React 状态延迟导致最终位置与指示线不一致。
 - **运行日志**：设置新增「运行日志」，记录系统、网络/API、错误和关键操作，支持筛选、复制、导出、打开 `app-data/app.log` 目录与清空。主进程最多保留约 4 MiB，超限后保留最新约 2 MiB；API Key、密码、令牌、鉴权信息和请求内容会脱敏或不记录。
 - **发布核验**：Release `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.5.2` 的 `LY-Space-Setup-0.5.2.exe`（92,537,816 字节）、对应 blockmap 与 `latest.yml` 均为 `uploaded`。下载到本地的安装包 SHA-256 为 `ABD4F765BA60D597B78EAB897F8AB317EC73D4DFCC66C08E06493DF65D766754`；`latest.yml` 的版本、文件名、大小及 SHA-512 均与该安装包一致。
+
+### 3.29 v0.5.3 上游安全适配
+
+- **缩放与编辑**：节点缩放期间临时收起编辑面板和右键工具栏，松开、窗口失焦或节点卸载后恢复；图片和文本已有内容节点的未提交提示词写入 `composerContent`，展开编辑器与行内输入实时同步。
+- **文本数量兼容**：新增可选 `textCount`（1–15）。新建配置节点默认 1；历史配置节点没有该字段时继续回退原 `count`，普通文本节点未设置时仍生成 1 个，不改变图片批量生成。
+- **来源与错误提示**：无响应 `ERR_NETWORK` 提示网络、DNS、TLS、Base URL 与 CORS 排查；Freestylefly GPT Image 2 提示词源默认关闭，用户手动启用后才下载缓存。
+- **发布核验**：Release `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.5.3` 为正式版；Actions `32222933180` 成功。远端 `LY-Space-Setup-0.5.3.exe` 为 92,538,498 字节，`latest.yml` 版本/文件名/大小与远端资产一致，SHA-512 为 `DNv7emKcvwqPQbQIvvzXx7RrGQj9Ejyl7JBbKTOXnu4AtbJnBJfVuMBbWPWDmi7FFa4kSGBpR8cxCZb9G9b91Q==`。本地验证安装器 `release\LY Space Setup 0.5.3.exe` 为 92,538,455 字节，SHA-256 为 `8DC659293CB1243C8A0A39B246945CD6C955C4357B2CF110797D0E4B4615E3EA`；本地与 CI 构建时间不同，字节大小不相同。
 
 ### 3.23 v0.4.7 变更要点
 

@@ -23,18 +23,7 @@ import { loadWorkbenchSession, saveWorkbenchSession } from "@/services/workbench
 import { trackWrite } from "@/services/desktop-storage";
 import { acknowledgeReferenceHandoff, getReferenceHandoffs } from "@/services/reference-handoff";
 import type { ReferenceImage } from "@/types/image";
-
-type GeneratedImage = {
-    id: string;
-    dataUrl: string;
-    storageKey?: string;
-    localPath?: string;
-    durationMs: number;
-    width: number;
-    height: number;
-    bytes: number;
-    mimeType?: string;
-};
+import { buildTransientGenerationLog, createTransientGenerationBatch, findTransientGenerationLog, replaceTransientGenerationImages, updateTransientGenerationSlot, type GeneratedImage, type GenerationLog, type GenerationLogConfig, type TransientGenerationBatch } from "./generation-detail";
 
 type GenerationResult = {
     id: string;
@@ -42,30 +31,6 @@ type GenerationResult = {
     image?: GeneratedImage;
     error?: string;
 };
-
-type GenerationLog = {
-    id: string;
-    createdAt: number;
-    title: string;
-    prompt: string;
-    camera?: CameraSelection;
-    time: string;
-    model: string;
-    config: GenerationLogConfig;
-    references: ReferenceImage[];
-    durationMs: number;
-    successCount: number;
-    failCount: number;
-    cancelCount: number;
-    imageCount: number;
-    size: string;
-    quality: string;
-    status: "成功" | "失败" | "取消";
-    images: GeneratedImage[];
-    thumbnails: string[];
-};
-
-type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "imageResolution" | "size" | "count" | "background">;
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
@@ -84,6 +49,7 @@ type ActiveImageTask = {
 };
 const activeImageTasks = new Map<string, ActiveImageTask>();
 const imageTaskListeners = new Set<() => void>();
+const transientGenerationBatches = new Map<string, TransientGenerationBatch>();
 function emitImageTasks() {
     imageTaskListeners.forEach((listener) => listener());
 }
@@ -122,7 +88,6 @@ export default function ImagePage() {
     const [isReferenceDragActive, setIsReferenceDragActive] = useState(false);
     const [sessionHydrated, setSessionHydrated] = useState(false);
     const generationControllersRef = useRef(new Map<string, AbortController>());
-    const lastBatchRef = useRef<{ prompt: string; camera: CameraSelection; config: GenerationLogConfig; references: ReferenceImage[]; durationMs: number; images: GeneratedImage[] } | null>(null);
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
     const canGenerate = Boolean(prompt.trim());
@@ -298,20 +263,27 @@ export default function ImagePage() {
         setElapsedMs(0);
         setRunning(true);
         const pendingResults = Array.from({ length: generationCount }, () => ({ id: nanoid(), status: "pending" as const }));
+        const batch = createTransientGenerationBatch({
+            id: nanoid(),
+            slotIds: pendingResults.map((item) => item.id),
+            prompt: text,
+            camera: snapshot.camera,
+            model,
+            config: { ...snapshot.config, count: String(generationCount) },
+            references: snapshot.references,
+        });
+        transientGenerationBatches.set(batch.id, batch);
         // 新任务排列在最前，保留之前的生成结果不被挤掉
         setResults((prev) => [...pendingResults, ...prev]);
-        const batchStartedAt = performance.now();
-        setStartedAt(batchStartedAt);
+        setStartedAt(batch.startedAt);
 
-        const tasks = pendingResults.map((item) => runGenerationSlot(item.id, snapshot));
+        const tasks = pendingResults.map((item) => runGenerationSlot(item.id, snapshot, batch));
 
         const result = await Promise.allSettled(tasks);
         const successImages = result.filter((item): item is PromiseFulfilledResult<GeneratedImage | null> => item.status === "fulfilled").map((item) => item.value).filter((image): image is GeneratedImage => Boolean(image));
         const successCount = successImages.length;
-        const cancelCount = result.filter((item) => item.status === "fulfilled" && item.value === null).length;
         const failCount = result.filter((item) => item.status === "rejected").length;
         const failed = result.find((item): item is PromiseRejectedResult => item.status === "rejected");
-        const error = failed?.reason instanceof Error ? failed.reason.message : failCount ? "生成失败" : undefined;
 
         try {
             const logImages = await Promise.all(
@@ -320,33 +292,20 @@ export default function ImagePage() {
                     return { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
                 }),
             );
-            lastBatchRef.current = { prompt: text, camera: snapshot.camera, config: { ...snapshot.config, count: String(generationCount) }, references: snapshot.references, durationMs: performance.now() - batchStartedAt, images: logImages };
+            replaceTransientGenerationImages(batch, logImages);
+            refreshOpenBatchDetail(batch);
             // 结果图转存 IndexedDB 并回写 storageKey，跨重启/跨模块切换恢复时走本地存储，不依赖 base64/http URL
             const storedImagesById = new Map(logImages.map((item) => [item.id, item]));
             setResults((value) => value.map((result) => (result.image && storedImagesById.has(result.image.id) ? { ...result, image: storedImagesById.get(result.image.id) } : result)));
-            saveLog(
-                buildLog({
-                    prompt: text,
-                    camera: snapshot.camera,
-                    model,
-                    config: { ...snapshot.config, count: String(generationCount) },
-                    references: snapshot.references,
-                    durationMs: performance.now() - batchStartedAt,
-                    successCount,
-                    failCount,
-                    cancelCount,
-                    status: successCount ? "成功" : failCount ? "失败" : "取消",
-                    images: logImages,
-                }),
-            );
+            await saveLog(buildTransientGenerationLog(batch));
+            refreshOpenBatchDetail(batch);
+            transientGenerationBatches.delete(batch.id);
             if (successCount) message.success("图片已生成");
             else if (failCount) message.error(failed?.reason instanceof Error ? failed.reason.message : "生成失败");
             else message.info("已取消生成");
         } catch (error) {
-            // 落库失败时用原始成功图片设置兜底，保证刚生成的图片右键详情仍可用
-            if (successImages.length) {
-                lastBatchRef.current = { prompt: text, camera: snapshot.camera, config: { ...snapshot.config, count: String(generationCount) }, references: snapshot.references, durationMs: performance.now() - batchStartedAt, images: successImages };
-            }
+            // 记录或图片转存失败时保留内存批次，已成功槽位仍可立即查看详情。
+            if (!successImages.length) transientGenerationBatches.delete(batch.id);
             message.error(error instanceof Error ? `生成完成但保存记录失败：${error.message}` : "生成完成但保存记录失败");
         } finally {
             setRunning(false);
@@ -434,24 +393,28 @@ export default function ImagePage() {
         setAssetPickerOpen(false);
     };
 
-    const saveLog = (log: GenerationLog) => {
-        void trackWrite(logStore.setItem(log.id, serializeLog(log))).then(refreshLogs).catch(() => undefined);
+    const saveLog = async (log: GenerationLog) => {
+        await trackWrite(logStore.setItem(log.id, serializeLog(log)));
+        await refreshLogs();
     };
 
     const refreshLogs = async () => setLogs(await readStoredLogs());
 
+    const refreshOpenBatchDetail = (batch: TransientGenerationBatch) => {
+        setDetailLog((current) => (current?.id === batch.id ? buildTransientGenerationLog(batch) : current));
+    };
+
     const resolveDetailLog = async (image: GeneratedImage): Promise<GenerationLog | null> => {
         const matched = logs.find((log) => log.images.some((item) => item.id === image.id));
         if (matched) return matched;
+        // 单个槽位先完成、同批仍在生成时，日志尚未落库；优先从它所属的内存批次读取。
+        const transient = findTransientGenerationLog(transientGenerationBatches.values(), image.id);
+        if (transient) return transient;
         // logs state 可能尚未加载完成（IndexedDB 异步读取），异步重读兜底并顺带刷新 state
         const stored = await readStoredLogs();
         if (stored.length) setLogs(stored);
         const matchedStored = stored.find((log) => log.images.some((item) => item.id === image.id));
         if (matchedStored) return matchedStored;
-        const batch = lastBatchRef.current;
-        if (batch && batch.images.some((item) => item.id === image.id)) {
-            return buildLog({ prompt: batch.prompt, camera: batch.camera, model, config: batch.config, references: batch.references, durationMs: batch.durationMs, successCount: batch.images.length, failCount: 0, cancelCount: 0, status: "成功", images: batch.images });
-        }
         return null;
     };
 
@@ -643,7 +606,7 @@ export default function ImagePage() {
         return { text, requestText: buildCameraPrompt(text, selection), camera: selection, config: { ...effectiveConfig, model, count: "1" }, references: [...references] };
     };
 
-    const runGenerationSlot = async (id: string, snapshot: { text: string; requestText: string; camera: CameraSelection; config: AiConfig; references: ReferenceImage[] }) => {
+    const runGenerationSlot = async (id: string, snapshot: { text: string; requestText: string; camera: CameraSelection; config: AiConfig; references: ReferenceImage[] }, batch: TransientGenerationBatch) => {
         const itemStartedAt = performance.now();
         const controller = new AbortController();
         generationControllersRef.current.set(id, controller);
@@ -656,7 +619,13 @@ export default function ImagePage() {
             if (!image) throw new Error("接口没有返回图片");
             const meta = await readImageMeta(image.dataUrl);
             const nextImage: GeneratedImage = { id: image.id, dataUrl: image.dataUrl, durationMs: performance.now() - itemStartedAt, width: meta.width, height: meta.height, bytes: getDataUrlByteSize(image.dataUrl), localPath: image.localPath };
-            if (controller.signal.aborted) return null;
+            if (controller.signal.aborted) {
+                updateTransientGenerationSlot(batch, id, "canceled");
+                refreshOpenBatchDetail(batch);
+                return null;
+            }
+            updateTransientGenerationSlot(batch, id, "success", nextImage);
+            refreshOpenBatchDetail(batch);
             setResults((value) => updateResultById(value, id, { status: "success", image: nextImage }));
             // 完成状态保留在任务表，切页返回时由挂载合并消费（消费后移除）
             activeImageTasks.set(id, { controller, status: "success", image: nextImage, startedAt: itemStartedAt });
@@ -664,11 +633,15 @@ export default function ImagePage() {
             return nextImage;
         } catch (error) {
             if (controller.signal.aborted) {
+                updateTransientGenerationSlot(batch, id, "canceled");
+                refreshOpenBatchDetail(batch);
                 setResults((value) => updateResultById(value, id, { status: "canceled", error: undefined, image: undefined }));
                 activeImageTasks.delete(id);
                 emitImageTasks();
                 return null;
             }
+            updateTransientGenerationSlot(batch, id, "failed");
+            refreshOpenBatchDetail(batch);
             setResults((value) => updateResultById(value, id, { status: "failed", error: error instanceof Error ? error.message : "生成失败" }));
             activeImageTasks.set(id, { controller, status: "failed", error: error instanceof Error ? error.message : "生成失败", startedAt: itemStartedAt });
             emitImageTasks();
@@ -684,37 +657,28 @@ export default function ImagePage() {
         const id = results[index]?.id;
         if (!id) return;
         setResults((value) => updateResultById(value, id, { status: "pending", error: undefined, image: undefined }));
-        const retryStartedAt = performance.now();
+        const batch = createTransientGenerationBatch({ id: nanoid(), slotIds: [id], prompt: snapshot.text, camera: snapshot.camera, model, config: { ...snapshot.config, count: "1" }, references: snapshot.references });
+        transientGenerationBatches.set(batch.id, batch);
         let retriedImage: GeneratedImage | null = null;
         try {
-            const image = await runGenerationSlot(id, snapshot);
-            if (!image) return;
+            const image = await runGenerationSlot(id, snapshot, batch);
+            if (!image) {
+                transientGenerationBatches.delete(batch.id);
+                return;
+            }
             retriedImage = image;
             const stored = await uploadImage(image.dataUrl);
             const logImage = { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
+            replaceTransientGenerationImages(batch, [logImage]);
+            refreshOpenBatchDetail(batch);
             setResults((value) => updateResultById(value, id, { image: { ...image, dataUrl: stored.url, storageKey: stored.storageKey } }));
-            saveLog(
-                buildLog({
-                    prompt: snapshot.text,
-                    camera: snapshot.camera,
-                    model,
-                    config: { ...snapshot.config, count: "1" },
-                    references: snapshot.references,
-                    durationMs: performance.now() - retryStartedAt,
-                    successCount: 1,
-                    failCount: 0,
-                    cancelCount: 0,
-                    status: "成功",
-                    images: [logImage],
-                }),
-            );
-            lastBatchRef.current = { prompt: snapshot.text, camera: snapshot.camera, config: { ...snapshot.config, count: "1" }, references: snapshot.references, durationMs: performance.now() - retryStartedAt, images: [logImage] };
+            await saveLog(buildTransientGenerationLog(batch));
+            refreshOpenBatchDetail(batch);
+            transientGenerationBatches.delete(batch.id);
             message.success("重试成功");
         } catch {
-            // 落库失败时用重试成功图片设置兜底，保证右键详情仍可用（runGenerationSlot 已更新卡片状态）
-            if (retriedImage) {
-                lastBatchRef.current = { prompt: snapshot.text, camera: snapshot.camera, config: { ...snapshot.config, count: "1" }, references: snapshot.references, durationMs: performance.now() - retryStartedAt, images: [retriedImage] };
-            }
+            // 重试的落库失败也保留内存批次，已成功图片仍可查看详情。
+            if (!retriedImage) transientGenerationBatches.delete(batch.id);
         }
     };
 
@@ -1134,7 +1098,7 @@ function LogDetail({ log, storageSettings }: { log: GenerationLog; storageSettin
                 <LogDetailInfo label="耗时" value={formatDuration(log.durationMs)} />
                 <LogDetailInfo
                     label="结果"
-                    value={[log.successCount ? `成功 ${log.successCount}` : "", log.failCount ? `失败 ${log.failCount}` : "", log.cancelCount ? `取消 ${log.cancelCount}` : ""].filter(Boolean).join(" / ") || "—"}
+                    value={[log.pendingCount ? `进行中 ${log.pendingCount}` : "", log.successCount ? `成功 ${log.successCount}` : "", log.failCount ? `失败 ${log.failCount}` : "", log.cancelCount ? `取消 ${log.cancelCount}` : ""].filter(Boolean).join(" / ") || "—"}
                 />
             </div>
             {images.length ? (
@@ -1263,61 +1227,4 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
             <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm dark:!bg-stone-700/90 dark:!text-stone-100 dark:!shadow-none" icon={<ArrowRight className="size-3" />} disabled={index >= total - 1} onClick={() => onMove(1)} />
         </div>
     );
-}
-
-function buildLog({
-    prompt,
-    camera,
-    model,
-    config,
-    references,
-    durationMs,
-    successCount,
-    failCount,
-    cancelCount,
-    status,
-    images,
-}: {
-    prompt: string;
-    camera: CameraSelection;
-    model: string;
-    config: GenerationLogConfig;
-    references: ReferenceImage[];
-    durationMs: number;
-    successCount: number;
-    failCount: number;
-    cancelCount: number;
-    status: GenerationLog["status"];
-    images: GeneratedImage[];
-}): GenerationLog {
-    const logConfig = {
-        model: config.model,
-        imageModel: config.imageModel,
-        quality: config.quality,
-        imageResolution: config.imageResolution,
-        size: config.size,
-        count: config.count,
-        background: config.background,
-    };
-    return {
-        id: nanoid(),
-        createdAt: Date.now(),
-        title: prompt.slice(0, 12) || "未命名",
-        prompt,
-        camera: normalizeCameraSelection(camera),
-        time: new Date().toLocaleString("zh-CN", { hour12: false }),
-        model,
-        config: logConfig,
-        references,
-        durationMs,
-        successCount,
-        failCount,
-        cancelCount,
-        imageCount: Number(logConfig.count) || successCount,
-        size: logConfig.size,
-        quality: logConfig.quality,
-        status,
-        images,
-        thumbnails: images.map((image) => image.dataUrl).filter(Boolean),
-    };
 }

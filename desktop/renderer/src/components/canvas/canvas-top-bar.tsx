@@ -4,6 +4,7 @@ import { Dropdown, Modal, Tooltip } from "antd";
 
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { isImeComposing } from "@/lib/keyboard-event";
 import { useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { DOCS_URL } from "@/constant/env";
@@ -110,10 +111,12 @@ export const CanvasTopBar = memo(function CanvasTopBar({
                                 onChange={(event) => onTitleDraftChange(event.target.value)}
                                 onBlur={onFinishTitleEditing}
                                 onKeyDown={(event) => {
+                                    if (isImeComposing(event)) return;
                                     if (event.key === "Enter") onFinishTitleEditing();
                                     if (event.key === "Escape") onCancelTitleEditing();
                                 }}
-                                className="max-w-[280px] bg-transparent p-0 text-left text-lg font-semibold tracking-normal outline-none"
+                                className="max-w-[280px] select-text bg-transparent p-0 text-left text-lg font-semibold tracking-normal outline-none"
+                                data-canvas-shortcuts-ignore
                                 style={{ color: theme.node.text }}
                             />
                         ) : (

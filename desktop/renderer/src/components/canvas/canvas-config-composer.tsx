@@ -8,6 +8,7 @@ import type { CameraSelection } from "@/lib/camera";
 import { ModelPicker } from "@/components/model-picker";
 import { usePromptOptimizer } from "@/hooks/use-prompt-optimizer";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { isImeComposing } from "@/lib/keyboard-event";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasGenerationMode, CanvasNodeMetadata } from "@/types/canvas";
@@ -151,10 +152,11 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
                     ref={editorRef}
                     contentEditable
                     suppressContentEditableWarning
-                    className="thin-scrollbar min-h-28 max-h-72 w-full overflow-y-auto overscroll-contain whitespace-pre-wrap break-words px-3 py-2 text-sm leading-7 outline-none"
+                    data-canvas-shortcuts-ignore
+                    className="thin-scrollbar min-h-28 max-h-72 w-full select-text overflow-y-auto overscroll-contain whitespace-pre-wrap break-words px-3 py-2 text-sm leading-7 outline-none"
                     style={{ color: theme.node.text }}
-                    onInput={() => {
-                        if (!composingRef.current) syncFromEditor();
+                    onInput={(event) => {
+                        if (!composingRef.current && !isImeComposing(event)) syncFromEditor();
                     }}
                     onCompositionStart={() => {
                         composingRef.current = true;
@@ -165,6 +167,7 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
                     }}
                     onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                         event.stopPropagation();
+                        if (isImeComposing(event)) return;
                         if (mention && candidates.length) {
                             if (event.key === "ArrowDown") {
                                 event.preventDefault();

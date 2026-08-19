@@ -4,16 +4,19 @@ type NativeKeyboardEventLike = {
     which?: number;
 };
 
-type KeyboardEventLike = NativeKeyboardEventLike & {
+type EventLike = NativeKeyboardEventLike & {
+    nativeEvent?: Event | NativeKeyboardEventLike;
+};
+
+type KeyboardEventLike = EventLike & {
     key?: string;
     shiftKey?: boolean;
     ctrlKey?: boolean;
     metaKey?: boolean;
-    nativeEvent?: NativeKeyboardEventLike;
 };
 
-export function isImeComposing(event: KeyboardEventLike) {
-    const nativeEvent = event.nativeEvent;
+export function isImeComposing(event: EventLike) {
+    const nativeEvent = event.nativeEvent as NativeKeyboardEventLike | undefined;
     return Boolean(event.isComposing || nativeEvent?.isComposing || event.keyCode === 229 || event.which === 229 || nativeEvent?.keyCode === 229 || nativeEvent?.which === 229);
 }
 

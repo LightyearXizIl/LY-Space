@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { ChevronRight, Group, Image as ImageIcon, Music2, Pin, Puzzle, RefreshCw, Star, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { isImeComposing } from "@/lib/keyboard-event";
 import { formatBytes } from "@/lib/image-utils";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { buildNodeContext } from "@/lib/canvas/plugin-node-context";
@@ -331,11 +332,13 @@ export const CanvasNode = React.memo(function CanvasNode({
                             ref={titleInputRef}
                             value={titleDraft}
                             maxLength={64}
-                            className="h-6 max-w-full border-0 border-b border-dashed bg-transparent px-0 text-left text-xs font-medium outline-none"
+                            className="h-6 max-w-full select-text border-0 border-b border-dashed bg-transparent px-0 text-left text-xs font-medium outline-none"
+                            data-canvas-shortcuts-ignore
                             style={{ borderColor: theme.node.muted, color: theme.node.text }}
                             onChange={(event) => setTitleDraft(event.target.value)}
                             onBlur={finishTitleEditing}
                             onKeyDown={(event) => {
+                                if (isImeComposing(event)) return;
                                 if (event.key === "Enter") finishTitleEditing();
                                 if (event.key === "Escape") {
                                     setTitleDraft(data.title || "");
@@ -582,6 +585,7 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
                     onChange={(value) => onContentChange(node.id, value)}
                     onBlur={onStopEditing}
                     onKeyDown={(event) => {
+                        if (isImeComposing(event)) return;
                         if (event.key === "Escape") onStopEditing();
                     }}
                     onMouseDown={(event) => event.stopPropagation()}

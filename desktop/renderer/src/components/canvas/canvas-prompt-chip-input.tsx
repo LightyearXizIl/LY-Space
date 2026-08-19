@@ -138,10 +138,11 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                 suppressContentEditableWarning
                 role="textbox"
                 aria-multiline="true"
-                className={`${className || ""} overflow-y-auto whitespace-pre-wrap break-words outline-none`}
+                data-canvas-shortcuts-ignore
+                className={`${className || ""} select-text overflow-y-auto whitespace-pre-wrap break-words outline-none`}
                 style={{ ...style, cursor: "text" }}
-                onInput={() => {
-                    if (!composingRef.current) syncFromEditor();
+                onInput={(event) => {
+                    if (!composingRef.current && !isImeComposing(event)) syncFromEditor();
                 }}
                 onCompositionStart={() => {
                     composingRef.current = true;

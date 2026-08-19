@@ -26,6 +26,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
     const overlayRef = useRef<HTMLDivElement | null>(null);
+    const composingRef = useRef(false);
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
     const [hasSelection, setHasSelection] = useState(false);
@@ -110,16 +111,33 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                     else if (forwardedRef) forwardedRef.current = node;
                 }}
                 value={value}
-                className={className}
+                className={`${className || ""} select-text`}
+                data-canvas-shortcuts-ignore
                 style={mergedStyle}
                 onChange={(event) => {
                     const next = event.target.value;
+                    if (composingRef.current || isImeComposing(event)) return;
                     onChange(next);
                     syncMention(next, event.target.selectionStart);
                     requestAnimationFrame(() => {
                         syncOverlayScroll();
                         updateSelectionState();
                     });
+                }}
+                onCompositionStart={(event) => {
+                    composingRef.current = true;
+                    props.onCompositionStart?.(event);
+                }}
+                onCompositionEnd={(event) => {
+                    composingRef.current = false;
+                    const next = event.currentTarget.value;
+                    onChange(next);
+                    syncMention(next, event.currentTarget.selectionStart);
+                    requestAnimationFrame(() => {
+                        syncOverlayScroll();
+                        updateSelectionState();
+                    });
+                    props.onCompositionEnd?.(event);
                 }}
                 onSelect={(event) => {
                     updateSelectionState();

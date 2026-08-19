@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, net: electronNet, protocol, shell, Tray } = require("electron");
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, net: electronNet, protocol, shell, Tray } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -32,6 +32,8 @@ const persistenceFlushCoordinator = createPersistenceFlushCoordinator({
 });
 
 const RESULT_FOLDERS = { image: "Picture", video: "Video", audio: "Audio", text: "text" };
+const APP_LOG_MAX_BYTES = 4 * 1024 * 1024;
+const APP_LOG_KEEP_BYTES = 2 * 1024 * 1024;
 
 function displayVersion(version) {
     const value = String(version || "").trim().replace(/^v/i, "");
@@ -53,9 +55,85 @@ function writeUpdateInstallLog(event, details = {}) {
         const file = path.join(app.getPath("userData"), "app-data", "update-install.log");
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.appendFileSync(file, `${JSON.stringify({ time: new Date().toISOString(), event, ...details })}\n`, "utf8");
+        writeAppLog({ category: "system", level: "info", message: `更新安装：${event}`, details });
     } catch {
         // 日志失败不能影响安装或退出。
     }
+}
+
+function appLogDirectory() {
+    return path.join(app.getPath("userData"), "app-data");
+}
+
+function appLogFile() {
+    return path.join(appLogDirectory(), "app.log");
+}
+
+function redactLogValue(value, depth = 0) {
+    if (depth > 4 || value == null) return value;
+    if (typeof value === "string") {
+        const truncated = value.length > 2000 ? `${value.slice(0, 2000)}…` : value;
+        return truncated
+            .replace(/(Bearer\s+)[^\s,;]+/gi, "$1[已脱敏]")
+            .replace(/((?:api[_.-]?key|authorization|password|secret|token)\s*[:=]\s*)[^\s,;]+/gi, "$1[已脱敏]");
+    }
+    if (Array.isArray(value)) return value.slice(0, 20).map((item) => redactLogValue(item, depth + 1));
+    if (typeof value !== "object") return value;
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, /api.?key|authorization|password|secret|token/i.test(key) ? "[已脱敏]" : redactLogValue(item, depth + 1)]));
+}
+
+function writeAppLog(entry) {
+    try {
+        const level = ["info", "warn", "error"].includes(entry?.level) ? entry.level : "info";
+        const category = ["system", "network", "operation", "error"].includes(entry?.category) ? entry.category : "system";
+        const record = {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            time: typeof entry?.time === "string" ? entry.time : new Date().toISOString(),
+            level,
+            category,
+            message: String(entry?.message || "未命名日志").slice(0, 500),
+            details: redactLogValue(entry?.details),
+        };
+        const file = appLogFile();
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.appendFileSync(file, `${JSON.stringify(record)}\n`, "utf8");
+        if (fs.statSync(file).size > APP_LOG_MAX_BYTES) {
+            const content = fs.readFileSync(file);
+            const tail = content.subarray(Math.max(0, content.length - APP_LOG_KEEP_BYTES));
+            const firstLine = tail.indexOf(0x0a);
+            fs.writeFileSync(file, firstLine >= 0 ? tail.subarray(firstLine + 1) : tail);
+        }
+    } catch {
+        // 日志失败不能影响主流程。
+    }
+}
+
+async function readAppLogs(limit = 500) {
+    try {
+        const content = await fs.promises.readFile(appLogFile(), "utf8");
+        const max = Math.max(1, Math.min(Number(limit) || 500, 2000));
+        return content
+            .trim()
+            .split("\n")
+            .filter(Boolean)
+            .slice(-max)
+            .reverse()
+            .flatMap((line) => {
+                try {
+                    return [JSON.parse(line)];
+                } catch {
+                    return [];
+                }
+            });
+    } catch (error) {
+        if (error?.code === "ENOENT") return [];
+        throw error;
+    }
+}
+
+async function clearAppLogs() {
+    await fs.promises.mkdir(appLogDirectory(), { recursive: true });
+    await fs.promises.writeFile(appLogFile(), "", "utf8");
 }
 
 const UPDATE_OWNER = "LightyearXizIl";
@@ -556,6 +634,9 @@ app.whenReady().then(async () => {
     registerAppProtocol();
     installApplicationMenu();
     configureAutoUpdater();
+    writeAppLog({ category: "system", message: "主进程已启动", details: { version: app.getVersion(), packaged: app.isPackaged } });
+    app.on("render-process-gone", (_event, webContents, details) => writeAppLog({ category: "error", level: "error", message: "渲染进程异常退出", details: { reason: details.reason, exitCode: details.exitCode, url: webContents.getURL().split("?")[0] } }));
+    app.on("child-process-gone", (_event, details) => writeAppLog({ category: "error", level: "error", message: "子进程异常退出", details: { type: details.type, reason: details.reason, exitCode: details.exitCode } }));
     ipcMain.handle("lyspace:set-native-theme", (_event, source) => {
         // 窗口标题栏等原生 UI 明暗跟随应用主题
         nativeTheme.themeSource = source === "dark" ? "dark" : "light";
@@ -565,6 +646,13 @@ app.whenReady().then(async () => {
     ipcMain.handle("lyspace:download-update", () => downloadUpdate());
     ipcMain.handle("lyspace:pause-update-download", () => pauseUpdateDownload());
     ipcMain.handle("lyspace:install-downloaded-update", () => requestUpdateInstall());
+    ipcMain.handle("lyspace:append-app-log", (_event, entry) => writeAppLog(entry));
+    ipcMain.handle("lyspace:read-app-logs", (_event, limit) => readAppLogs(limit));
+    ipcMain.handle("lyspace:clear-app-logs", () => clearAppLogs());
+    ipcMain.handle("lyspace:open-app-log-directory", () => {
+        fs.mkdirSync(appLogDirectory(), { recursive: true });
+        return shell.openPath(appLogDirectory());
+    });
     ipcMain.handle("lyspace:storage-settings", () => storageInfo());
     ipcMain.handle("lyspace:choose-storage-directory", async (_event, kind) => {
         const selected = await dialog.showOpenDialog(mainWindow, { title: kind === "cache" ? "选择缓存目录" : "选择结果保存目录", properties: ["openDirectory", "createDirectory"] });
@@ -617,6 +705,15 @@ app.whenReady().then(async () => {
         } finally {
             clearTimeout(timer);
         }
+    });
+    ipcMain.handle("lyspace:copy-image-to-clipboard", async (_event, payload) => {
+        const bytes = payload?.bytes ? Buffer.from(payload.bytes) : null;
+        if (!bytes?.length) throw new Error("没有可复制的图片内容");
+        const image = nativeImage.createFromBuffer(bytes);
+        if (image.isEmpty()) throw new Error("图片格式无效，无法复制");
+        clipboard.writeImage(image);
+        const size = image.getSize();
+        return { width: size.width, height: size.height };
     });
     ipcMain.handle("lyspace:save-file-dialog", async (_event, payload) => {
         const bytes = payload?.bytes ? Buffer.from(payload.bytes) : null;

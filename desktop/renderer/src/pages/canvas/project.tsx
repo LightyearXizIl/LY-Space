@@ -9,7 +9,7 @@ import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audi
 import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
 import { readUpstreamError } from "@/services/api/error-message";
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { uploadImage } from "@/services/image-storage";
+import { fetchImageBlob, getImageBlob, uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
@@ -47,7 +47,9 @@ import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { applyCanvasOps, type CanvasOp } from "@/lib/canvas/canvas-ops";
 import { buildNodeMentionReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { collectNodeDeletionIds } from "@/lib/canvas/canvas-node-deletion";
+import { cancelCanvasGenerationRun, cancelCanvasGenerationTarget, finishCanvasGenerationRequest, hasCanvasGenerationRequest, startCanvasGenerationRequest, type CanvasGenerationRequest } from "@/lib/canvas/canvas-generation-requests";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
+import { logAppEvent } from "@/services/app-logger";
 import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { findContainingGroupId, findGroupDropTarget, getConnectionTargetAnchor, isHiddenBatchChild, isHiddenBatchConnectionEndpoint, nearestConnectionSide, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
 import {
@@ -114,13 +116,6 @@ type CanvasHistoryEntry = Pick<CanvasClipboard, "nodes" | "connections"> & {
     showImageInfo: boolean;
 };
 
-type CanvasGenerationRequest = {
-    targetNodeId: string;
-    originNodeId: string;
-    runningNodeId: string;
-    controller: AbortController;
-};
-
 const VIDEO_NODE_MAX_WIDTH = 420;
 const VIDEO_NODE_MAX_HEIGHT = 420;
 // 稳定的空引用数组:避免每次渲染 `... || []` 产生新数组引用而击穿 CanvasNode 的 React.memo
@@ -134,6 +129,24 @@ const NODE_STATUS_ERROR = "error" as const;
 
 function nodeErrorDetails(error: unknown, fallback: string) {
     return error instanceof Error ? error.message || fallback : readUpstreamError(error) || fallback;
+}
+
+async function toClipboardImageBlob(blob: Blob) {
+    if (blob.type === "image/png" || blob.type === "image/jpeg") return blob;
+    const bitmap = await createImageBitmap(blob);
+    try {
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("无法创建图片复制画布");
+        context.drawImage(bitmap, 0, 0);
+        const png = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+        if (!png) throw new Error("图片转换失败");
+        return png;
+    } finally {
+        bitmap.close();
+    }
 }
 const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用于 AI 生图的提示词。
 
@@ -285,30 +298,36 @@ function InfiniteCanvasPage() {
         [cleanupAssetImages],
     );
 
-    const startGenerationRequest = useCallback((targetNodeId: string, originNodeId: string, runningId = originNodeId, controller = new AbortController()) => {
-        const previous = generationRequestsRef.current.get(targetNodeId);
-        if (previous?.controller !== controller) previous?.controller.abort();
-        generationRequestsRef.current.set(targetNodeId, { targetNodeId, originNodeId, runningNodeId: runningId, controller });
-        return controller;
-    }, []);
+    const startGenerationRequest = useCallback((targetNodeId: string, originNodeId: string, runningId = originNodeId, controller = new AbortController()) => startCanvasGenerationRequest(generationRequestsRef.current, targetNodeId, originNodeId, runningId, controller), []);
 
-    const finishGenerationRequest = useCallback((targetNodeId: string, controller: AbortController) => {
-        const request = generationRequestsRef.current.get(targetNodeId);
-        if (request?.controller === controller) generationRequestsRef.current.delete(targetNodeId);
-    }, []);
+    const finishGenerationRequest = useCallback((targetNodeId: string, controller: AbortController) => finishCanvasGenerationRequest(generationRequestsRef.current, targetNodeId, controller), []);
 
     const stopGenerationByRunningId = useCallback((runningId: string) => {
-        const affectedNodeIds = new Set<string>();
-        generationRequestsRef.current.forEach((request) => {
-            if (request.runningNodeId !== runningId) return;
-            request.controller.abort();
-            generationRequestsRef.current.delete(request.targetNodeId);
-            affectedNodeIds.add(request.targetNodeId);
-            affectedNodeIds.add(request.originNodeId);
-        });
+        const canceled = cancelCanvasGenerationRun(generationRequestsRef.current, runningId);
+        if (!canceled) return;
+        logAppEvent({ category: "operation", message: "停止画布生成批次", details: { canceled: canceled.targetNodeIds.size } });
         setRunningNodeId((current) => (current === runningId ? null : current));
-        if (!affectedNodeIds.size) return;
-        setNodes((prev) => prev.map((node) => (affectedNodeIds.has(node.id) && node.metadata?.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node)));
+        setNodes((prev) =>
+            prev.map((node) =>
+                (canceled.targetNodeIds.has(node.id) || canceled.originNodeIds.has(node.id)) && node.metadata?.status === NODE_STATUS_LOADING
+                    ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } }
+                    : node,
+            ),
+        );
+    }, []);
+
+    const stopGenerationByNodeId = useCallback((nodeId: string) => {
+        const canceled = cancelCanvasGenerationTarget(generationRequestsRef.current, nodeId);
+        if (!canceled) return;
+        logAppEvent({ category: "operation", message: "取消画布节点生成" });
+        setRunningNodeId((current) => (current === canceled.runningNodeId && !canceled.hasRemainingForRun ? null : current));
+        setNodes((prev) =>
+            prev.map((node) => {
+                const shouldResetTarget = canceled.targetNodeIds.has(node.id);
+                const shouldResetOrigin = !canceled.hasRemainingForRun && canceled.originNodeIds.has(node.id);
+                return (shouldResetTarget || shouldResetOrigin) && node.metadata?.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node;
+            }),
+        );
     }, []);
 
     const confirmStopGeneration = useCallback(
@@ -1766,6 +1785,27 @@ function InfiniteCanvasPage() {
         saveAs(node.metadata.content, `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : imageExtension(node.metadata.content)}`);
     }, []);
 
+    const copyNodeImage = useCallback(
+        async (node: CanvasNodeData) => {
+            if (node.type !== CanvasNodeType.Image || !node.metadata?.content) return;
+            if (!window.lySpaceDesktop) {
+                message.error("当前环境不支持复制图片到系统剪贴板");
+                return;
+            }
+            try {
+                const stored = node.metadata.storageKey ? await getImageBlob(node.metadata.storageKey) : null;
+                const image = await toClipboardImageBlob(stored || (await fetchImageBlob(node.metadata.content)));
+                await window.lySpaceDesktop.copyImageToClipboard({ bytes: await image.arrayBuffer(), mimeType: image.type || node.metadata.mimeType });
+                logAppEvent({ category: "operation", message: "复制画布原图到剪贴板" });
+                message.success("图片已复制，可直接粘贴");
+            } catch (error) {
+                logAppEvent({ category: "error", level: "error", message: "复制画布原图失败", details: { error: nodeErrorDetails(error, "复制图片失败") } });
+                message.error(nodeErrorDetails(error, "复制图片失败"));
+            }
+        },
+        [message],
+    );
+
     const saveNodeAsset = useCallback(
         async (node: CanvasNodeData) => {
             if (node.type === CanvasNodeType.Text) {
@@ -2420,14 +2460,15 @@ function InfiniteCanvasPage() {
                     setSelectedConnectionId(null);
                     setDialogNodeId(nodeId);
 
-                    const controller = runController;
-                    targetIds.forEach((targetId) => startGenerationRequest(targetId, nodeId, nodeId, controller));
-                    if (count > 1) startGenerationRequest(rootId, nodeId, nodeId, controller);
+                    finishGenerationRequest(nodeId, runController);
+                    const controllersByTargetId = new Map(targetIds.map((targetId) => [targetId, startGenerationRequest(targetId, nodeId, nodeId)]));
                     let hasSuccess = false;
                     let hasFailure = false;
+                    let hasCanceled = false;
                     let firstError = "";
                     await Promise.all(
                         targetIds.map(async (targetId) => {
+                            const controller = controllersByTargetId.get(targetId)!;
                             try {
                                 const image = referenceImages.length
                                     ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, { signal: controller.signal }).then((items) => items[0])
@@ -2462,7 +2503,10 @@ function InfiniteCanvasPage() {
                                 if (isConfigNode) setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)));
                                 return true;
                             } catch (error) {
-                                if (isGenerationCanceled(error)) return false;
+                                if (isGenerationCanceled(error)) {
+                                    hasCanceled = true;
+                                    return false;
+                                }
                                 const errorDetails = nodeErrorDetails(error, "生成失败");
                                 if (!firstError) firstError = errorDetails;
                                 hasFailure = true;
@@ -2473,9 +2517,14 @@ function InfiniteCanvasPage() {
                             return false;
                         }),
                     );
-                    if (count > 1) finishGenerationRequest(rootId, controller);
-                    if (controller.signal.aborted) {
-                        setNodes((prev) => prev.map((node) => (node.id === nodeId && isConfigNode && node.metadata?.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node)));
+                    if (hasCanceled && !hasSuccess && !hasFailure) {
+                        setNodes((prev) =>
+                            prev.map((node) =>
+                                (node.id === nodeId || node.id === rootId) && node.metadata?.status === NODE_STATUS_LOADING
+                                    ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } }
+                                    : node,
+                            ),
+                        );
                         return;
                     }
                     if (hasFailure) {
@@ -2528,7 +2577,8 @@ function InfiniteCanvasPage() {
                             : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), videoNode],
                     );
                     if (!isEmptyVideoNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }]);
-                    const controller = startGenerationRequest(videoId, nodeId, nodeId, runController);
+                    finishGenerationRequest(nodeId, runController);
+                    const controller = startGenerationRequest(videoId, nodeId, nodeId);
                     try {
                         const video = await storeGeneratedVideo(
                             await requestVideoGeneration(generationConfig, effectivePrompt, generationContext.referenceImages, generationContext.referenceVideos, generationContext.referenceAudios, { signal: controller.signal }),
@@ -2587,7 +2637,8 @@ function InfiniteCanvasPage() {
                             : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), audioNode],
                     );
                     if (!isEmptyAudioNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: audioId }]);
-                    const controller = startGenerationRequest(audioId, nodeId, nodeId, runController);
+                    finishGenerationRequest(nodeId, runController);
+                    const controller = startGenerationRequest(audioId, nodeId, nodeId);
                     try {
                         const audio = await storeGeneratedAudio(await requestAudioGeneration(generationConfig, effectivePrompt, { signal: controller.signal }), generationConfig.audioFormat);
                         setNodes((prev) => prev.map((node) => (node.id === audioId ? { ...node, metadata: { ...node.metadata, ...audioMetadata(audio), prompt: effectivePrompt, ...buildAudioGenerationMetadata(generationConfig) } } : node)));
@@ -2621,12 +2672,13 @@ function InfiniteCanvasPage() {
                     setConnections((prev) => [...prev, ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: nodeId, toNodeId: childId }))]);
                 }
 
-                const controller = runController;
                 const textTargetIds = childIds.length ? childIds : [nodeId];
-                textTargetIds.forEach((targetNodeId) => startGenerationRequest(targetNodeId, nodeId, nodeId, controller));
+                finishGenerationRequest(nodeId, runController);
+                const controllersByTargetId = new Map(textTargetIds.map((targetNodeId) => [targetNodeId, startGenerationRequest(targetNodeId, nodeId, nodeId)]));
                 const answers = await Promise.all(
                     textTargetIds.map((targetNodeId) => {
                         let localStreamed = "";
+                        const controller = controllersByTargetId.get(targetNodeId)!;
                         return requestImageQuestion(
                             generationConfig,
                             buildNodeResponseMessages({ ...generationContext, prompt: effectivePrompt }),
@@ -2639,15 +2691,21 @@ function InfiniteCanvasPage() {
                             { signal: controller.signal },
                         )
                             .then((answer) => ({ nodeId: targetNodeId, content: answer || localStreamed }))
+                            .catch((error) => {
+                                if (isGenerationCanceled(error)) return null;
+                                throw error;
+                            })
                             .finally(() => finishGenerationRequest(targetNodeId, controller));
                     }),
                 );
-                if (controller.signal.aborted) return;
-                const answerByNodeId = new Map(answers.map((item) => [item.nodeId, item.content]));
+                const answerByNodeId = new Map(answers.filter((item): item is { nodeId: string; content: string } => Boolean(item)).map((item) => [item.nodeId, item.content]));
+                if (!answerByNodeId.size) return;
                 setNodes((prev) =>
                     prev.map((node) =>
                         childIds.includes(node.id)
-                            ? { ...node, metadata: { ...node.metadata, content: answerByNodeId.get(node.id), status: NODE_STATUS_SUCCESS } }
+                            ? answerByNodeId.has(node.id)
+                                ? { ...node, metadata: { ...node.metadata, content: answerByNodeId.get(node.id), status: NODE_STATUS_SUCCESS } }
+                                : node
                             : node.id === nodeId && isConfigNode
                               ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } }
                               : node.id === nodeId && !editingTextNode
@@ -3245,6 +3303,7 @@ function InfiniteCanvasPage() {
                     onGenerateImage={generateImageFromTextNode}
                     onUpload={(node) => handleUploadRequest(node.id)}
                     onDownload={downloadNodeImage}
+                    onCopyImage={(node) => void copyNodeImage(node)}
                     onSaveAsset={(node) => void saveNodeAsset(node)}
                     onMaskEdit={(node) => setMaskEditNodeId(node.id)}
                     onCrop={(node) => setCropNodeId(node.id)}
@@ -3255,7 +3314,8 @@ function InfiniteCanvasPage() {
                     onViewImage={(node) => setPreviewNodeId(node.id)}
                     onReversePrompt={createImageReversePromptNodes}
                     onRetry={(node) => void handleRetryNode(node)}
-                    onCancelGenerate={(node) => stopGenerationByRunningId(node.id)}
+                    onCancelGenerate={(node) => stopGenerationByNodeId(node.id)}
+                    canCancelGenerate={Boolean(toolbarNode && hasCanvasGenerationRequest(generationRequestsRef.current, toolbarNode.id))}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
                     onDelete={(node) => deleteNodes(new Set([node.id]))}
                 />

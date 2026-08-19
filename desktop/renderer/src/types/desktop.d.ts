@@ -15,6 +15,9 @@ declare global {
     };
     type StorageKind = "image" | "video" | "audio" | "text";
     type StorageSettings = { resultRoot: string; cacheRoot: string; defaultResultRoot: string; defaultCacheRoot: string; pendingCacheRoot?: string; lastError?: string; folders: Record<StorageKind, string> };
+    type AppLogLevel = "info" | "warn" | "error";
+    type AppLogCategory = "system" | "network" | "operation" | "error";
+    type AppLogEntry = { id: string; time: string; level: AppLogLevel; category: AppLogCategory; message: string; details?: unknown };
     interface Window {
         lySpaceDesktop?: {
             getUpdateState: () => Promise<AppUpdateState>;
@@ -31,6 +34,11 @@ declare global {
             resetStorageDirectory: (kind: "result" | "cache") => Promise<StorageSettings>;
             openStorageDirectory: (directory: string) => Promise<string>;
             fetchUrl: (url: string) => Promise<{ bytes: ArrayBuffer; mimeType: string }>;
+            copyImageToClipboard: (payload: { bytes: ArrayBuffer; mimeType?: string }) => Promise<{ width: number; height: number }>;
+            appendAppLog: (entry: Omit<AppLogEntry, "id">) => Promise<void>;
+            readAppLogs: (limit?: number) => Promise<AppLogEntry[]>;
+            clearAppLogs: () => Promise<void>;
+            openAppLogDirectory: () => Promise<string>;
             saveFileDialog: (payload: { title?: string; defaultPath?: string; bytes: ArrayBuffer; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; path: string }>;
             saveFilesDialog: (payload: { title?: string; files: Array<{ name: string; bytes: ArrayBuffer }>; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; paths: string[] }>;
             writeGeneratedOutput: (payload: { kind: StorageKind; extension?: string; bytes?: ArrayBuffer; text?: string }) => Promise<{ path: string; name: string }>;

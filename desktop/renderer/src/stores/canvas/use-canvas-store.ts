@@ -4,6 +4,7 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 import { nanoid } from "nanoid";
 import { localForageStorage } from "@/lib/localforage-storage";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
+import { reorderCanvasProjects } from "@/lib/canvas/canvas-project-order";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "@/types/canvas";
 
 export type CanvasProject = {
@@ -107,16 +108,8 @@ export const useCanvasStore = create<CanvasStore>()(
                 })),
             reorderProjects: (id, targetId, before) =>
                 set((state) => {
-                    const projects = [...state.projects];
-                    const from = projects.findIndex((project) => project.id === id);
-                    const target = projects.findIndex((project) => project.id === targetId);
-                    if (from < 0 || target < 0 || from === target) return {};
-                    const [moved] = projects.splice(from, 1);
-                    // 移除后重算目标索引,再决定插到目标之前/之后
-                    let to = projects.findIndex((project) => project.id === targetId);
-                    if (!before) to += 1;
-                    projects.splice(to, 0, moved);
-                    return { projects };
+                    const projects = reorderCanvasProjects(state.projects, id, targetId, before);
+                    return projects === state.projects ? {} : { projects };
                 }),
             deleteProjects: (ids) =>
                 set((state) => {

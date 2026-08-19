@@ -12,6 +12,8 @@ import type { CanvasExportFile } from "@/types/canvas-export";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
+import { shouldInsertProjectBefore } from "@/lib/canvas/canvas-project-order";
+import { logAppEvent } from "@/services/app-logger";
 
 export default function CanvasPage() {
     const { message } = App.useApp();
@@ -28,6 +30,11 @@ export default function CanvasPage() {
     const [dragProjectId, setDragProjectId] = useState<string | null>(null);
     const [dropTarget, setDropTarget] = useState<{ id: string; before: boolean } | null>(null);
 
+    const clearDragState = () => {
+        setDragProjectId(null);
+        setDropTarget(null);
+    };
+
     const handleCardDragStart = (event: DragEvent<HTMLDivElement>, id: string) => {
         // 从按钮/输入框(勾选、重命名、操作图标)上不触发拖动
         if ((event.target as HTMLElement).closest("button, input, a")) return;
@@ -40,19 +47,18 @@ export default function CanvasPage() {
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
         const rect = event.currentTarget.getBoundingClientRect();
-        // 按卡片对角线判断插入位置:指针在对角线左/上方 → 插到该卡片之前,否则之后(网格布局通用)
-        const before = (event.clientY - rect.top) / rect.height < (event.clientX - rect.left) / rect.width;
-        setDropTarget((current) => (current?.id === id && current.before === before ? current : { id, before }));
+        const before = shouldInsertProjectBefore(event.clientX, rect);
+        const next = { id, before };
+        setDropTarget((current) => (current?.id === id && current.before === before ? current : next));
     };
     const handleCardDrop = (event: DragEvent<HTMLDivElement>, id: string) => {
         event.preventDefault();
-        if (dragProjectId && dragProjectId !== id) reorderProjects(dragProjectId, id, dropTarget?.id === id ? dropTarget.before : false);
-        setDragProjectId(null);
-        setDropTarget(null);
-    };
-    const endCardDrag = () => {
-        setDragProjectId(null);
-        setDropTarget(null);
+        const before = shouldInsertProjectBefore(event.clientX, event.currentTarget.getBoundingClientRect());
+        if (dragProjectId && dragProjectId !== id) {
+            reorderProjects(dragProjectId, id, before);
+            logAppEvent({ category: "operation", message: "调整画布库排序", details: { position: before ? "before" : "after" } });
+        }
+        clearDragState();
     };
 
     const enterProject = (id: string) => {
@@ -133,7 +139,7 @@ export default function CanvasPage() {
                                     onDragStart={(event) => handleCardDragStart(event, project.id)}
                                     onDragOver={(event) => handleCardDragOver(event, project.id)}
                                     onDrop={(event) => handleCardDrop(event, project.id)}
-                                    onDragEnd={endCardDrag}
+                                    onDragEnd={clearDragState}
                                     className={dragging ? "opacity-40" : undefined}
                                     style={dropSide ? { boxShadow: `inset ${dropSide === "before" ? "3px" : "-3px"} 0 0 0 #2f80ff` } : undefined}
                                 >

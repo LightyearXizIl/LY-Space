@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.5.1`）
-- **最新发布状态**：`v0.5.1` 已于 2026-08-18 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `32135741464` 为 `completed/success`，Release 的 exe、blockmap、`latest.yml` 均已上传。v0.5.1 修复旧版本（≤0.4.6）直接升级的两个坑：进程未退出时提示操作指引并写诊断日志、ps1 补 UTF-8 BOM 消除乱码与解析错误（详见 3.27）。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.5.2`）
+- **最新发布状态**：`v0.5.2` 待 GitHub Actions `Publish LY Space Desktop` 构建、上传并发布；上一版本 `v0.5.1` 已于 2026-08-18 正式发布（非 draft/prerelease），exe、blockmap、`latest.yml` 均已上传。v0.5.2 包含画布单节点取消生成、原图复制、画布库排序和设置运行日志（详见 3.28）。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
 - **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`
@@ -26,7 +26,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.5.1（`VERSION`、两个 package 版本与 tag 已一致）
+- **当前版本**：v0.5.2（`VERSION`、两个 package 版本与 tag 已一致）
 
 ## 2. 数据存储
 
@@ -241,6 +241,13 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **ps1 必须带 UTF-8 BOM**：PowerShell 5.1 对无 BOM 文件按 ANSI 解码，中文错误信息会乱码（显示为「LY Space 源氤渣澹…」），且部分中文字符（如「右」）的字节序列会触发解析语法错误导致安装器误报。2026-08-18 起 `backup-user-data.ps1` 带 BOM；改动此文件后必须保留 BOM 并跑 `desktop/tests/storage-migration.test.cjs`。
 - **0.4.6 卸载器会破坏安装目录数据**（`CopyFiles` 不递归 + `RMDir /r`，嵌套子目录丢失）；升级安全完全依赖安装器先做的 SHA-256 快照备份，备份成功前任何环节中止都不删数据。
 - **「无法写入 …\Temp\nse*.tmp\app-64.7z」**：NSIS 解压 payload 失败，多为杀软拦截或 Temp 空间不足，与版本兼容性无关；建议临时关闭安全软件或清理 Temp 后重试。
+
+### 3.28 v0.5.2 画布操作与运行日志
+
+- **画布生成取消**：生成请求按结果节点登记独立 `AbortController`；右键「取消生成」仅中断所点节点，批量同组其他节点继续。源节点编辑面板的「停止」仍取消整批；所有节点取消后源节点和汇总节点恢复空闲，不显示失败。
+- **复制原图**：已完成图片节点右键工具栏固定提供「复制图片」，优先读取 `storageKey` 的原图 Blob，必要时才按内容 URL 回退；Electron 主进程以原生图片写入 Windows 剪贴板，WebP 会转为等尺寸 PNG，不使用 1024px 缩略图。
+- **画布库排序**：拖动目标卡片按水平中线判定前后插入，提示线和松手重排使用同一函数；松手时直接重算，避免 React 状态延迟导致最终位置与指示线不一致。
+- **运行日志**：设置新增「运行日志」，记录系统、网络/API、错误和关键操作，支持筛选、复制、导出、打开 `app-data/app.log` 目录与清空。主进程最多保留约 4 MiB，超限后保留最新约 2 MiB；API Key、密码、令牌、鉴权信息和请求内容会脱敏或不记录。
 
 ### 3.23 v0.4.7 变更要点
 

@@ -7,12 +7,14 @@ import { ModelPicker } from "@/components/model-picker";
 import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
 import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
 import { AboutPanel } from "@/components/layout/about-panel";
+import { AppLogsPanel } from "@/components/layout/app-logs-panel";
 import { OssSettingsPanel } from "@/components/layout/oss-settings-panel";
 import { exportAppConfig, importAppConfig } from "@/services/config-file";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import { createModelChannel, modelOptionsFromChannels, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { logAppEvent } from "@/services/app-logger";
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -102,10 +104,15 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
             const next = kind === "result" ? await window.lySpaceDesktop.updateResultDirectory(directory) : await window.lySpaceDesktop.stageCacheDirectory(directory);
             setStorageSettings(next);
             if (kind === "cache") {
+                logAppEvent({ category: "operation", message: "准备迁移缓存目录" });
                 message.success("缓存目录已准备好，正在重启并迁移数据");
                 await window.lySpaceDesktop.relaunchAfterFlush();
-            } else message.success("结果保存目录已更新，历史文件已复制到新目录");
+            } else {
+                logAppEvent({ category: "operation", message: "更新结果保存目录" });
+                message.success("结果保存目录已更新，历史文件已复制到新目录");
+            }
         } catch (error) {
+            logAppEvent({ category: "error", level: "error", message: "更新存储目录失败", details: { kind, error: error instanceof Error ? error.message : String(error) } });
             message.error(error instanceof Error ? error.message : "存储目录更新失败");
         } finally {
             setSavingStorage(false);
@@ -118,9 +125,15 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
         try {
             const next = await window.lySpaceDesktop.resetStorageDirectory(kind);
             setStorageSettings(next);
-            if (kind === "cache") await window.lySpaceDesktop.relaunchAfterFlush();
-            else message.success("已恢复默认结果目录");
+            if (kind === "cache") {
+                logAppEvent({ category: "operation", message: "恢复默认缓存目录" });
+                await window.lySpaceDesktop.relaunchAfterFlush();
+            } else {
+                logAppEvent({ category: "operation", message: "恢复默认结果目录" });
+                message.success("已恢复默认结果目录");
+            }
         } catch (error) {
+            logAppEvent({ category: "error", level: "error", message: "恢复默认存储目录失败", details: { kind, error: error instanceof Error ? error.message : String(error) } });
             message.error(error instanceof Error ? error.message : "恢复默认目录失败");
         } finally {
             setSavingStorage(false);
@@ -142,8 +155,10 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const loadConfigFile = async (file: File) => {
         try {
             await importAppConfig(file);
+            logAppEvent({ category: "operation", message: "导入应用配置" });
             message.success("配置与用户偏好已导入");
         } catch (error) {
+            logAppEvent({ category: "error", level: "error", message: "导入应用配置失败", details: { error: error instanceof Error ? error.message : String(error) } });
             message.error(error instanceof Error ? error.message : "配置文件读取失败");
         } finally {
             if (configInputRef.current) configInputRef.current.value = "";
@@ -182,8 +197,10 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
         setTestingWebdav(true);
         try {
             await testWebdavConnection(webdav);
+            logAppEvent({ category: "operation", message: "WebDAV 连接测试成功" });
             message.success("WebDAV 连接可用");
         } catch (error) {
+            logAppEvent({ category: "error", level: "error", message: "WebDAV 连接测试失败", details: { error: error instanceof Error ? error.message : String(error) } });
             message.error(error instanceof Error ? error.message : "WebDAV 连接测试失败");
         } finally {
             setTestingWebdav(false);
@@ -216,8 +233,10 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
         try {
             const result = await syncAppDataToWebdav(webdav, updateWebdavProgress);
             updateWebdavConfig("lastSyncedAt", result.syncedAt);
+            logAppEvent({ category: "operation", message: "WebDAV 同步完成", details: { projects: result.projects, assets: result.assets, uploadedFiles: result.uploadedFiles } });
             message.success(`同步完成：${result.projects} 个画布，${result.assets} 个资产，${result.imageLogs + result.videoLogs} 条记录，本次上传 ${result.uploadedFiles} 个文件 ${formatBytes(result.uploadedBytes)}`);
         } catch (error) {
+            logAppEvent({ category: "error", level: "error", message: "WebDAV 同步失败", details: { error: error instanceof Error ? error.message : String(error) } });
             setWebdavSyncStatus(error instanceof Error ? error.message : "WebDAV 同步失败");
             message.error(error instanceof Error ? error.message : "WebDAV 同步失败");
         } finally {
@@ -400,6 +419,11 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                         key: "oss",
                         label: "阿里云设置",
                         children: <OssSettingsPanel />,
+                    },
+                    {
+                        key: "logs",
+                        label: "运行日志",
+                        children: <AppLogsPanel />,
                     },
                     {
                         key: "about",

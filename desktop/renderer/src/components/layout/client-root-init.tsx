@@ -5,6 +5,7 @@ import { App } from "antd";
 import { createModelChannel, useConfigStore } from "@/stores/use-config-store";
 import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
 import { flushPendingStorageWrites } from "@/services/desktop-storage";
+import { initializeAppLogging, logAppEvent } from "@/services/app-logger";
 import { UpdatePrompt } from "@/components/layout/update-prompt";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
@@ -18,7 +19,15 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     usePromptSourceScheduler();
 
     useEffect(() => {
-        const showStorageError = (event: Event) => message.warning(event instanceof CustomEvent ? String(event.detail || "生成结果保存到本地目录失败，请检查存储设置") : "生成结果保存到本地目录失败，请检查存储设置");
+        initializeAppLogging();
+    }, []);
+
+    useEffect(() => {
+        const showStorageError = (event: Event) => {
+            const detail = event instanceof CustomEvent ? String(event.detail || "生成结果保存到本地目录失败，请检查存储设置") : "生成结果保存到本地目录失败，请检查存储设置";
+            logAppEvent({ category: "error", level: "error", message: "生成结果保存失败", details: { error: detail } });
+            message.warning(detail);
+        };
         window.addEventListener("lyspace:storage-error", showStorageError);
         const unsubscribe = window.lySpaceDesktop?.onFlushPersistence((request) => {
             void flushPendingStorageWrites().finally(() => void window.lySpaceDesktop?.persistenceFlushed(request.id));

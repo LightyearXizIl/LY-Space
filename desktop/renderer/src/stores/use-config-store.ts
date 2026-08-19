@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
+import { logAppEvent } from "@/services/app-logger";
 
 export type ApiCallFormat = "openai" | "gemini" | "ark" | "grsai" | "agnes";
 export type ModelCapability = "image" | "video" | "text" | "audio";
@@ -68,7 +69,7 @@ export type WebdavSyncConfig = {
     directory: string;
     lastSyncedAt: string;
 };
-export type ConfigTabKey = "channels" | "preferences" | "storage" | "prompt-sources" | "webdav" | "oss" | "about";
+export type ConfigTabKey = "channels" | "preferences" | "storage" | "prompt-sources" | "webdav" | "oss" | "logs" | "about";
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 const CHANNEL_MODEL_SEPARATOR = "::";
@@ -261,20 +262,24 @@ export const useConfigStore = create<ConfigStore>()(
             isConfigOpen: false,
             configTab: "channels",
             shouldPromptContinue: false,
-            updateConfig: (key, value) =>
+            updateConfig: (key, value) => {
+                logAppEvent({ category: "operation", message: "更新应用配置", details: { field: key } });
                 set((state) => ({
                     config: {
                         ...state.config,
                         [key]: value,
                     },
-                })),
-            updateWebdavConfig: (key, value) =>
+                }));
+            },
+            updateWebdavConfig: (key, value) => {
+                logAppEvent({ category: "operation", message: "更新 WebDAV 配置", details: { field: key } });
                 set((state) => ({
                     webdav: {
                         ...state.webdav,
                         [key]: value,
                     },
-                })),
+                }));
+            },
             isAiConfigReady: (config, model) => isAiConfigReady(config, model),
             openConfigDialog: (shouldPromptContinue = false, configTab = "channels") => set({ isConfigOpen: true, shouldPromptContinue, configTab }),
             setConfigDialogOpen: (isConfigOpen) => set({ isConfigOpen }),

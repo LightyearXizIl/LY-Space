@@ -156,6 +156,12 @@
         background-clip: text;
     }
 
+    @media (prefers-reduced-motion: reduce) {
+        .ai-title-aurora {
+            animation: none;
+        }
+    }
+
     @keyframes ai-title-aurora {
         0%,
         100% {

@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { FileText, Image as ImageIcon, Music2, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { isImeComposing, isPlainEnterKey } from "@/lib/keyboard-event";
+import { isImeComposing, isPlainEnterKey, syncControlledTextChange } from "@/lib/keyboard-event";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
@@ -85,6 +85,14 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
         setHasSelection(Boolean(textarea && textarea.selectionStart !== textarea.selectionEnd));
     };
 
+    const syncStableTextState = (next: string, selectionStart: number) => {
+        syncMention(next, selectionStart);
+        requestAnimationFrame(() => {
+            syncOverlayScroll();
+            updateSelectionState();
+        });
+    };
+
     const showOverlay = Boolean(activeLabels.length && !hasSelection);
     const mergedStyle = {
         ...(style || {}),
@@ -115,14 +123,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                 data-canvas-shortcuts-ignore
                 style={mergedStyle}
                 onChange={(event) => {
-                    const next = event.target.value;
-                    if (composingRef.current || isImeComposing(event)) return;
-                    onChange(next);
-                    syncMention(next, event.target.selectionStart);
-                    requestAnimationFrame(() => {
-                        syncOverlayScroll();
-                        updateSelectionState();
-                    });
+                    syncControlledTextChange(event, composingRef.current, onChange, (next) => syncStableTextState(next, event.currentTarget.selectionStart));
                 }}
                 onCompositionStart={(event) => {
                     composingRef.current = true;
@@ -130,13 +131,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                 }}
                 onCompositionEnd={(event) => {
                     composingRef.current = false;
-                    const next = event.currentTarget.value;
-                    onChange(next);
-                    syncMention(next, event.currentTarget.selectionStart);
-                    requestAnimationFrame(() => {
-                        syncOverlayScroll();
-                        updateSelectionState();
-                    });
+                    syncControlledTextChange(event, false, onChange, (next) => syncStableTextState(next, event.currentTarget.selectionStart));
                     props.onCompositionEnd?.(event);
                 }}
                 onSelect={(event) => {
@@ -152,10 +147,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                     props.onPointerUp?.(event);
                 }}
                 onKeyDown={(event) => {
-                    if (isImeComposing(event)) {
-                        onKeyDown?.(event);
-                        return;
-                    }
+                    if (isImeComposing(event)) return;
                     if ((event.key === "Backspace" || event.key === "Delete") && !mention) {
                         const el = textareaRef.current;
                         if (el && el.selectionStart === el.selectionEnd) {

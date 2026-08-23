@@ -60,7 +60,7 @@ jobs:
           )
           foreach ($item in $assets) {
             if ($existing -contains $item.Name) { Write-Host "已存在: $($item.Name)"; continue }
-            if (-not (Test-Path $item.Local)) { Write-Host "::warning::本地缺少文件 $($item.Local)，跳过补传"; continue }
+            if (-not (Test-Path $item.Local)) { throw "本地缺少必需发布资产: $($item.Local)" }
             # GitHub 会把资产名中的空格规范化为连字符，这里用连字符临时文件名上传，保证与 electron-builder 命名一致
             $uploadPath = Join-Path $env:TEMP $item.Name
             Copy-Item $item.Local $uploadPath -Force
@@ -71,6 +71,41 @@ jobs:
             if ($code -ne 0) { exit $code }
           }
           Write-Host "资产校验完成"
+
+      - name: Verify draft release assets and update manifest
+        shell: pwsh
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = $tag.TrimStart("v")
+          $releaseDir = (Resolve-Path "..\release").Path
+          $installerName = "LY-Space-Setup-$version.exe"
+          $required = @($installerName, "$installerName.blockmap", "latest.yml")
+          $release = gh release view $tag --json isDraft,assets | ConvertFrom-Json
+          if (-not $release.isDraft) { throw "发布校验只能针对草稿 Release 执行" }
+          foreach ($name in $required) {
+            $asset = @($release.assets | Where-Object { $_.name -eq $name })
+            if ($asset.Count -ne 1 -or [int64]$asset[0].size -le 0) { throw "远程 Release 缺少或损坏资产: $name" }
+          }
+          $verifyDir = Join-Path $env:RUNNER_TEMP "ly-space-release-verify"
+          New-Item -ItemType Directory -Force -Path $verifyDir | Out-Null
+          try {
+            foreach ($name in $required) { gh release download $tag --pattern $name --dir $verifyDir --clobber }
+            $localInstaller = Join-Path $releaseDir "LY Space Setup $version.exe"
+            $remoteInstaller = Join-Path $verifyDir $installerName
+            if ((Get-FileHash $localInstaller -Algorithm SHA512).Hash -ne (Get-FileHash $remoteInstaller -Algorithm SHA512).Hash) { throw "远程安装包与本地构建不一致" }
+            $manifest = Get-Content (Join-Path $verifyDir "latest.yml") -Raw -Encoding UTF8
+            $manifestName = [regex]::Match($manifest, "(?m)^path:\s*(.+)$").Groups[1].Value.Trim()
+            $manifestSize = [int64]([regex]::Match($manifest, "(?m)^size:\s*(\d+)$").Groups[1].Value)
+            $manifestHash = [regex]::Match($manifest, "(?m)^sha512:\s*(\S+)$").Groups[1].Value
+            $hashBytes = [Convert]::FromHexString((Get-FileHash $remoteInstaller -Algorithm SHA512).Hash)
+            $actualHash = [Convert]::ToBase64String($hashBytes)
+            if ($manifestName -ne $installerName -or $manifestSize -ne (Get-Item $remoteInstaller).Length -or $manifestHash -ne $actualHash) { throw "latest.yml 与远程安装包不匹配" }
+          } finally {
+            Remove-Item $verifyDir -Recurse -Force -ErrorAction SilentlyContinue
+          }
 
       - name: Publish verified release
         shell: pwsh

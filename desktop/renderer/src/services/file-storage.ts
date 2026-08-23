@@ -5,6 +5,9 @@ import { trackWrite } from "@/services/desktop-storage";
 export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
 const store = localforage.createInstance({ name: "infinite-canvas", storeName: "media_files" });
+const videoGenerationLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
+const workbenchSessionStore = localforage.createInstance({ name: "infinite-canvas", storeName: "workbench_sessions" });
+const referenceHandoffStore = localforage.createInstance({ name: "infinite-canvas", storeName: "reference_handoffs" });
 const objectUrls = new Map<string, string>();
 
 export async function uploadMediaFile(input: string | Blob, prefix = "file"): Promise<UploadedFile> {
@@ -52,6 +55,11 @@ export async function deleteStoredMedia(keys: Iterable<string>) {
 
 export async function cleanupUnusedMedia(usedData: unknown) {
     const usedKeys = collectMediaStorageKeys(usedData);
+    await Promise.all([
+        videoGenerationLogStore.iterate((value) => collectMediaStorageKeys(value, usedKeys)),
+        workbenchSessionStore.iterate((value) => collectMediaStorageKeys(value, usedKeys)),
+        referenceHandoffStore.iterate((value) => collectMediaStorageKeys(value, usedKeys)),
+    ]);
     const unused: string[] = [];
     await store.iterate((_value, key) => {
         if (!usedKeys.has(key)) unused.push(key);

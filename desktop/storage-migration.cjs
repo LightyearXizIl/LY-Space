@@ -25,8 +25,21 @@ function directoryManifest(directory) {
             if (entry.isSymbolicLink()) throw new Error(`数据目录包含不支持的链接：${target}`);
             if (entry.isDirectory()) visit(target);
             else if (entry.isFile()) {
-                const bytes = fs.readFileSync(target);
-                files.push({ path: path.relative(root, target).replace(/\\/g, "/"), length: bytes.length, sha256: crypto.createHash("sha256").update(bytes).digest("hex") });
+                const hash = crypto.createHash("sha256");
+                const handle = fs.openSync(target, "r");
+                const buffer = Buffer.allocUnsafe(1024 * 1024);
+                let offset = 0;
+                try {
+                    for (;;) {
+                        const read = fs.readSync(handle, buffer, 0, buffer.length, offset);
+                        if (!read) break;
+                        hash.update(buffer.subarray(0, read));
+                        offset += read;
+                    }
+                } finally {
+                    fs.closeSync(handle);
+                }
+                files.push({ path: path.relative(root, target).replace(/\\/g, "/"), length: offset, sha256: hash.digest("hex") });
             }
         }
     };

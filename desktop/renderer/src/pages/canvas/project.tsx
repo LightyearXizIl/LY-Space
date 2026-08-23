@@ -50,6 +50,7 @@ import { collectNodeDeletionIds } from "@/lib/canvas/canvas-node-deletion";
 import { cancelCanvasGenerationRun, cancelCanvasGenerationTarget, finishCanvasGenerationRequest, hasCanvasGenerationRequest, startCanvasGenerationRequest, type CanvasGenerationRequest } from "@/lib/canvas/canvas-generation-requests";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { logAppEvent } from "@/services/app-logger";
+import { registerLocalStateFlusher } from "@/services/desktop-storage";
 import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { findContainingGroupId, findGroupDropTarget, getConnectionTargetAnchor, isHiddenBatchChild, isHiddenBatchConnectionEndpoint, nearestConnectionSide, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
 import {
@@ -371,9 +372,11 @@ function InfiniteCanvasPage() {
             return;
         }
 
+        let active = true;
         const restore = async () => {
             const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes));
             const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
+            if (!active) return;
             setNodes(restoredNodes);
             setConnections(project.connections);
             setChatSessions(restoredSessions);
@@ -398,7 +401,12 @@ function InfiniteCanvasPage() {
             setProjectLoaded(true);
         };
         void restore();
+        return () => {
+            active = false;
+        };
     }, [flushProjectSave, hydrated, navigate, openProject, projectId]);
+
+    useEffect(() => registerLocalStateFlusher(flushProjectSave), [flushProjectSave]);
 
     useEffect(() => {
         if (!projectLoaded || applyingHistoryRef.current || historyPausedRef.current) return;

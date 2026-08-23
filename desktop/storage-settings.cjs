@@ -36,13 +36,27 @@ function writeStorageSettingsFile(file, settings) {
         if (!existing || typeof existing !== "object" || Array.isArray(existing)) throw new Error(`存储配置格式无效，未修改任何用户路径：${file}`);
     }
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({
+    const content = JSON.stringify({
         ...existing,
         resultRoot: settings.resultRoot,
         cacheRoot: settings.cacheRoot,
         pendingCacheRoot: settings.pendingCacheRoot || "",
         lastError: settings.lastError || "",
-    }, null, 2), "utf8");
+    }, null, 2);
+    const temporary = `${file}.${process.pid}.tmp`;
+    let handle;
+    try {
+        handle = fs.openSync(temporary, "w");
+        fs.writeFileSync(handle, content, "utf8");
+        fs.fsyncSync(handle);
+    } finally {
+        if (handle !== undefined) fs.closeSync(handle);
+    }
+    try {
+        fs.renameSync(temporary, file);
+    } finally {
+        if (fs.existsSync(temporary)) fs.rmSync(temporary, { force: true });
+    }
 }
 
 function assertWritableDirectory(value, label) {

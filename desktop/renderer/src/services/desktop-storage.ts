@@ -1,4 +1,5 @@
 const pendingWrites = new Set<Promise<unknown>>();
+const localStateFlushers = new Set<() => void | Promise<void>>();
 
 export function isDesktopStorageAvailable() {
     return Boolean(window.lySpaceDesktop);
@@ -31,6 +32,17 @@ export async function saveGeneratedText(text: string) {
 
 export async function flushPendingStorageWrites() {
     await Promise.allSettled([...pendingWrites]);
+}
+
+export function registerLocalStateFlusher(flusher: () => void | Promise<void>) {
+    localStateFlushers.add(flusher);
+    return () => {
+        localStateFlushers.delete(flusher);
+    };
+}
+
+export async function flushLocalState() {
+    await Promise.allSettled([...localStateFlushers].map((flusher) => flusher()));
 }
 
 export function trackWrite<T>(write: Promise<T>) {

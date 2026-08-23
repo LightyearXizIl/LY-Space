@@ -56,7 +56,7 @@ function createWebdavDomainProgress(): Record<AppSyncDomainKey, WebdavDomainProg
 }
 
 export function AppConfigPanel({ showDoneButton = false, initialTab = "channels" }: { showDoneButton?: boolean; initialTab?: ConfigTabKey }) {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const configInputRef = useRef<HTMLInputElement>(null);
     const [activeTab, setActiveTab] = useState<ConfigTabKey>(initialTab);
     const [editingChannelId, setEditingChannelId] = useState("");
@@ -146,17 +146,20 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
 
     const finishConfig = () => {
         const ready = config.channels.some((channel) => channel.enabled !== false && channel.baseUrl.trim() && channel.apiKey.trim() && channel.models.length);
+        if (!ready) {
+            message.warning("请至少配置一个启用的渠道、接口地址、API Key 和模型");
+            return;
+        }
         setConfigDialogOpen(false);
-        if (!ready) return;
         message.success(shouldPromptContinue ? "配置已保存，请继续刚才的请求" : "配置已保存");
         clearPromptContinue();
     };
 
     const loadConfigFile = async (file: File) => {
         try {
-            await importAppConfig(file);
+            const result = await importAppConfig(file);
             logAppEvent({ category: "operation", message: "导入应用配置" });
-            message.success("配置与用户偏好已导入");
+            message.success(result.skippedScripts ? `配置与用户偏好已导入；为安全起见已忽略 ${result.skippedScripts} 段模型脚本` : "配置与用户偏好已导入");
         } catch (error) {
             logAppEvent({ category: "error", level: "error", message: "导入应用配置失败", details: { error: error instanceof Error ? error.message : String(error) } });
             message.error(error instanceof Error ? error.message : "配置文件读取失败");
@@ -179,7 +182,15 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
             message.warning("至少保留一个渠道");
             return;
         }
-        updateChannels(config.channels.filter((channel) => channel.id !== id));
+        const channel = config.channels.find((item) => item.id === id);
+        modal.confirm({
+            title: "删除渠道？",
+            content: `将删除“${channel?.name || "未命名渠道"}”及其中的模型配置，此操作无法撤销。`,
+            okText: "删除",
+            cancelText: "取消",
+            okButtonProps: { danger: true },
+            onOk: () => updateChannels(config.channels.filter((item) => item.id !== id)),
+        });
     };
 
     const saveChannel = (channel: ModelChannel) => {

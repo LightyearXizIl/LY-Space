@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
-const { restoreBridgeBackup } = require("./storage-migration.cjs");
+const { copyDirectoryExact, directoryManifest, restoreBridgeBackup, sameManifest } = require("./storage-migration.cjs");
 const { assertWritableDirectory, ensureStorageDirectories: ensureConfiguredStorageDirectories, readStorageSettingsFile, writeStorageSettingsFile } = require("./storage-settings.cjs");
 const { buildInstallerArgs, buildInstallerLaunchOptions, createPersistenceFlushCoordinator } = require("./update-install-coordinator.cjs");
 
@@ -169,6 +169,39 @@ function hashFileBase64(filePath, algorithm = "sha512") {
     });
 }
 
+async function hasVerifiedCachedUpdate(filePath, expectedSize, expectedHash) {
+    if (!fs.existsSync(filePath)) return false;
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile() || (expectedSize > 0 && stat.size !== expectedSize)) return false;
+    if (!expectedHash) return false;
+    const actual = (await hashFileBase64(filePath)).replace(/=+$/, "");
+    return actual === expectedHash.replace(/=+$/, "");
+}
+
+async function readResponseBytes(response, maximumBytes) {
+    const declaredLength = Number(response.headers.get("content-length")) || 0;
+    if (declaredLength > maximumBytes) throw new Error(`下载内容超过 ${Math.floor(maximumBytes / 1024 / 1024)} MiB 限制`);
+    if (!response.body) return Buffer.from(await response.arrayBuffer());
+    const reader = response.body.getReader();
+    const chunks = [];
+    let length = 0;
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            length += value.byteLength;
+            if (length > maximumBytes) {
+                await reader.cancel();
+                throw new Error(`下载内容超过 ${Math.floor(maximumBytes / 1024 / 1024)} MiB 限制`);
+            }
+            chunks.push(Buffer.from(value));
+        }
+    } finally {
+        reader.releaseLock();
+    }
+    return Buffer.concat(chunks, length);
+}
+
 function configureAutoUpdater() {
     updateState = { status: "idle", version: displayVersion(app.getVersion()), releaseDate: "", releaseNotes: "", progress: null, error: "", supported: app.isPackaged, triggeredBy: "" };
     if (!app.isPackaged) return;
@@ -207,9 +240,12 @@ async function downloadUpdate() {
     const exePath = updateExePath();
     const total = Number(updateFileInfo.size) || 0;
     if (fs.existsSync(exePath)) {
-        // 已下载完整安装包：直接进入 downloaded
-        updateSnapshot({ status: "downloaded", progress: { percent: 100, bytesPerSecond: 0, transferred: total, total }, error: "" });
-        return updateState;
+        const expected = updateFileInfo.sha512 ? String(updateFileInfo.sha512) : "";
+        if (await hasVerifiedCachedUpdate(exePath, total, expected)) {
+            updateSnapshot({ status: "downloaded", progress: { percent: 100, bytesPerSecond: 0, transferred: total, total }, error: "" });
+            return updateState;
+        }
+        fs.rmSync(exePath, { force: true });
     }
 
     let existing = 0;
@@ -448,6 +484,48 @@ function copyDirectory(source, target) {
     }
 }
 
+function isChildPath(parent, target) {
+    const relative = path.relative(path.resolve(parent), path.resolve(target));
+    return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function moveCacheDirectoryExact(source, target) {
+    const resolvedSource = path.resolve(source);
+    const resolvedTarget = path.resolve(target);
+    if (resolvedSource === resolvedTarget) return;
+    if (!fs.existsSync(resolvedSource)) throw new Error("原缓存目录不存在，已保留当前设置");
+    if (isNestedPath(resolvedSource, resolvedTarget) || isNestedPath(resolvedTarget, resolvedSource)) throw new Error("缓存目录不能与原目录互相嵌套");
+    const expected = directoryManifest(resolvedSource);
+    if (fs.existsSync(resolvedTarget)) {
+        const targetManifest = directoryManifest(resolvedTarget);
+        if (targetManifest.length) throw new Error("新缓存目录必须为空，避免混合浏览器数据");
+    }
+    const parent = path.dirname(resolvedTarget);
+    const stage = path.join(parent, `.${path.basename(resolvedTarget)}.lyspace-cache-${process.pid}`);
+    if (!isChildPath(parent, stage)) throw new Error("缓存迁移临时目录路径无效");
+    if (fs.existsSync(stage)) fs.rmSync(stage, { recursive: true, force: true });
+    try {
+        copyDirectoryExact(resolvedSource, stage);
+        if (!sameManifest(directoryManifest(stage), expected)) throw new Error("缓存迁移副本校验失败");
+        if (fs.existsSync(resolvedTarget)) fs.rmdirSync(resolvedTarget);
+        fs.renameSync(stage, resolvedTarget);
+        if (!sameManifest(directoryManifest(resolvedTarget), expected)) throw new Error("缓存迁移最终校验失败");
+    } finally {
+        if (fs.existsSync(stage)) fs.rmSync(stage, { recursive: true, force: true });
+    }
+}
+
+function isTrustedGeneratedFile(rawPath) {
+    if (typeof rawPath !== "string" || !path.isAbsolute(rawPath)) return false;
+    try {
+        const root = fs.realpathSync(storageSettings.resultRoot);
+        const target = fs.realpathSync(rawPath);
+        return isChildPath(root, target);
+    } catch {
+        return false;
+    }
+}
+
 function configureStorageBeforeReady() {
     restoreBridgeBackup({
         userData: app.getPath("userData"),
@@ -460,7 +538,7 @@ function configureStorageBeforeReady() {
     if (storageSettings.pendingCacheRoot) {
         try {
             const nextCacheRoot = assertStoragePath(storageSettings.pendingCacheRoot, "缓存目录");
-            copyDirectory(storageSettings.cacheRoot, nextCacheRoot);
+            moveCacheDirectoryExact(storageSettings.cacheRoot, nextCacheRoot);
             storageSettings.cacheRoot = nextCacheRoot;
             storageSettings.pendingCacheRoot = "";
             storageSettings.lastError = "";
@@ -503,7 +581,7 @@ async function writeGeneratedOutput(payload) {
 
 function installApplicationMenu() {
     Menu.setApplicationMenu(Menu.buildFromTemplate([
-        { label: "文件", submenu: [{ label: "退出", role: "quit" }] },
+        { label: "文件", submenu: [{ label: "退出", click: () => void requestPersistenceFlush("quit").catch((error) => writeUpdateInstallLog("quit-flush-failed", { error: error.message })) }] },
         {
             label: "编辑",
             submenu: [
@@ -691,16 +769,18 @@ app.whenReady().then(async () => {
         return storageInfo();
     });
     ipcMain.handle("lyspace:open-storage-directory", async (_event, directory) => shell.openPath(directory));
-    ipcMain.handle("lyspace:fetch-url", async (_event, url) => {
+    ipcMain.handle("lyspace:fetch-url", async (_event, url, mediaKind = "image") => {
         if (!/^https?:\/\//i.test(String(url || ""))) throw new Error("仅支持 http/https 地址");
+        const limits = { image: 32 * 1024 * 1024, video: 512 * 1024 * 1024, audio: 128 * 1024 * 1024 };
+        if (!Object.hasOwn(limits, mediaKind)) throw new Error("不支持的媒体类型");
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 30000);
         try {
             const response = await electronNet.fetch(url, { signal: controller.signal });
             if (!response.ok) throw new Error(`下载失败：HTTP ${response.status}`);
             const contentType = response.headers.get("content-type") || "";
-            if (!contentType.toLowerCase().startsWith("image/")) throw new Error("下载内容不是图片");
-            const buffer = Buffer.from(await response.arrayBuffer());
+            if (!contentType.toLowerCase().startsWith(`${mediaKind}/`)) throw new Error(`下载内容不是${mediaKind === "image" ? "图片" : mediaKind === "video" ? "视频" : "音频"}`);
+            const buffer = await readResponseBytes(response, limits[mediaKind]);
             return { bytes: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength), mimeType: contentType };
         } finally {
             clearTimeout(timer);
@@ -762,49 +842,6 @@ app.whenReady().then(async () => {
         return { canceled: false, paths: savedPaths };
     });
     ipcMain.handle("lyspace:write-generated-output", (_event, payload) => writeGeneratedOutput(payload));
-    // 免费图床（uguu.se 优先，tmpfiles.org、catbox.moe 兜底）上传：主进程代理，无浏览器 CORS 限制
-    ipcMain.handle("lyspace:upload-free-host", async (_event, payload) => {
-        const name = String(payload?.name || "reference.png");
-        const mimeType = String(payload?.mimeType || "application/octet-stream");
-        const bytes = payload?.bytes ? Buffer.from(payload.bytes) : null;
-        if (!bytes) throw new Error("没有可上传的图片内容");
-        const uploadUguu = async () => {
-            const form = new FormData();
-            form.append("files[]", new Blob([bytes], { type: mimeType }), name);
-            const response = await fetch("https://uguu.se/upload.php", { method: "POST", body: form });
-            const payloadJson = await response.json().catch(() => null);
-            const url = typeof payloadJson?.files?.[0]?.url === "string" ? payloadJson.files[0].url : "";
-            if (!response.ok || !/^https:\/\//i.test(url)) throw new Error(`免费图床上传失败（HTTP ${response.status}）`);
-            return url;
-        };
-        const uploadTmpfiles = async () => {
-            const form = new FormData();
-            form.append("file", new Blob([bytes], { type: mimeType }), name);
-            const response = await fetch("https://tmpfiles.org/api/v1/upload", { method: "POST", body: form });
-            const payloadJson = await response.json().catch(() => null);
-            const url = typeof payloadJson?.data?.url === "string" ? payloadJson.data.url : "";
-            if (!response.ok || !/^https:\/\//i.test(url)) throw new Error(`免费图床上传失败（HTTP ${response.status}）`);
-            return url.replace("/tmpfiles.org/", "/tmpfiles.org/dl/");
-        };
-        const uploadCatbox = async () => {
-            const form = new FormData();
-            form.append("reqtype", "fileupload");
-            form.append("fileToUpload", new Blob([bytes], { type: mimeType }), name);
-            const response = await fetch("https://catbox.moe/user/api.php", { method: "POST", body: form });
-            const text = (await response.text()).trim();
-            if (!response.ok || !/^https:\/\//i.test(text)) throw new Error(`免费图床上传失败（HTTP ${response.status}）`);
-            return text;
-        };
-        try {
-            return { url: await uploadUguu() };
-        } catch {
-            try {
-                return { url: await uploadTmpfiles() };
-            } catch {
-                return { url: await uploadCatbox() };
-            }
-        }
-    });
     // 删除已落盘的生成文件；localPath 全部由本进程 writeGeneratedOutput 生成（可信来源），仅校验绝对路径防止误删
     ipcMain.handle("lyspace:delete-generated-files", async (_event, paths) => {
         if (!Array.isArray(paths)) return { deleted: 0, missing: 0, failed: 0, skipped: 0 };
@@ -815,7 +852,7 @@ app.whenReady().then(async () => {
         for (const rawPath of paths) {
             if (typeof rawPath !== "string") continue;
             const target = path.resolve(rawPath);
-            if (!path.isAbsolute(target)) {
+            if (!isTrustedGeneratedFile(target)) {
                 skipped += 1;
                 continue;
             }
@@ -856,9 +893,16 @@ app.whenReady().then(async () => {
         const method = String(payload?.method || "GET").toUpperCase();
         const headers = payload?.headers && typeof payload.headers === "object" ? payload.headers : {};
         const body = typeof payload?.body === "string" ? payload.body : undefined;
-        const response = await fetch(url, { method, headers, body });
-        const text = await response.text();
-        return { status: response.status, data: text };
+        if (body && Buffer.byteLength(body, "utf8") > 4 * 1024 * 1024) throw new Error("请求体超过 4 MiB 限制");
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 30000);
+        try {
+            const response = await fetch(url, { method, headers, body, signal: controller.signal });
+            const bytes = await readResponseBytes(response, 8 * 1024 * 1024);
+            return { status: response.status, data: bytes.toString("utf8") };
+        } finally {
+            clearTimeout(timer);
+        }
     });
     ipcMain.handle("lyspace:persistence-flushed", async (_event, requestId) => {
         const pending = persistenceFlushCoordinator.acknowledge(String(requestId || ""));
@@ -882,12 +926,17 @@ app.whenReady().then(async () => {
         }
         persistenceFlushCoordinator.succeed(pending);
         allowWindowClose = true;
-        mainWindow.close();
+        if (pending.action === "relaunch") {
+            app.relaunch();
+            app.quit();
+        } else {
+            mainWindow.close();
+        }
         return { accepted: true };
     });
     ipcMain.handle("lyspace:relaunch-after-flush", () => {
-        app.relaunch();
-        app.quit();
+        if (!mainWindow || mainWindow.isDestroyed()) throw new Error("主窗口不可用");
+        return requestPersistenceFlush("relaunch");
     });
     createWindow();
     createTray();

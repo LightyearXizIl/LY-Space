@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.5.3`）
-- **最新发布状态**：`v0.5.3` 已于 2026-08-19 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `32222933180` 为 `completed/success`，Release 的 exe、blockmap、`latest.yml` 均已上传。v0.5.3 包含画布缩放稳定性、提示词展开编辑、独立文本生成数量、网络提示与默认关闭的新提示词源（详见 3.29）。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.5.5`）
+- **最新发布状态**：`v0.5.5` 正在发布；发布完成后须记录 Actions 编号、Release 资产状态、安装包 SHA-256 和 `latest.yml` SHA-512。该版本包含全功能审计修复与中文输入法组合输入修复；Windows 安装包按维护者明确授权维持无签名发布，必须在 Release 说明中提示“未知发布者”。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
 - **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`
@@ -26,7 +26,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.5.3（`VERSION`、两个 package 版本与 tag 已一致）
+- **当前版本**：v0.5.5（发布前必须确保 `VERSION`、两个 package 版本、HEAD tag 与 `origin/main` 一致）
 
 ## 2. 数据存储
 
@@ -256,6 +256,19 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **文本数量兼容**：新增可选 `textCount`（1–15）。新建配置节点默认 1；历史配置节点没有该字段时继续回退原 `count`，普通文本节点未设置时仍生成 1 个，不改变图片批量生成。
 - **来源与错误提示**：无响应 `ERR_NETWORK` 提示网络、DNS、TLS、Base URL 与 CORS 排查；Freestylefly GPT Image 2 提示词源默认关闭，用户手动启用后才下载缓存。
 - **发布核验**：Release `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.5.3` 为正式版；Actions `32222933180` 成功。远端 `LY-Space-Setup-0.5.3.exe` 为 92,538,498 字节，`latest.yml` 版本/文件名/大小与远端资产一致，SHA-512 为 `DNv7emKcvwqPQbQIvvzXx7RrGQj9Ejyl7JBbKTOXnu4AtbJnBJfVuMBbWPWDmi7FFa4kSGBpR8cxCZb9G9b91Q==`。本地验证安装器 `release\LY Space Setup 0.5.3.exe` 为 92,538,455 字节，SHA-256 为 `8DC659293CB1243C8A0A39B246945CD6C955C4357B2CF110797D0E4B4615E3EA`；本地与 CI 构建时间不同，字节大小不相同。
+
+### 3.30 v0.5.4 生成中详情与中文输入法首轮处理
+
+- **生图生成中详情**（`pages/image/generation-detail.ts` + `pages/image/index.tsx`）：按生成批次维护内存态槽位，单张图片成功后即可通过 `image.id` 找到所属批次并打开详情，不再等待整批结束和 IndexedDB 日志落库；详情实时统计成功、失败、取消与进行中数量。单图重试使用独立临时批次，日志或图片转存失败时只要已有成功图片，仍保留内存详情兜底。
+- **画布中文输入法（首轮）**（`lib/keyboard-event.ts` + 画布编辑组件）：统一识别 `compositionstart/compositionend`、`isComposing` 与旧式 `keyCode/which=229`，并为内容编辑器和标题输入补充组合态快捷键隔离；文本节点、节点标题、节点提示词、展开编辑器、配置编排、项目卡片标题和画布标题均标记 `data-canvas-shortcuts-ignore`。该版本的文本节点正文受控 `<textarea>` 在组合态跳过 `onChange`，会被 React 回写旧值而导致首个拼音字母异常，后续修复见 3.31。
+- **验证边界**：提交/tag 为 `2d1a82d8d0a65e9706fe995cbf7dd391e879631e` / `v0.5.4`；发布时本地打包通过类型检查、Vite 生产构建、NSIS x64 打包和包校验。仓库新增 `image-generation-detail.test.ts` 与 `keyboard-event.test.ts`，但该版本未执行自动化测试，真实中文输入法和生成中详情仍以 `pending-test.mdx` 的人工验收为准。
+- **发布核验**：Release `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.5.4` 为正式版；Actions `32228014575` 成功。远端 `LY-Space-Setup-0.5.4.exe`（92,538,923 字节）、blockmap（97,977 字节）和 `latest.yml`（344 字节）均为 `uploaded`；三份远端资产的 SHA-256 分别与本地 `release\LY Space Setup 0.5.4.exe`、对应 blockmap 和 `latest.yml` 一致。EXE SHA-256 为 `55269B2BA6FEA7B790F3D7DB28F37DBBEE7E11474D1B793D0F9CDEAE4E1EEB3B`，`latest.yml` 的 version/path/size 与 EXE 一致，SHA-512 为 `yHnETXVdKqN4iGZ/bUCCD8XjrVm1NdpJeYxec6MUycXw+abeVtf3z15ye/EOebaXXJYdiFrqBzhevARjbvGmXg==`。
+
+### 3.31 Unreleased 受控文本框中文组合输入修复
+
+- **根因与修复**（`canvas-resource-mention-textarea.tsx`）：文本节点正文是受控 `<textarea value=...>`；若组合态跳过 `onChange`，React 会把 DOM 恢复为旧值并打断拼音输入。现在组合态也同步文本值，`@` 引用匹配、光标测量和覆盖层刷新则延后到稳定输入或 `compositionend`，避免半成品拼音触发副作用。
+- **全量快捷键核查**：节点提示词、展开编辑器和配置编排器继续使用 DOM 临时组合态；节点/画布/项目标题保持同步回写并忽略组合态 Enter。自定义尺寸与插件 URL 也忽略组合态 Enter，搜索框、新增文本资产和蒙版提示词维持原有同步受控更新。
+- **验证边界**：`keyboard-event.test.ts` 新增组合态受控值同步回归；尚未取得微软拼音、搜狗和微信输入法的真实桌面端人工验收，验收矩阵以 `pending-test.mdx` 为准。第三方插件自行实现的编辑器不在本次改动范围。
 
 ### 3.23 v0.4.7 变更要点
 

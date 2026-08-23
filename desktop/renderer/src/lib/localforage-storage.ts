@@ -10,18 +10,21 @@ localforage.config({
 export const localForageStorage: StateStorage = {
     getItem: async (name) => {
         if (typeof window === "undefined") return null;
+        const fallback = window.localStorage.getItem(`${name}:fallback`);
+        if (fallback !== null) return fallback;
         try {
             return (await localforage.getItem<string>(name)) || null;
         } catch {
-            return window.localStorage.getItem(name);
+            return null;
         }
     },
     setItem: async (name, value) => {
         if (typeof window === "undefined") return;
         try {
             await trackWrite(localforage.setItem(name, value));
+            window.localStorage.removeItem(`${name}:fallback`);
         } catch {
-            window.localStorage.setItem(name, value);
+            window.localStorage.setItem(`${name}:fallback`, value);
         }
     },
     removeItem: async (name) => {
@@ -29,7 +32,7 @@ export const localForageStorage: StateStorage = {
         try {
             await trackWrite(localforage.removeItem(name));
         } catch {
-            window.localStorage.removeItem(name);
         }
+        window.localStorage.removeItem(`${name}:fallback`);
     },
 };

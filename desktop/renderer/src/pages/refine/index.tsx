@@ -10,6 +10,7 @@ import { CanvasNodeCropDialog, type CanvasImageCropRect } from "@/components/can
 import { cropPixelSize, defaultRefineAdjustments, defaultRefineTransform, parseRefineLut, refineExtension, refineMimeType, refineResolutionOptions, renderRefinedImage, resolveRefineDimensions, type RefineAdjustments, type RefineCropRect, type RefineFilter, type RefineFormat, type RefineLutState, type RefineResolution, type RefineTransform } from "@/lib/refine-image";
 import { formatBytes, readImageMeta } from "@/lib/image-utils";
 import { enqueueReferenceHandoff } from "@/services/reference-handoff";
+import { registerLocalStateFlusher } from "@/services/desktop-storage";
 import { uploadImage } from "@/services/image-storage";
 import { requestEdit } from "@/services/api/image";
 import { selectableImageModelsByFeature, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -102,6 +103,12 @@ export default function RefinePage() {
             if (sessionSnapshotRef.current) void saveWorkbenchSession(SESSION_KEY, sessionSnapshotRef.current);
         }
     }, []);
+
+    useEffect(() => registerLocalStateFlusher(() => {
+        if (sessionSaveTimerRef.current) clearTimeout(sessionSaveTimerRef.current);
+        sessionSaveTimerRef.current = null;
+        return sessionSnapshotRef.current ? saveWorkbenchSession(SESSION_KEY, sessionSnapshotRef.current) : undefined;
+    }), []);
 
     // 预览重绘 rAF 合并:拖动调色滑杆等高频 edits 变化时每帧最多一次全量 canvas 重绘
     useEffect(() => {

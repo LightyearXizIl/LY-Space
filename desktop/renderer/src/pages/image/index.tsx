@@ -48,6 +48,7 @@ type ActiveImageTask = {
     startedAt: number;
 };
 const activeImageTasks = new Map<string, ActiveImageTask>();
+const deletedImageIds = new Set<string>();
 const imageTaskListeners = new Set<() => void>();
 const transientGenerationBatches = new Map<string, TransientGenerationBatch>();
 function emitImageTasks() {
@@ -104,12 +105,16 @@ export default function ImagePage() {
     // 挂载时合并模块级任务表（切页返回恢复进行中/已完成任务），并订阅任务变化同步 UI
     useEffect(() => {
         const sync = () => {
-            if (activeImageTasks.size) {
-                const earliest = Math.min(...[...activeImageTasks.values()].map((task) => task.startedAt));
+            const pendingTasks = [...activeImageTasks.values()].filter((task) => task.status === "pending");
+            if (pendingTasks.length) {
+                const earliest = Math.min(...pendingTasks.map((task) => task.startedAt));
                 setStartedAt(earliest);
                 setElapsedMs(performance.now() - earliest);
+            } else {
+                setStartedAt(0);
+                setElapsedMs(0);
             }
-            setRunning(activeImageTasks.size > 0);
+            setRunning(pendingTasks.length > 0);
             const completedIds: string[] = [];
             activeImageTasks.forEach((task, id) => {
                 if (task.status !== "pending") completedIds.push(id);
@@ -280,7 +285,7 @@ export default function ImagePage() {
         const tasks = pendingResults.map((item) => runGenerationSlot(item.id, snapshot, batch));
 
         const result = await Promise.allSettled(tasks);
-        const successImages = result.filter((item): item is PromiseFulfilledResult<GeneratedImage | null> => item.status === "fulfilled").map((item) => item.value).filter((image): image is GeneratedImage => Boolean(image));
+        const successImages = result.filter((item): item is PromiseFulfilledResult<GeneratedImage | null> => item.status === "fulfilled").map((item) => item.value).filter((image): image is GeneratedImage => image !== null && !deletedImageIds.has(image.id));
         const successCount = successImages.length;
         const failCount = result.filter((item) => item.status === "rejected").length;
         const failed = result.find((item): item is PromiseRejectedResult => item.status === "rejected");
@@ -480,6 +485,7 @@ export default function ImagePage() {
     const deleteSelectedImages = async () => {
         // 只删除勾选的图片：所在记录中移除被删图片（记录无剩余图片时删除记录），不波及其他图片
         const selectedIds = new Set(selectedImageIds);
+        selectedIds.forEach((id) => deletedImageIds.add(id));
         const relatedLogs = logs.filter((log) => log.images.some((image) => selectedIds.has(image.id)));
         const selectedImagesInLogs = relatedLogs.flatMap((log) => log.images).filter((image) => selectedIds.has(image.id));
         // 只回收被删图片的 blob 与本地文件，同记录的其它图片保留

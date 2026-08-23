@@ -3,6 +3,7 @@ import { App, Button, Input, Modal, Popconfirm, Switch, Tabs } from "antd";
 import { AlertTriangle, Download, Puzzle, RefreshCw, Trash2 } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { isImeComposing } from "@/lib/keyboard-event";
 import { installPluginFromUrl, setPluginEnabled, uninstallPlugin, updatePlugin } from "@/lib/canvas/plugin-loader";
 import { fetchOfficialPlugins, hasUpgrade, type OfficialPluginEntry } from "@/lib/canvas/plugin-registry";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -196,7 +197,7 @@ export function CanvasPluginManagerModal({ open, onClose }: { open: boolean; onC
     const thirdPartyTab = (
         <div className="space-y-3">
             <div className="flex gap-2">
-                <Input placeholder="输入插件 JS 文件 URL，例如 https://.../plugin.js" value={url} onChange={(event) => setUrl(event.target.value)} onPressEnter={handleInstallUrl} allowClear />
+                <Input placeholder="输入插件 JS 文件 URL，例如 https://.../plugin.js" value={url} onChange={(event) => setUrl(event.target.value)} onPressEnter={(event) => !isImeComposing(event) && void handleInstallUrl()} allowClear />
                 <Button type="primary" loading={installing} onClick={handleInstallUrl} icon={<Puzzle className="size-4" />}>
                     安装
                 </Button>

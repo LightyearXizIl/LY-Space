@@ -81,11 +81,11 @@ export async function renderRefinedImage(sourceUrl: string, image: { width: numb
     context.scale(transform.flipX ? -1 : 1, transform.flipY ? -1 : 1);
     context.drawImage(source, sx, sy, sw, sh, -canvas.width / 2, -canvas.height / 2, canvas.width, canvas.height);
     context.restore();
-    applyAdjustments(context, canvas.width, canvas.height, edits?.filter || "original", edits?.adjustments || defaultRefineAdjustments);
+    await applyAdjustments(context, canvas.width, canvas.height, edits?.filter || "original", edits?.adjustments || defaultRefineAdjustments, edits?.lut || null);
     return new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("图片导出失败，请降低分辨率后重试"))), mimeType(format), format === "png" ? undefined : quality));
 }
 
-function applyAdjustments(context: CanvasRenderingContext2D, width: number, height: number, filter: RefineFilter, input: RefineAdjustments) {
+async function applyAdjustments(context: CanvasRenderingContext2D, width: number, height: number, filter: RefineFilter, input: RefineAdjustments, lut: RefineLutState | null) {
     const presets: Record<RefineFilter, Partial<RefineAdjustments>> = {
         original: {}, vivid: { saturation: 25, contrast: 10 }, cinema: { contrast: 18, saturation: -8, temperature: -6 }, warm: { temperature: 24, saturation: 8 }, cool: { temperature: -24, saturation: -4 }, vintage: { temperature: 18, saturation: -18, contrast: -8, vignette: 15 }, mono: { saturation: -100, contrast: 10 }, contrast: { contrast: 30 },
     };
@@ -107,11 +107,78 @@ function applyAdjustments(context: CanvasRenderingContext2D, width: number, heig
         pixels.data[i] = Math.max(0, Math.min(255, r)); pixels.data[i + 1] = Math.max(0, Math.min(255, g)); pixels.data[i + 2] = Math.max(0, Math.min(255, b));
     }
     context.putImageData(pixels, 0, 0);
+    if (values.sharpen) applySharpen(context, width, height, values.sharpen);
+    if (lut?.intensity) await applyLut(context, width, height, lut);
     if (values.vignette) {
         const gradient = context.createRadialGradient(width / 2, height / 2, Math.min(width, height) * .2, width / 2, height / 2, Math.hypot(width, height) / 2);
         gradient.addColorStop(.55, "rgba(0,0,0,0)"); gradient.addColorStop(1, `rgba(0,0,0,${Math.min(.8, values.vignette / 100)})`);
         context.fillStyle = gradient; context.fillRect(0, 0, width, height);
     }
+}
+
+function applySharpen(context: CanvasRenderingContext2D, width: number, height: number, amount: number) {
+    const current = context.getImageData(0, 0, width, height);
+    const source = new Uint8ClampedArray(current.data);
+    const strength = Math.min(1, Math.abs(amount) / 100) * Math.sign(amount);
+    for (let y = 1; y < height - 1; y += 1) {
+        for (let x = 1; x < width - 1; x += 1) {
+            const index = (y * width + x) * 4;
+            const left = index - 4;
+            const right = index + 4;
+            const top = index - width * 4;
+            const bottom = index + width * 4;
+            for (let channel = 0; channel < 3; channel += 1) {
+                const blur = (source[left + channel] + source[right + channel] + source[top + channel] + source[bottom + channel]) / 4;
+                current.data[index + channel] = clampByte(source[index + channel] + (source[index + channel] - blur) * strength * 2);
+            }
+        }
+    }
+    context.putImageData(current, 0, 0);
+}
+
+async function applyLut(context: CanvasRenderingContext2D, width: number, height: number, lut: RefineLutState) {
+    const parsed = lut.format === "cube"
+        ? new (await import("three/addons/loaders/LUTCubeLoader.js")).LUTCubeLoader().parse(lut.source)
+        : new (await import("three/addons/loaders/LUT3dlLoader.js")).LUT3dlLoader().parse(lut.source);
+    const size = parsed.size;
+    const table = parsed.texture3D.image.data as Uint8Array | Float32Array;
+    const cube = parsed as { domainMin?: { x: number; y: number; z: number }; domainMax?: { x: number; y: number; z: number } };
+    const domainMin = cube.domainMin || { x: 0, y: 0, z: 0 };
+    const domainMax = cube.domainMax || { x: 1, y: 1, z: 1 };
+    const data = context.getImageData(0, 0, width, height);
+    const intensity = Math.max(0, Math.min(1, lut.intensity / 100));
+    for (let index = 0; index < data.data.length; index += 4) {
+        const r = (data.data[index] / 255 - domainMin.x) / Math.max(domainMax.x - domainMin.x, Number.EPSILON);
+        const g = (data.data[index + 1] / 255 - domainMin.y) / Math.max(domainMax.y - domainMin.y, Number.EPSILON);
+        const b = (data.data[index + 2] / 255 - domainMin.z) / Math.max(domainMax.z - domainMin.z, Number.EPSILON);
+        const mapped = sampleLut(table, size, r, g, b);
+        data.data[index] = clampByte(data.data[index] * (1 - intensity) + mapped[0] * intensity);
+        data.data[index + 1] = clampByte(data.data[index + 1] * (1 - intensity) + mapped[1] * intensity);
+        data.data[index + 2] = clampByte(data.data[index + 2] * (1 - intensity) + mapped[2] * intensity);
+    }
+    context.putImageData(data, 0, 0);
+}
+
+function sampleLut(table: Uint8Array | Float32Array, size: number, red: number, green: number, blue: number): [number, number, number] {
+    const r = Math.max(0, Math.min(size - 1, red * (size - 1)));
+    const g = Math.max(0, Math.min(size - 1, green * (size - 1)));
+    const b = Math.max(0, Math.min(size - 1, blue * (size - 1)));
+    const r0 = Math.floor(r); const r1 = Math.min(size - 1, r0 + 1); const rt = r - r0;
+    const g0 = Math.floor(g); const g1 = Math.min(size - 1, g0 + 1); const gt = g - g0;
+    const b0 = Math.floor(b); const b1 = Math.min(size - 1, b0 + 1); const bt = b - b0;
+    const point = (ri: number, gi: number, bi: number, channel: number) => table[((bi * size * size + gi * size + ri) * 4) + channel] * (table instanceof Uint8Array ? 1 : 255);
+    const interpolate = (channel: number) => {
+        const c00 = point(r0, g0, b0, channel) * (1 - rt) + point(r1, g0, b0, channel) * rt;
+        const c10 = point(r0, g1, b0, channel) * (1 - rt) + point(r1, g1, b0, channel) * rt;
+        const c01 = point(r0, g0, b1, channel) * (1 - rt) + point(r1, g0, b1, channel) * rt;
+        const c11 = point(r0, g1, b1, channel) * (1 - rt) + point(r1, g1, b1, channel) * rt;
+        return (c00 * (1 - gt) + c10 * gt) * (1 - bt) + (c01 * (1 - gt) + c11 * gt) * bt;
+    };
+    return [interpolate(0), interpolate(1), interpolate(2)];
+}
+
+function clampByte(value: number) {
+    return Math.max(0, Math.min(255, value));
 }
 
 export function refineExtension(format: RefineFormat) {

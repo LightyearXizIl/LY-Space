@@ -14,7 +14,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { buildCameraPrompt, formatCameraSelection, normalizeCameraSelection, type CameraSelection } from "@/lib/camera";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS, SEEDANCE_VIDEO_MIME_TYPES } from "@/lib/seedance-video";
-import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
+import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { imageToDataUrl, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { requestImageQuestion } from "@/services/api/image";
@@ -27,7 +27,6 @@ import { loadWorkbenchSession, saveWorkbenchSession } from "@/services/workbench
 import { trackWrite } from "@/services/desktop-storage";
 import { acknowledgeReferenceHandoff, getReferenceHandoffs } from "@/services/reference-handoff";
 import { hostImageOnOss } from "@/services/oss-hosting";
-import { hostReferenceImage } from "@/services/image-hosting";
 
 type GeneratedVideo = {
     id: string;
@@ -79,6 +78,7 @@ const logStore = localforage.createInstance({ name: "infinite-canvas", storeName
 
 // 模块级：进行中的视频任务轮询集合（跨组件共享，防止切页返回后重复轮询同一任务）
 const activeVideoLogIds = new Set<string>();
+const deletedVideoLogIds = new Set<string>();
 // 任务完成通知：切页期间任务在后台完成后通知新挂载的组件刷新日志
 const videoTaskListeners = new Set<() => void>();
 function emitVideoTaskUpdate() {
@@ -269,23 +269,6 @@ export default function VideoPage() {
         event.preventDefault();
         void addReferences(files);
     };
-    // Agnes 等渠道只接受公网 HTTPS 参考图：本地参考图自动托管（OSS 优先，免费图床兜底），失败明确报错引导
-    const ensurePublicReferenceUrls = async (refs: ReferenceImage[]) => {
-        const localRefs = refs.filter((item) => !/^https:\/\//i.test(item.dataUrl || item.url || ""));
-        if (!localRefs.length) return refs;
-        const hosted = await Promise.all(
-            localRefs.map(async (item) => {
-                try {
-                    return await hostReferenceImage(item);
-                } catch (error) {
-                    throw new Error(error instanceof Error ? `${error.message}；Agnes 生成需参考图为公网可访问地址` : "参考图片无法托管，请改用公网 HTTPS 图片 URL");
-                }
-            }),
-        );
-        const hostedById = new Map(hosted.map((item) => [item.id, item]));
-        return refs.map((item) => hostedById.get(item.id) || item);
-    };
-
     // 优化提示词：调用所选文本模型（默认 defaultConfig.textModel = gpt-5.5）流式优化并回填
     const optimizePrompt = async () => {
         const text = prompt.trim();
@@ -332,15 +315,8 @@ export default function VideoPage() {
         const batchStartedAt = performance.now();
         setStartedAt(batchStartedAt);
         try {
-            // Agnes 等渠道只接受公网 HTTPS 参考图：自动把本地参考图（blob/base64）上传 OSS 后提交
-            const publicReferences = await ensurePublicReferenceUrls(snapshot.references);
-            if (publicReferences.length > snapshot.references.length || publicReferences.some((item, index) => item.dataUrl !== snapshot.references[index]?.dataUrl)) {
-                const hostedCount = publicReferences.filter((item, index) => item.dataUrl !== snapshot.references[index]?.dataUrl).length;
-                setReferences(publicReferences);
-                message.success(`已自动上传 ${hostedCount} 张本地参考图`);
-            }
-            const task = await createVideoGenerationTask(snapshot.config, snapshot.requestText, publicReferences, snapshot.videoReferences, snapshot.audioReferences);
-            const log = buildLog({ prompt: snapshot.text, camera: snapshot.camera, model, config: snapshot.config, references: publicReferences, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: 0, status: "生成中", task });
+            const task = await createVideoGenerationTask(snapshot.config, snapshot.requestText, snapshot.references, snapshot.videoReferences, snapshot.audioReferences);
+            const log = buildLog({ prompt: snapshot.text, camera: snapshot.camera, model, config: snapshot.config, references: snapshot.references, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: 0, status: "生成中", task });
             await saveLog(log, false);
             void pollGenerationLog(log, snapshot.config);
         } catch (error) {
@@ -421,11 +397,11 @@ export default function VideoPage() {
     };
 
     const deleteSelectedLogs = () => {
-        const mediaKeys = logs
-            .filter((log) => selectedLogIds.includes(log.id))
-            .map((log) => log.video?.storageKey)
-            .filter((key): key is string => Boolean(key));
-        void Promise.all([deleteStoredMedia(mediaKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(() => refreshLogs());
+        selectedLogIds.forEach((id) => deletedVideoLogIds.add(id));
+        void Promise.all(selectedLogIds.map((id) => logStore.removeItem(id))).then(async () => {
+            await refreshLogs(false);
+            useAssetStore.getState().cleanupImages();
+        });
         if (previewLog && selectedLogIds.includes(previewLog.id)) {
             setPreviewLog(null);
             setResults([]);
@@ -462,6 +438,7 @@ export default function VideoPage() {
 
     const pollGenerationLog = async (log: GenerationLog, configOverride?: AiConfig) => {
         if (!log.task || activeVideoLogIds.has(log.id)) return;
+        if (deletedVideoLogIds.has(log.id)) return;
         activeVideoLogIds.add(log.id);
         if (mountedRef.current) {
             setRunning(true);
@@ -472,6 +449,7 @@ export default function VideoPage() {
         try {
             for (let attempt = 0; attempt < 120; attempt += 1) {
                 const state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
+                if (deletedVideoLogIds.has(log.id)) return;
                 if (state.status === "completed") {
                     const stored = await storeGeneratedVideo(state.result);
                     const nextVideo: GeneratedVideo = {
@@ -485,7 +463,7 @@ export default function VideoPage() {
                         mimeType: stored.mimeType,
                     };
                     if (mountedRef.current) setResults([{ id: nextVideo.id, status: "success", video: nextVideo }]);
-                    await saveLog({ ...log, status: "成功", durationMs: nextVideo.durationMs, video: nextVideo, error: undefined });
+                    if (!deletedVideoLogIds.has(log.id)) await saveLog({ ...log, status: "成功", durationMs: nextVideo.durationMs, video: nextVideo, error: undefined });
                     message.success("视频已生成");
                     return;
                 }
@@ -496,7 +474,7 @@ export default function VideoPage() {
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "生成失败";
             if (mountedRef.current) setResults([{ id: log.id, status: "failed", error: errorMessage }]);
-            await saveLog({ ...log, status: "失败", durationMs: Date.now() - log.createdAt, error: errorMessage });
+            if (!deletedVideoLogIds.has(log.id)) await saveLog({ ...log, status: "失败", durationMs: Date.now() - log.createdAt, error: errorMessage });
             message.error(errorMessage);
         } finally {
             activeVideoLogIds.delete(log.id);

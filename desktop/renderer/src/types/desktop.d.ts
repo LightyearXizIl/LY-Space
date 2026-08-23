@@ -33,7 +33,7 @@ declare global {
             stageCacheDirectory: (directory: string) => Promise<StorageSettings>;
             resetStorageDirectory: (kind: "result" | "cache") => Promise<StorageSettings>;
             openStorageDirectory: (directory: string) => Promise<string>;
-            fetchUrl: (url: string) => Promise<{ bytes: ArrayBuffer; mimeType: string }>;
+            fetchUrl: (url: string, mediaKind?: "image" | "video" | "audio") => Promise<{ bytes: ArrayBuffer; mimeType: string }>;
             copyImageToClipboard: (payload: { bytes: ArrayBuffer; mimeType?: string }) => Promise<{ width: number; height: number }>;
             appendAppLog: (entry: Omit<AppLogEntry, "id">) => Promise<void>;
             readAppLogs: (limit?: number) => Promise<AppLogEntry[]>;
@@ -42,12 +42,11 @@ declare global {
             saveFileDialog: (payload: { title?: string; defaultPath?: string; bytes: ArrayBuffer; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; path: string }>;
             saveFilesDialog: (payload: { title?: string; files: Array<{ name: string; bytes: ArrayBuffer }>; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; paths: string[] }>;
             writeGeneratedOutput: (payload: { kind: StorageKind; extension?: string; bytes?: ArrayBuffer; text?: string }) => Promise<{ path: string; name: string }>;
-            uploadFreeHost: (payload: { name?: string; mimeType?: string; bytes: ArrayBuffer }) => Promise<{ url: string }>;
             proxyRequest: (payload: { method?: string; url: string; headers?: Record<string, string>; body?: string }) => Promise<{ status: number; data: string }>;
             deleteGeneratedFiles: (paths: string[]) => Promise<{ deleted: number; missing: number; failed: number; skipped: number }>;
             persistenceFlushed: (requestId: string) => Promise<{ accepted: boolean }>;
             relaunchAfterFlush: () => Promise<void>;
-            onFlushPersistence: (listener: (request: { id: string; action: "install" | "quit" }) => void) => () => void;
+            onFlushPersistence: (listener: (request: { id: string; action: "install" | "quit" | "relaunch" }) => void) => () => void;
         };
     }
 }

@@ -124,7 +124,14 @@ export const CanvasTopBar = memo(function CanvasTopBar({
                                 type="button"
                                 className="max-w-[280px] truncate border-b border-dashed border-transparent text-left text-lg font-semibold tracking-normal transition hover:border-current"
                                 onDoubleClick={onStartTitleEditing}
-                                title="双击修改画布名称"
+                                onKeyDown={(event) => {
+                                    if (event.key === "Enter" || event.key === "F2") {
+                                        event.preventDefault();
+                                        onStartTitleEditing();
+                                    }
+                                }}
+                                title="双击、Enter 或 F2 修改画布名称"
+                                aria-label={`修改画布名称：${title}`}
                             >
                                 {title}
                             </button>

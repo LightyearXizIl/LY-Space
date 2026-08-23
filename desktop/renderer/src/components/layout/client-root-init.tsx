@@ -4,7 +4,7 @@ import { App } from "antd";
 
 import { createModelChannel, useConfigStore } from "@/stores/use-config-store";
 import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
-import { flushPendingStorageWrites } from "@/services/desktop-storage";
+import { flushLocalState, flushPendingStorageWrites } from "@/services/desktop-storage";
 import { initializeAppLogging, logAppEvent } from "@/services/app-logger";
 import { UpdatePrompt } from "@/components/layout/update-prompt";
 
@@ -30,7 +30,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         };
         window.addEventListener("lyspace:storage-error", showStorageError);
         const unsubscribe = window.lySpaceDesktop?.onFlushPersistence((request) => {
-            void flushPendingStorageWrites().finally(() => void window.lySpaceDesktop?.persistenceFlushed(request.id));
+            void flushLocalState().then(flushPendingStorageWrites).finally(() => void window.lySpaceDesktop?.persistenceFlushed(request.id));
         });
         return () => {
             window.removeEventListener("lyspace:storage-error", showStorageError);

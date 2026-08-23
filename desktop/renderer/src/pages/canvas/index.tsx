@@ -4,8 +4,8 @@ import { App, Button } from "antd";
 import { Download, FileUp, Plus } from "lucide-react";
 
 import { readZip } from "@/lib/zip";
-import { setMediaBlob } from "@/services/file-storage";
-import { setImageBlob } from "@/services/image-storage";
+import { getMediaBlob, setMediaBlob } from "@/services/file-storage";
+import { getImageBlob, setImageBlob } from "@/services/image-storage";
 import { CanvasDeleteProjectsDialog } from "@/components/canvas/canvas-delete-projects-dialog";
 import { CanvasProjectCard } from "@/components/canvas/canvas-project-card";
 import type { CanvasExportFile } from "@/types/canvas-export";
@@ -72,12 +72,16 @@ export default function CanvasPage() {
             const projectFile = zip.get("projects.json");
             if (!projectFile) throw new Error("missing projects.json");
             const data = JSON.parse(await projectFile.text()) as CanvasExportFile;
+            if (data.app !== "infinite-canvas" || data.version !== 3 || !Array.isArray(data.projects)) throw new Error("invalid project package");
             await Promise.all(
                 data.projects.flatMap((project) =>
                     project.files.map(async (item) => {
+                        if (!item?.storageKey || !item.path || !item.mimeType || !Number.isSafeInteger(item.bytes) || item.bytes < 0) throw new Error("invalid project file");
                         const blob = zip.get(item.path);
-                        if (!blob) return;
+                        if (!blob || blob.size !== item.bytes) throw new Error(`missing project file: ${item.path}`);
                         const typedBlob = blob.type ? blob : blob.slice(0, blob.size, item.mimeType);
+                        const existing = item.storageKey.startsWith("image:") ? await getImageBlob(item.storageKey) : await getMediaBlob(item.storageKey);
+                        if (existing) throw new Error(`导入包与当前素材冲突：${item.storageKey}`);
                         await (item.storageKey.startsWith("image:") ? setImageBlob(item.storageKey, typedBlob) : setMediaBlob(item.storageKey, typedBlob));
                     }),
                 ),

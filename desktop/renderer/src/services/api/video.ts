@@ -98,7 +98,9 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
 export async function pollVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     if (task.provider === "plugin") {
         const result = pluginVideoResults.get(task.id);
-        return result ? { status: "completed", result } : { status: "failed", error: "插件视频任务已失效，请重新生成" };
+        if (!result) return { status: "failed", error: "插件视频任务已失效，请重新生成" };
+        pluginVideoResults.delete(task.id);
+        return { status: "completed", result };
     }
     const requestConfig = resolveModelRequestConfig(config, task.model);
     assertVideoConfig(requestConfig, requestConfig.model);
@@ -257,24 +259,21 @@ export async function storeGeneratedVideo(result: VideoGenerationResult): Promis
     }
     if (result.url) {
         try {
-            const stored = await uploadMediaFile(result.url, "video");
+            let blob: Blob;
             try {
-                let blob: Blob | null = null;
-                try {
-                    blob = await (await fetch(result.url)).blob();
-                } catch {
-                    // 浏览器 fetch 跨域失败时回退主进程下载，保证本地落盘（与生图工作台同款）
-                    if (window.lySpaceDesktop) {
-                        const fetched = await window.lySpaceDesktop.fetchUrl(result.url);
-                        blob = new Blob([fetched.bytes], { type: fetched.mimeType || "video/mp4" });
-                    }
-                }
-                if (blob) await saveGeneratedBlob("video", blob);
+                const response = await fetch(result.url);
+                if (!response.ok) throw new Error(`视频下载失败：HTTP ${response.status}`);
+                blob = await response.blob();
             } catch {
-                // 远端地址仍可作为缓存媒体使用；桌面副本失败不应丢失已生成的视频。
+                if (!window.lySpaceDesktop) throw new Error("视频跨域下载失败，且桌面下载服务不可用");
+                const fetched = await window.lySpaceDesktop.fetchUrl(result.url, "video");
+                blob = new Blob([fetched.bytes], { type: fetched.mimeType || result.mimeType || "video/mp4" });
             }
+            const stored = await uploadMediaFile(blob, "video");
+            await saveGeneratedBlob("video", blob);
             return stored;
         } catch {
+            // 服务端视频仍可播放；本地下载失败时不伪造已缓存状态。
             return { url: result.url, storageKey: "", bytes: 0, mimeType: result.mimeType || "video/mp4" };
         }
     }

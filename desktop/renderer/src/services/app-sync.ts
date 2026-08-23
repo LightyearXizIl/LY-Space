@@ -25,7 +25,7 @@ type AppSyncFile = {
 
 type DomainManifest<T> = {
     app: "infinite-canvas";
-    version: 1;
+    version: 1 | 2;
     domain: DomainKey;
     exportedAt: string;
     data: T;
@@ -38,8 +38,12 @@ type SyncDomainOptions<T> = {
     localData: () => Promise<T>;
     emptyData: T;
     mergeData: (local: T, remote: T) => T;
+    items: (data: T) => Array<Record<string, unknown>>;
+    timeKey: string;
     applyData?: (data: T) => Promise<void>;
 };
+
+type TombstoneState = { known: Record<string, number>; tombstones: Record<string, number> };
 
 type SyncDomainResult<T> = {
     data: T;
@@ -79,6 +83,12 @@ const imageLogStore = localforage.createInstance({ name: "infinite-canvas", stor
 const videoLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
 type LogStore = typeof imageLogStore;
 const storageKeyPattern = /^(image|video|audio|file|video-reference|audio-reference):/;
+const syncTombstoneStores: Record<DomainKey, LocalForage> = {
+    canvas: localforage.createInstance({ name: "infinite-canvas", storeName: "webdav_tombstones_canvas" }),
+    assets: localforage.createInstance({ name: "infinite-canvas", storeName: "webdav_tombstones_assets" }),
+    "image-workbench": localforage.createInstance({ name: "infinite-canvas", storeName: "webdav_tombstones_image_workbench" }),
+    "video-workbench": localforage.createInstance({ name: "infinite-canvas", storeName: "webdav_tombstones_video_workbench" }),
+};
 
 export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?: AppSyncProgress): Promise<AppSyncResult> {
     emitProgress(onProgress, { stage: "等待本地数据加载" });
@@ -91,6 +101,8 @@ export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?:
             emptyData: { projects: [] },
             localData: async () => ({ projects: useCanvasStore.getState().projects }),
             mergeData: (local, remote) => ({ projects: mergeById(local.projects, remote.projects, "updatedAt") }),
+            items: (data) => data.projects as unknown as Array<Record<string, unknown>>,
+            timeKey: "updatedAt",
             applyData: async (data) => useCanvasStore.getState().replaceProjects(data.projects),
         }),
         syncDomain<AssetDomainData>(config, onProgress, {
@@ -99,6 +111,8 @@ export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?:
             emptyData: { assets: [] },
             localData: async () => ({ assets: useAssetStore.getState().assets }),
             mergeData: (local, remote) => ({ assets: mergeById(local.assets, remote.assets, "updatedAt") }),
+            items: (data) => data.assets as unknown as Array<Record<string, unknown>>,
+            timeKey: "updatedAt",
             applyData: async (data) => useAssetStore.getState().replaceAssets(await Promise.all(data.assets.map(hydrateAsset))),
         }),
         syncDomain<LogDomainData>(config, onProgress, {
@@ -107,6 +121,8 @@ export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?:
             emptyData: { logs: [] },
             localData: async () => ({ logs: await readStoredLogs(imageLogStore) }),
             mergeData: (local, remote) => ({ logs: mergeById(local.logs, remote.logs, "createdAt") }),
+            items: (data) => data.logs,
+            timeKey: "createdAt",
             applyData: async (data) => replaceStoredLogs(imageLogStore, data.logs),
         }),
         syncDomain<LogDomainData>(config, onProgress, {
@@ -115,6 +131,8 @@ export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?:
             emptyData: { logs: [] },
             localData: async () => ({ logs: await readStoredLogs(videoLogStore) }),
             mergeData: (local, remote) => ({ logs: mergeById(local.logs, remote.logs, "createdAt") }),
+            items: (data) => data.logs,
+            timeKey: "createdAt",
             applyData: async (data) => replaceStoredLogs(videoLogStore, data.logs),
         }),
     ]);
@@ -138,10 +156,14 @@ export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?:
 async function syncDomain<T>(config: WebdavSyncConfig, onProgress: AppSyncProgress | undefined, options: SyncDomainOptions<T>): Promise<SyncDomainResult<T>> {
     try {
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: "读取远端清单", status: "active" });
-        const remoteManifest = await readDomainManifest(config, options.key, options.emptyData);
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: "读取本地数据", status: "active" });
         const localData = await options.localData();
-        const mergedData = remoteManifest ? options.mergeData(localData, remoteManifest.data) : localData;
+        const tombstones = await reconcileLocalTombstones(options.key, options.items(localData), options.timeKey);
+        emitProgress(onProgress, { domain: options.key, label: options.label, stage: "读取远端清单", status: "active" });
+        const remoteManifest = await readDomainManifest(config, options.key, options.emptyData);
+        const filteredLocal = filterTombstoned(localData, options.items, tombstones, options.timeKey);
+        const filteredRemote = remoteManifest ? filterTombstoned(remoteManifest.data, options.items, tombstones, options.timeKey) : options.emptyData;
+        const mergedData = remoteManifest ? options.mergeData(filteredLocal, filteredRemote) : filteredLocal;
 
         if (remoteManifest) {
             emitProgress(onProgress, { domain: options.key, label: options.label, stage: "下载缺失媒体", status: "active" });
@@ -152,7 +174,8 @@ async function syncDomain<T>(config: WebdavSyncConfig, onProgress: AppSyncProgre
 
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: "上传新增媒体", status: "active" });
         const uploaded = await uploadChangedFiles(config, options.key, mergedData, remoteManifest?.files || [], onProgress);
-        const manifest: DomainManifest<T> = { app: "infinite-canvas", version: 1, domain: options.key, exportedAt: new Date().toISOString(), data: mergedData, files: uploaded.files };
+        await saveTombstoneState(options.key, tombstones, options.items(mergedData), options.timeKey);
+        const manifest: DomainManifest<T> = { app: "infinite-canvas", version: 2, domain: options.key, exportedAt: new Date().toISOString(), data: mergedData, files: uploaded.files };
         const manifestFile = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
         emitProgress(onProgress, { domain: options.key, label: options.label, stage: `上传清单 ${formatBytes(manifestFile.size)}`, status: "active" });
         await uploadWebdavFile(config, domainPath(options.key, WEBDAV_MANIFEST_FILE_NAME), manifestFile, "application/json");
@@ -179,12 +202,48 @@ async function readDomainManifest<T>(config: WebdavSyncConfig, domain: DomainKey
     if (data.app !== "infinite-canvas" || data.domain !== domain) throw new Error(`${domain} 同步清单不是当前应用的数据`);
     return {
         app: "infinite-canvas",
-        version: 1,
+        version: data.version === 2 ? 2 : 1,
         domain,
         exportedAt: data.exportedAt || new Date().toISOString(),
         data: data.data || emptyData,
         files: Array.isArray(data.files) ? data.files : [],
     };
+}
+
+async function reconcileLocalTombstones(domain: DomainKey, items: Array<Record<string, unknown>>, timeKey: string) {
+    const store = syncTombstoneStores[domain];
+    const saved = await store.getItem<TombstoneState>("state");
+    const state: TombstoneState = { known: { ...(saved?.known || {}) }, tombstones: { ...(saved?.tombstones || {}) } };
+    const current = new Map<string, number>();
+    for (const item of items) {
+        const id = getStringField(item, "id");
+        if (id) current.set(id, getTime(item, timeKey));
+    }
+    const now = Date.now();
+    for (const id of Object.keys(state.known)) {
+        if (!current.has(id)) state.tombstones[id] = Math.max(state.tombstones[id] || 0, now);
+    }
+    for (const [id, modifiedAt] of current) {
+        if (modifiedAt > (state.tombstones[id] || 0)) delete state.tombstones[id];
+    }
+    return state;
+}
+
+function filterTombstoned<T>(data: T, items: (data: T) => Array<Record<string, unknown>>, state: TombstoneState, timeKey: string): T {
+    const blocked = new Set(Object.entries(state.tombstones).filter(([id, deletedAt]) => !items(data).some((item) => getStringField(item, "id") === id && getTime(item, timeKey) > deletedAt)).map(([id]) => id));
+    if (!blocked.size) return data;
+    if ("projects" in (data as object)) return { ...(data as CanvasDomainData), projects: (data as CanvasDomainData).projects.filter((item) => !blocked.has(item.id)) } as T;
+    if ("assets" in (data as object)) return { ...(data as AssetDomainData), assets: (data as AssetDomainData).assets.filter((item) => !blocked.has(item.id)) } as T;
+    return { ...(data as LogDomainData), logs: (data as LogDomainData).logs.filter((item) => !blocked.has(item.id || "")) } as T;
+}
+
+async function saveTombstoneState(domain: DomainKey, state: TombstoneState, items: Array<Record<string, unknown>>, timeKey: string) {
+    const known: Record<string, number> = {};
+    for (const item of items) {
+        const id = getStringField(item, "id");
+        if (id) known[id] = getTime(item, timeKey);
+    }
+    await syncTombstoneStores[domain].setItem("state", { known, tombstones: state.tombstones } satisfies TombstoneState);
 }
 
 async function downloadMissingFiles<T>(config: WebdavSyncConfig, domain: DomainKey, data: T, remoteFiles: AppSyncFile[], onProgress?: AppSyncProgress) {

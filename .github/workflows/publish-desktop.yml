@@ -35,23 +35,31 @@ jobs:
         working-directory: desktop
         run: pnpm run verify:release
 
-      - name: Build and upload draft release
+      - name: Build local installer
         working-directory: desktop
-        run: pnpm --config.verify-deps-before-run=none run publish:win
+        run: pnpm --config.verify-deps-before-run=none run pack:win
+
+      - name: Create draft release
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --draft --title "LY Space $tag" --notes "正在校验发布资产。"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
-      - name: Ensure all release assets uploaded
+      - name: Upload exact release assets
         shell: pwsh
         working-directory: desktop
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # electron-builder 上传大文件偶发漏传（exe/latest.yml/blockmap 每次漏的不一样），
-          # 这里校验 release 资产完整性，缺失的立即补传，上传失败则让 CI 失败以便重试。
+          # 先本地打包，再仅向同一个草稿 Release 上传三份命名固定的资产，避免 electron-builder 并行发布生成重复草稿。
           $tag = $env:GITHUB_REF_NAME
           $version = $tag.TrimStart("v")
-          $existing = @(gh release view $tag --json assets --jq ".assets[].name" 2>$null)
           $releaseDir = (Resolve-Path "..\release").Path
           $assets = @(
             @{ Name = "LY-Space-Setup-$version.exe"; Local = Join-Path $releaseDir "LY Space Setup $version.exe" },
@@ -59,12 +67,11 @@ jobs:
             @{ Name = "latest.yml"; Local = Join-Path $releaseDir "latest.yml" }
           )
           foreach ($item in $assets) {
-            if ($existing -contains $item.Name) { Write-Host "已存在: $($item.Name)"; continue }
             if (-not (Test-Path $item.Local)) { throw "本地缺少必需发布资产: $($item.Local)" }
             # GitHub 会把资产名中的空格规范化为连字符，这里用连字符临时文件名上传，保证与 electron-builder 命名一致
             $uploadPath = Join-Path $env:TEMP $item.Name
             Copy-Item $item.Local $uploadPath -Force
-            Write-Host "补传缺失资产: $($item.Name)"
+            Write-Host "上传并覆盖资产: $($item.Name)"
             gh release upload $tag $uploadPath --clobber
             $code = $LASTEXITCODE
             Remove-Item $uploadPath -Force -ErrorAction SilentlyContinue
@@ -98,7 +105,7 @@ jobs:
             if ((Get-FileHash $localInstaller -Algorithm SHA512).Hash -ne (Get-FileHash $remoteInstaller -Algorithm SHA512).Hash) { throw "远程安装包与本地构建不一致" }
             $manifest = Get-Content (Join-Path $verifyDir "latest.yml") -Raw -Encoding UTF8
             $manifestName = [regex]::Match($manifest, "(?m)^path:\s*(.+)$").Groups[1].Value.Trim()
-            $manifestSize = [int64]([regex]::Match($manifest, "(?m)^size:\s*(\d+)$").Groups[1].Value)
+            $manifestSize = [int64]([regex]::Match($manifest, "(?m)^\s*size:\s*(\d+)$").Groups[1].Value)
             $manifestHash = [regex]::Match($manifest, "(?m)^sha512:\s*(\S+)$").Groups[1].Value
             $hashBytes = [Convert]::FromHexString((Get-FileHash $remoteInstaller -Algorithm SHA512).Hash)
             $actualHash = [Convert]::ToBase64String($hashBytes)

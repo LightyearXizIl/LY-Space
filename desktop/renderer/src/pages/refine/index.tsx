@@ -1,14 +1,14 @@
-import { App, Button, Input, Modal, Segmented, Slider, Tag } from "antd";
-import { ClipboardPaste, Crop, Download, FolderOpen, ImagePlus, RotateCcw, RotateCw, Send, Undo2, Redo2, Upload } from "lucide-react";
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { App, Button } from "antd";
+import { ClipboardPaste, Download, FolderOpen, Redo2, Send, Undo2, Upload } from "lucide-react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { saveAs } from "file-saver";
 import { nanoid } from "nanoid";
 import { useNavigate } from "react-router-dom";
 
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { CanvasNodeCropDialog, type CanvasImageCropRect } from "@/components/canvas/canvas-node-crop-dialog";
-import { cropPixelSize, defaultRefineAdjustments, defaultRefineTransform, parseRefineLut, refineExtension, refineMimeType, refineResolutionOptions, renderRefinedImage, resolveRefineDimensions, type RefineAdjustments, type RefineCropRect, type RefineFilter, type RefineFormat, type RefineLutState, type RefineResolution, type RefineTransform } from "@/lib/refine-image";
-import { formatBytes, readImageMeta } from "@/lib/image-utils";
+import { cropPixelSize, refineExtension, refineMimeType, renderRefinedImage, resolveRefineDimensions, validateRefineSource, defaultRefineTransform, defaultRefineAdjustments, type RefineCropRect, type RefineFormat, type RefineResolution, type RefineSourceImage } from "@/lib/refine-image";
+import { refineCommit, refineRedo, refineUndo, type RefineEditHistory, type RefineEditState } from "@/lib/refine-history";
 import { enqueueReferenceHandoff } from "@/services/reference-handoff";
 import { registerLocalStateFlusher } from "@/services/desktop-storage";
 import { uploadImage } from "@/services/image-storage";
@@ -17,19 +17,22 @@ import { selectableImageModelsByFeature, useConfigStore, useEffectiveConfig } fr
 import { loadWorkbenchSession, saveWorkbenchSession } from "@/services/workbench-session";
 import { SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import type { ReferenceImage } from "@/types/image";
+import { RefinePreviewStage } from "@/pages/refine/components/preview-stage";
+import { RefineSettingsPanel } from "@/pages/refine/components/settings-panel";
 
-type RefineSource = ReferenceImage & { width: number; height: number; bytes: number };
-type EditState = { transform: RefineTransform; filter: RefineFilter; adjustments: RefineAdjustments; lut: RefineLutState | null };
-type RefineSession = { source: RefineSource | null; crop: RefineCropRect; ratioPreset: string; resolution: RefineResolution; customWidth: number; customHeight: number; format: RefineFormat; quality: number; edits?: EditState; history?: EditState[]; historyIndex?: number };
+type EditStateBundle = RefineEditHistory & { edits: RefineEditState };
+type RefineSession = { source: RefineSourceImage | null; crop: RefineCropRect; ratioPreset: string; resolution: RefineResolution; customWidth: number; customHeight: number; format: RefineFormat; quality: number; edits?: RefineEditState; history?: RefineEditState[]; historyIndex?: number; future?: RefineEditState[] };
 
 const SESSION_KEY = "refine-workbench:current-session";
 const fullCrop: RefineCropRect = { x: 0, y: 0, width: 1, height: 1 };
+const freshEdits: RefineEditState = { transform: defaultRefineTransform, filter: "original", adjustments: { ...defaultRefineAdjustments }, lut: null };
+const freshBundle: EditStateBundle = { edits: freshEdits, history: [], historyIndex: -1, future: [] };
 
 export default function RefinePage() {
     const { message, modal } = App.useApp();
     const navigate = useNavigate();
     const inputRef = useRef<HTMLInputElement>(null);
-    const [source, setSource] = useState<RefineSource | null>(null);
+    const [source, setSource] = useState<RefineSourceImage | null>(null);
     const [crop, setCrop] = useState<RefineCropRect>(fullCrop);
     const [ratioPreset, setRatioPreset] = useState("free");
     const [resolution, setResolution] = useState<RefineResolution>("original");
@@ -40,20 +43,15 @@ export default function RefinePage() {
     const [hydrated, setHydrated] = useState(false);
     const [cropOpen, setCropOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
-    const [dragActive, setDragActive] = useState(false);
     const [busy, setBusy] = useState(false);
     const [previewUrl, setPreviewUrl] = useState("");
-    const [edits, setEdits] = useState<EditState>({ transform: defaultRefineTransform, filter: "original", adjustments: defaultRefineAdjustments, lut: null });
-    const [history, setHistory] = useState<EditState[]>([]);
-    const [historyIndex, setHistoryIndex] = useState(-1);
-    const lutInputRef = useRef<HTMLInputElement>(null);
+    const [editsBundle, setEditsBundle] = useState<EditStateBundle>(freshBundle);
     const sessionSnapshotRef = useRef<RefineSession | null>(null);
     const sessionSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const previewFrameRef = useRef<number | null>(null);
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
-    const [aiMode, setAiMode] = useState<"repair" | "upscale">("repair");
-    const [aiPrompt, setAiPrompt] = useState("");
+    const edits = editsBundle.edits;
 
     useEffect(() => {
         let active = true;
@@ -67,17 +65,22 @@ export default function RefinePage() {
             setCustomHeight(session.customHeight || 1024);
             setFormat(session.format || "png");
             setQuality(session.quality || 92);
-            if (session.edits) setEdits(session.edits);
-            if (session.history) setHistory(session.history);
-            if (typeof session.historyIndex === "number") setHistoryIndex(session.historyIndex);
+            if (session.edits || session.history) {
+                setEditsBundle({
+                    edits: session.edits || freshEdits,
+                    history: session.history || [],
+                    historyIndex: typeof session.historyIndex === "number" ? session.historyIndex : -1,
+                    future: session.future || [],
+                });
+            }
         }).finally(() => active && setHydrated(true));
         return () => {
             active = false;
         };
     }, []);
 
-    // 渲染期同步最新会话快照(供防抖落盘与卸载落盘读取最新值)
-    sessionSnapshotRef.current = { source, crop, ratioPreset, resolution, customWidth, customHeight, format, quality, edits, history, historyIndex } satisfies RefineSession;
+    // 渲染期同步最新会话快照(供防抖落盘与卸载落盘读取最新值)；缩放/平移/对比位置等视图状态不写入会话
+    sessionSnapshotRef.current = { source, crop, ratioPreset, resolution, customWidth, customHeight, format, quality, edits, history: editsBundle.history, historyIndex: editsBundle.historyIndex, future: editsBundle.future } satisfies RefineSession;
 
     // 会话保存:trailing 防抖 500ms(拖动调色等高频编辑时避免每秒数十次全量写库,会话含大图 dataUrl)
     useEffect(() => {
@@ -93,7 +96,7 @@ export default function RefinePage() {
                 sessionSaveTimerRef.current = null;
             }
         };
-    }, [crop, customHeight, customWidth, edits, format, history, historyIndex, hydrated, quality, ratioPreset, resolution, source]);
+    }, [crop, customHeight, customWidth, editsBundle, format, hydrated, quality, ratioPreset, resolution, source]);
 
     // 卸载/切换时立即落盘防抖窗口内未保存的编辑
     useEffect(() => () => {
@@ -143,16 +146,19 @@ export default function RefinePage() {
     const cropSize = source ? cropPixelSize(source, crop) : null;
 
     const replaceSource = async (input: File | Blob | string, name = "reference.png") => {
+        const invalid = validateRefineSource(input);
+        if (invalid) return message.warning(invalid);
         try {
             const stored = await uploadImage(input);
-            const next: RefineSource = { id: nanoid(), name, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes };
+            const next: RefineSourceImage = { id: nanoid(), name, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes };
             const apply = () => {
                 setSource(next);
                 setCrop(fullCrop);
                 setRatioPreset("free");
                 setResolution("original");
                 setCustomWidth(next.width);
-                setCustomHeight(next.height); setEdits({ transform: defaultRefineTransform, filter: "original", adjustments: defaultRefineAdjustments, lut: null }); setHistory([]); setHistoryIndex(-1);
+                setCustomHeight(next.height);
+                setEditsBundle({ edits: { ...freshEdits, adjustments: { ...defaultRefineAdjustments } }, history: [], historyIndex: -1, future: [] });
             };
             if (source) modal.confirm({ title: "替换当前图片？", content: "当前精修草稿将被替换。", okText: "替换", cancelText: "取消", onOk: apply });
             else apply();
@@ -179,6 +185,24 @@ export default function RefinePage() {
         }
     };
 
+    // 页面级 Ctrl+V 粘贴图片（输入控件内粘贴不拦截）
+    const replaceSourceRef = useRef(replaceSource);
+    replaceSourceRef.current = replaceSource;
+    useEffect(() => {
+        const handlePaste = (event: ClipboardEvent) => {
+            const target = event.target instanceof Element ? event.target : null;
+            if (target?.closest("input,textarea,[contenteditable='true']")) return;
+            const item = Array.from(event.clipboardData?.items || []).find((entry) => entry.type.startsWith("image/"));
+            if (!item) return;
+            const file = item.getAsFile();
+            if (!file) return;
+            event.preventDefault();
+            void replaceSourceRef.current(file, "clipboard.png");
+        };
+        window.addEventListener("paste", handlePaste);
+        return () => window.removeEventListener("paste", handlePaste);
+    }, []);
+
     const updateCustomWidth = (value: string) => {
         if (!source) return;
         const width = Math.max(1, Math.floor(Number(value) || 1));
@@ -201,10 +225,17 @@ export default function RefinePage() {
         return { blob: await renderRefinedImage(source.dataUrl, source, crop, dimensions, format, quality / 100, edits), dimensions };
     };
 
-    const commitEdits = (next: EditState) => { const nextHistory = [...history.slice(0, historyIndex + 1), edits]; setHistory(nextHistory); setHistoryIndex(nextHistory.length - 1); setEdits(next); };
-    const updateAdjustmentPreview = (key: keyof RefineAdjustments, value: number) => setEdits({ ...edits, adjustments: { ...edits.adjustments, [key]: value } });
-    const undo = () => { if (historyIndex < 0) return; const previous = history[historyIndex]; setEdits(previous); setHistoryIndex(historyIndex - 1); };
-    const importLut = async (file?: File) => { if (!file) return; try { commitEdits({ ...edits, lut: await parseRefineLut(file) }); message.success("LUT 已导入"); } catch (error) { message.error(error instanceof Error ? error.message : "LUT 导入失败"); } };
+    // 提交编辑（进历史并截断 redo 分支）；拖动中的预览走 previewEdits 不产生历史
+    const commitEdits = (next: RefineEditState) => setEditsBundle((state) => ({ edits: next, ...refineCommit(state, state.edits, next) }));
+    const previewEdits = (next: RefineEditState) => setEditsBundle((state) => ({ ...state, edits: next }));
+    const undoEdits = () => setEditsBundle((state) => {
+        const result = refineUndo(state, state.edits);
+        return result ? { ...state, ...result } : state;
+    });
+    const redoEdits = () => setEditsBundle((state) => {
+        const result = refineRedo(state);
+        return result ? { ...state, ...result } : state;
+    });
 
     const exportImage = async () => {
         setBusy(true);
@@ -238,7 +269,7 @@ export default function RefinePage() {
         }
     };
 
-    const runAiTool = async () => {
+    const runAiTool = async (aiMode: "repair" | "upscale", aiPrompt: string) => {
         if (!source) return;
         const models = selectableImageModelsByFeature(config, aiMode === "upscale" ? "generative-upscale" : "image-edit");
         if (!models.length) return message.error(aiMode === "upscale" ? "没有声明支持生成式高清的图片模型，请在渠道设置中启用能力" : "没有声明支持全图修复的图片模型，请在渠道设置中启用能力");
@@ -261,32 +292,63 @@ export default function RefinePage() {
         setAssetPickerOpen(false);
     };
 
+    const outputDisabled = !source || Boolean(dimensions?.disabled);
+
     return (
-        <main className="h-full overflow-y-auto bg-stone-50 p-5 text-stone-950 dark:bg-stone-950 dark:text-stone-100">
+        <main className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-950 dark:bg-stone-950 dark:text-stone-100">
             <input ref={inputRef} className="hidden" type="file" accept="image/*" onChange={(event: ChangeEvent<HTMLInputElement>) => addFiles(event.target.files)} />
-            <input ref={lutInputRef} className="hidden" type="file" accept=".cube,.3dl" onChange={(event: ChangeEvent<HTMLInputElement>) => void importLut(event.target.files?.[0])} />
-            <div className="mx-auto flex min-h-full max-w-7xl flex-col gap-5">
-                <header className="flex flex-wrap items-center justify-between gap-3">
-                    <div><h1 className="text-2xl font-semibold">精修工作台</h1><p className="mt-1 text-sm text-stone-500">裁切、调整导出尺寸，并发送为创作参考图。</p></div>
-                    <div className="flex flex-wrap gap-2"><Button icon={<Upload className="size-4" />} onClick={() => inputRef.current?.click()}>上传</Button><Button icon={<ClipboardPaste className="size-4" />} onClick={() => void addClipboard()}>剪贴板</Button><Button icon={<FolderOpen className="size-4" />} onClick={() => setAssetPickerOpen(true)}>我的资产</Button></div>
-                </header>
-                <div className="grid min-h-[620px] gap-5 lg:grid-cols-[minmax(0,1fr)_400px]">
-                    <section onDragOver={(event) => { event.preventDefault(); setDragActive(true); }} onDragLeave={() => setDragActive(false)} onDrop={(event: DragEvent<HTMLElement>) => { event.preventDefault(); setDragActive(false); addFiles(event.dataTransfer.files); }} className={`relative flex min-h-[520px] items-center justify-center overflow-hidden rounded-lg border ${dragActive ? "border-sky-500 bg-sky-50 dark:bg-sky-950/30" : "border-stone-200 bg-card dark:border-stone-800"}`}>
-                        {source ? <img src={previewUrl || source.dataUrl} alt={source.name} className="max-h-[72vh] max-w-full object-contain" /> : <button type="button" className="flex flex-col items-center gap-3 text-stone-500" onClick={() => inputRef.current?.click()}><ImagePlus className="size-10" /><span>拖入图片或点击上传</span></button>}
-                        {source ? <div className="absolute left-4 top-4 flex gap-2"><Tag>{source.width} × {source.height}</Tag><Tag>{formatBytes(source.bytes)}</Tag></div> : null}
-                    </section>
-                    <aside className="space-y-5 rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800">
-                        <section><div className="mb-2 flex items-center justify-between"><h2 className="font-medium">裁切与变换</h2><Button size="small" icon={<Crop className="size-4" />} disabled={!source} onClick={() => setCropOpen(true)}>自定义裁切</Button></div><div className="flex gap-1"><Button size="small" icon={<Undo2 />} onClick={undo} disabled={historyIndex < 0} /><Button size="small" icon={<RotateCcw />} onClick={() => commitEdits({ ...edits, transform: { ...edits.transform, rotation: edits.transform.rotation - 90 } })} /><Button size="small" icon={<RotateCw />} onClick={() => commitEdits({ ...edits, transform: { ...edits.transform, rotation: edits.transform.rotation + 90 } })} /><Button size="small" onClick={() => commitEdits({ ...edits, transform: { ...edits.transform, flipX: !edits.transform.flipX } })}>水平翻转</Button><Button size="small" onClick={() => commitEdits({ ...edits, transform: { ...edits.transform, flipY: !edits.transform.flipY } })}>垂直翻转</Button></div><Slider min={-45} max={45} value={edits.transform.rotation} onChange={(value) => setEdits({ ...edits, transform: { ...edits.transform, rotation: Number(value) } })} onChangeComplete={(value) => commitEdits({ ...edits, transform: { ...edits.transform, rotation: Number(value) } })} /><div className="text-xs text-stone-500">{cropSize ? `裁切区域 ${cropSize.width} × ${cropSize.height}` : "载入图片后可裁切"}</div></section>
-                        <section><h2 className="mb-2 font-medium">滤镜与调色</h2><div className="grid grid-cols-4 gap-1">{(["original", "vivid", "cinema", "warm", "cool", "vintage", "mono", "contrast"] as RefineFilter[]).map((key) => <Button key={key} size="small" type={edits.filter === key ? "primary" : "default"} onClick={() => commitEdits({ ...edits, filter: key })}>{{ original: "原图", vivid: "鲜艳", cinema: "电影", warm: "暖色", cool: "冷色", vintage: "复古", mono: "黑白", contrast: "高对比" }[key]}</Button>)}</div>{(["exposure", "contrast", "highlights", "shadows", "saturation", "temperature", "tint", "sharpen", "vignette"] as Array<keyof RefineAdjustments>).map((key) => <div key={key} className="mt-2"><div className="flex justify-between text-xs"><span>{{ exposure: "曝光", contrast: "对比度", highlights: "高光", shadows: "阴影", saturation: "饱和度", temperature: "色温", tint: "色调", sharpen: "锐化", vignette: "暗角" }[key]}</span><span>{edits.adjustments[key]}</span></div><Slider min={-100} max={100} value={edits.adjustments[key]} onChange={(value) => updateAdjustmentPreview(key, Number(value))} onChangeComplete={(value) => commitEdits({ ...edits, adjustments: { ...edits.adjustments, [key]: Number(value) } })} /></div>)}</section>
-                        <section><h2 className="mb-2 font-medium">LUT</h2><div className="flex gap-2"><Button size="small" onClick={() => lutInputRef.current?.click()}>导入 .cube/.3dl</Button>{edits.lut ? <Button size="small" danger onClick={() => commitEdits({ ...edits, lut: null })}>移除 {edits.lut.name}</Button> : null}</div>{edits.lut ? <Slider min={0} max={100} value={edits.lut.intensity} onChange={(value) => setEdits({ ...edits, lut: { ...edits.lut!, intensity: Number(value) } })} onChangeComplete={(value) => commitEdits({ ...edits, lut: { ...edits.lut!, intensity: Number(value) } })} /> : null}</section>
-                        <section><h2 className="mb-2 font-medium">AI 工具</h2><Segmented block value={aiMode} options={[{ label: "全图修复", value: "repair" }, { label: "生成式高清", value: "upscale" }]} onChange={(value) => setAiMode(value as "repair" | "upscale")} /><Input className="mt-2" value={aiPrompt} placeholder={aiMode === "upscale" ? "可补充高清要求" : "可补充修复要求"} onChange={(event) => setAiPrompt(event.target.value)} /><Button className="mt-2" block loading={busy} disabled={!source} onClick={() => void runAiTool()}>{aiMode === "upscale" ? "生成式高清（2x）" : "执行全图修复"}</Button><p className="mt-1 text-xs text-stone-500">AI 操作生成新版本，原图与本地编辑参数会保留。</p></section>
-                        <section><h2 className="mb-2 font-medium">导出分辨率</h2><Segmented block size="small" disabled={!source} value={resolution} options={refineResolutionOptions} onChange={(value: string | number) => setResolution(value as RefineResolution)} />{resolution === "custom" ? <div className="mt-3 grid grid-cols-2 gap-2"><Input value={customWidth} inputMode="numeric" prefix="宽" onChange={(event: ChangeEvent<HTMLInputElement>) => updateCustomWidth(event.target.value)} /><Input value={customHeight} inputMode="numeric" prefix="高" onChange={(event: ChangeEvent<HTMLInputElement>) => updateCustomHeight(event.target.value)} /></div> : null}<p className={`mt-2 text-xs ${dimensions?.disabled ? "text-red-500" : "text-stone-500"}`}>{dimensions ? `${dimensions.width} × ${dimensions.height}${dimensions.disabled ? ` · ${dimensions.reason}` : ""}` : ""}</p></section>
-                        <section><h2 className="mb-2 font-medium">文件格式</h2><Segmented block size="small" value={format} options={[{ label: "PNG", value: "png" }, { label: "JPEG", value: "jpeg" }, { label: "WebP", value: "webp" }]} onChange={(value: string | number) => setFormat(value as RefineFormat)} />{format !== "png" ? <div className="mt-3"><div className="mb-1 flex justify-between text-xs text-stone-500"><span>质量</span><span>{quality}</span></div><Slider min={1} max={100} value={quality} onChange={setQuality} /></div> : null}</section>
-                        <div className="space-y-2 border-t border-stone-200 pt-4 dark:border-stone-800"><Button block type="primary" loading={busy} disabled={!source || Boolean(dimensions?.disabled)} icon={<Download className="size-4" />} onClick={() => void exportImage()}>导出图片</Button><div className="grid grid-cols-2 gap-2"><Button loading={busy} disabled={!source || Boolean(dimensions?.disabled)} icon={<Send className="size-4" />} onClick={() => void sendTo("image")}>发送到生图</Button><Button loading={busy} disabled={!source || Boolean(dimensions?.disabled)} icon={<Send className="size-4" />} onClick={() => void sendTo("video")}>发送到视频</Button></div></div>
-                    </aside>
+            <header className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 px-5 py-3 dark:border-stone-800">
+                <div>
+                    <h1 className="text-xl font-semibold">精修工作台</h1>
+                    <p className="mt-0.5 text-sm text-stone-500">裁切、调整与调色，并发送为创作参考图。</p>
                 </div>
+                <div className="flex flex-wrap gap-2">
+                    <Button icon={<Upload className="size-4" />} onClick={() => inputRef.current?.click()}>上传</Button>
+                    <Button icon={<ClipboardPaste className="size-4" />} onClick={() => void addClipboard()}>剪贴板</Button>
+                    <Button icon={<FolderOpen className="size-4" />} onClick={() => setAssetPickerOpen(true)}>我的资产</Button>
+                </div>
+            </header>
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 lg:flex-row lg:overflow-hidden">
+                <RefinePreviewStage source={source} previewUrl={previewUrl} crop={crop} transform={edits.transform} onPickFile={() => inputRef.current?.click()} onFiles={addFiles} />
+                <aside className="w-full shrink-0 lg:h-full lg:min-h-0 lg:w-[400px]">
+                    <RefineSettingsPanel
+                        source={source}
+                        edits={edits}
+                        onCommitEdits={commitEdits}
+                        onPreviewEdits={previewEdits}
+                        ratioPreset={ratioPreset}
+                        onRatioPreset={setRatioPreset}
+                        onOpenCrop={() => setCropOpen(true)}
+                        cropSize={cropSize}
+                        resolution={resolution}
+                        onResolution={setResolution}
+                        customWidth={customWidth}
+                        customHeight={customHeight}
+                        onCustomWidth={updateCustomWidth}
+                        onCustomHeight={updateCustomHeight}
+                        format={format}
+                        onFormat={setFormat}
+                        quality={quality}
+                        onQuality={setQuality}
+                        dimensions={dimensions}
+                        busy={busy}
+                        onRunAi={(mode, prompt) => void runAiTool(mode, prompt)}
+                    />
+                </aside>
             </div>
-            {source ? <CanvasNodeCropDialog dataUrl={source.dataUrl} open={cropOpen} initialCrop={crop} initialRatioPreset={ratioPreset} onClose={() => setCropOpen(false)} onConfirm={(next: CanvasImageCropRect) => { setCrop(next); setCropOpen(false); }} /> : null}
+            <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 px-5 py-2.5 dark:border-stone-800">
+                <div className="flex items-center gap-1">
+                    <Button size="small" type="text" icon={<Undo2 className="size-4" />} aria-label="撤销" title="撤销" disabled={editsBundle.historyIndex < 0} onClick={undoEdits} />
+                    <Button size="small" type="text" icon={<Redo2 className="size-4" />} aria-label="重做" title="重做" disabled={!editsBundle.future.length} onClick={redoEdits} />
+                    <span className="ml-2 hidden text-xs text-stone-400 md:inline dark:text-stone-500">滚轮缩放 · 拖动平移 · 空格抓手 · Ctrl+V 粘贴图片</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                    <Button loading={busy} disabled={outputDisabled} icon={<Send className="size-4" />} onClick={() => void sendTo("image")}>发送到生图</Button>
+                    <Button loading={busy} disabled={outputDisabled} icon={<Send className="size-4" />} onClick={() => void sendTo("video")}>发送到视频</Button>
+                    <Button type="primary" loading={busy} disabled={outputDisabled} icon={<Download className="size-4" />} onClick={() => void exportImage()}>导出图片</Button>
+                </div>
+            </footer>
+            {source ? <CanvasNodeCropDialog dataUrl={source.dataUrl} open={cropOpen} initialCrop={crop} initialRatioPreset={ratioPreset} onClose={() => setCropOpen(false)} onConfirm={(next: CanvasImageCropRect, preset?: string) => { setCrop(next); if (preset) setRatioPreset(preset); setCropOpen(false); }} /> : null}
             <AssetPickerModal open={assetPickerOpen} onClose={() => setAssetPickerOpen(false)} onInsert={insertAsset} />
         </main>
     );

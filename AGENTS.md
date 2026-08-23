@@ -22,6 +22,7 @@
 ## 前端规范
 
 - 前端使用 Vite、React、React Router、TypeScript、Ant Design、Tailwind、Zustand。
+- 新增页面或组件的强调色/选中态/主按钮一律遵循全局主色（antd `colorPrimary` 与 stone 中性体系），即使参考图或设计稿使用其他强调色（如紫色）也不引入，保持与现有界面一致。
 - 编写 Ant Design 相关代码时，参考 https://ant.design/llms-full.txt 理解组件 API、示例和设计规范，并优先结合项目当前 antd 版本与既有写法。
 - 外部服务请求统一放在 `desktop/renderer/src/services/api/`，由浏览器前端直连，不假设存在项目后端。
 - 全局或跨页面状态优先放在 `desktop/renderer/src/stores/`。

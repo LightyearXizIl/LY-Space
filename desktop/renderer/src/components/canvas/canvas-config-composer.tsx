@@ -43,6 +43,8 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
     const [textModel, setTextModel] = useState(globalConfig.textModel || globalConfig.model);
     const editorRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
+    const mentionFrameRef = useRef<number | null>(null);
+    const compositionCommitFrameRef = useRef<number | null>(null);
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -56,7 +58,8 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
     }, [inputs, mention]);
 
     useEffect(() => {
-        if (document.activeElement === editorRef.current) return;
+        // contentEditable 的候选词区由输入法持有；组合阶段或正在编辑时重建子节点会打断拼音并遗留首字母。
+        if (composingRef.current || document.activeElement === editorRef.current) return;
         const editor = editorRef.current;
         if (!editor) return;
         editor.textContent = "";
@@ -70,6 +73,14 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
         });
     }, [inputs, referenceById, theme, tokens]);
 
+    useEffect(
+        () => () => {
+            if (mentionFrameRef.current !== null) cancelAnimationFrame(mentionFrameRef.current);
+            if (compositionCommitFrameRef.current !== null) cancelAnimationFrame(compositionCommitFrameRef.current);
+        },
+        [],
+    );
+
     const syncFromEditor = () => {
         const editor = editorRef.current;
         if (!editor) return;
@@ -79,6 +90,7 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
     };
 
     const syncMention = () => {
+        if (composingRef.current) return;
         const text = textBeforeCaret();
         const match = /@([^\s@]*)$/.exec(text);
         if (!match || !inputs.length) {
@@ -160,14 +172,21 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
                     }}
                     onCompositionStart={() => {
                         composingRef.current = true;
+                        if (mentionFrameRef.current !== null) cancelAnimationFrame(mentionFrameRef.current);
+                        if (compositionCommitFrameRef.current !== null) cancelAnimationFrame(compositionCommitFrameRef.current);
                     }}
                     onCompositionEnd={() => {
                         composingRef.current = false;
-                        syncFromEditor();
+                        // compositionend 早于部分输入法最终 input；下一帧再读取 DOM，避免把未确认的拼音字母写入 state。
+                        if (compositionCommitFrameRef.current !== null) cancelAnimationFrame(compositionCommitFrameRef.current);
+                        compositionCommitFrameRef.current = requestAnimationFrame(() => {
+                            compositionCommitFrameRef.current = null;
+                            if (!composingRef.current) syncFromEditor();
+                        });
                     }}
                     onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                         event.stopPropagation();
-                        if (isImeComposing(event)) return;
+                        if (composingRef.current || isImeComposing(event)) return;
                         if (mention && candidates.length) {
                             if (event.key === "ArrowDown") {
                                 event.preventDefault();
@@ -195,7 +214,11 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
                             requestAnimationFrame(syncFromEditor);
                             return;
                         }
-                        requestAnimationFrame(syncMention);
+                        if (mentionFrameRef.current !== null) cancelAnimationFrame(mentionFrameRef.current);
+                        mentionFrameRef.current = requestAnimationFrame(() => {
+                            mentionFrameRef.current = null;
+                            syncMention();
+                        });
                     }}
                     onBlur={() => window.setTimeout(closeMention, 120)}
                 />

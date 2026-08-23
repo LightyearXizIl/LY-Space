@@ -5,8 +5,25 @@ export type RefineFilter = "original" | "vivid" | "cinema" | "warm" | "cool" | "
 export type RefineTransform = { rotation: number; flipX: boolean; flipY: boolean };
 export type RefineAdjustments = { exposure: number; contrast: number; highlights: number; shadows: number; saturation: number; temperature: number; tint: number; sharpen: number; vignette: number };
 export type RefineLutState = { name: string; source: string; format: "cube" | "3dl"; intensity: number };
+/** 精修工作台的图片来源（工作台记录/资产/画布通用的参考图结构 + 像素与体积信息） */
+export type RefineSourceImage = import("@/types/image").ReferenceImage & { width: number; height: number; bytes: number };
 export const defaultRefineTransform: RefineTransform = { rotation: 0, flipX: false, flipY: false };
 export const defaultRefineAdjustments: RefineAdjustments = { exposure: 0, contrast: 0, highlights: 0, shadows: 0, saturation: 0, temperature: 0, tint: 0, sharpen: 0, vignette: 0 };
+export const refineFilterLabels: Record<RefineFilter, string> = { original: "原图", vivid: "鲜艳", cinema: "电影", warm: "暖色", cool: "冷色", vintage: "复古", mono: "黑白", contrast: "高对比" };
+export const refineAdjustmentLabels: Record<keyof RefineAdjustments, string> = { exposure: "曝光", contrast: "对比度", highlights: "高光", shadows: "阴影", saturation: "饱和度", temperature: "色温", tint: "色调", sharpen: "锐化", vignette: "暗角" };
+/** 精修允许载入的图片格式与体积上限（读取前校验，超限直接报错不入库） */
+export const refineSourceMaxBytes = 50 * 1024 * 1024;
+const refineSourceTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+const refineSourceExtensions = /\.(jpe?g|png|webp)$/i;
+
+/** 校验待载入的精修图片：仅支持 JPG/PNG/WebP 且不超过 50MB；返回错误文案或 null */
+export function validateRefineSource(input: File | Blob | string): string | null {
+    if (typeof input === "string") return null;
+    if (input.size > refineSourceMaxBytes) return "图片不能超过 50MB";
+    const name = input instanceof File ? input.name : "";
+    if (!refineSourceTypes.has(input.type) && !refineSourceExtensions.test(name)) return "仅支持 JPG、PNG、WebP 格式图片";
+    return null;
+}
 
 /** Validate LUTs with Three.js' official loaders before persisting their non-destructive source. */
 export async function parseRefineLut(file: File): Promise<RefineLutState> {

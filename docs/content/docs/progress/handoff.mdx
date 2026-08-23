@@ -9,8 +9,9 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.5.5`）
-- **最新发布状态**：`v0.5.5` 已于 2026-08-23 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `32647155232` 为 `completed/success`，Release 的 exe、blockmap、`latest.yml` 均为 `uploaded`，并已在 CI 中下载回读核验。该版本包含全功能审计修复与中文输入法组合输入修复；Windows 安装包按维护者明确授权维持无签名发布，Release 说明已提示“未知发布者”。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.5.6`）
+- **最新发布状态**：`v0.5.6` 已于 2026-08-24 发布，包含精修工作台参考图重构（3.32）与画布配置编排器中文组合输入修复；发布核验详情发布后补充于 3.32。上一正式版 `v0.5.5`（2026-08-23，CI `32647155232` 成功）。
+- **当前未提交工作区**：预期干净；若存在未提交改动，接手者不得 reset、覆盖、删除或误并入其他修改。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
 - **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`
@@ -26,7 +27,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.5.5（`VERSION`、两个 package 版本与发布 tag 一致；发布 tag 为 `v0.5.5`）
+- **当前版本**：v0.5.6（`VERSION`、两个 package 版本与发布 tag 一致；发布 tag 为 `v0.5.6`）
 
 ## 2. 数据存储
 
@@ -269,6 +270,19 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **根因与修复**（`canvas-resource-mention-textarea.tsx`）：文本节点正文是受控 `<textarea value=...>`；若组合态跳过 `onChange`，React 会把 DOM 恢复为旧值并打断拼音输入。现在组合态也同步文本值，`@` 引用匹配、光标测量和覆盖层刷新则延后到稳定输入或 `compositionend`，避免半成品拼音触发副作用。
 - **全量快捷键核查**：节点提示词、展开编辑器和配置编排器继续使用 DOM 临时组合态；节点/画布/项目标题保持同步回写并忽略组合态 Enter。自定义尺寸与插件 URL 也忽略组合态 Enter，搜索框、新增文本资产和蒙版提示词维持原有同步受控更新。
 - **验证边界**：`keyboard-event.test.ts` 新增组合态受控值同步回归；尚未取得微软拼音、搜狗和微信输入法的真实桌面端人工验收，验收矩阵以 `pending-test.mdx` 为准。第三方插件自行实现的编辑器不在本次改动范围。
+- **当前工作区保护**：`canvas-config-composer.tsx` 还有未提交的配置编排器组合输入修复，避免 `contentEditable` 在输入法候选阶段被重建，并延后到最终 `input` 后同步内容。该修改尚未发布，后续任务必须原样保留并单独核验，不得用还原工作区的方式清除。
+
+### 3.32 v0.5.6 精修工作台参考图重构 + 配置编排器组合输入修复
+
+- **状态边界**：源代码随 `v0.5.6`（2026-08-24）发布；发布前自动化检查（typecheck / vitest 50 项含新增 9 项 / 渲染构建 / git diff --check）通过；**人工验收清单在 `pending-test.mdx` 顶部，验收通过前不得更新 features.mdx**。
+- **页面结构**：`pages/refine/index.tsx` 改为全高三段式（顶部标题与图片入口 / 预览区+右侧约 400px 设置面板 / 底部撤销重做与导出发送操作栏）；lg 断点横向双栏，窄窗口纵向排列、外层滚动。预览组件 `pages/refine/components/preview-stage.tsx`、设置面板 `pages/refine/components/settings-panel.tsx`（页面私有组件目录）。
+- **强调色遵循全局主色**：用户明确否决参考图的紫色强调——所有选中态/指示条/主按钮均用全局主色（antd colorPrimary 黑白中性 + stone 系），不得再引入独立强调色（已沉淀进 AGENTS.md）。
+- **预览交互**：复用并扩展 `use-image-editor-viewport`（画布共享 hook，裁切弹窗同源）——新增可选 options（`minZoom`/`maxZoom`/`fitUpscale`/`maxAbsoluteScale`）与 `zoomTo`/`zoomToActualPixel`，默认值零行为变化，既有调用方不受影响。精修传 `fitUpscale`（小图铺满）+ `maxAbsoluteScale: 8`（按图片实际像素显示比例，上限 800%）；「原图」= 相同裁切与几何变换、不应用滤镜/调色/LUT 的渲染版本（激活时才渲染）；「对比」= 双层 img + `clipPath inset` + 可拖动/方向键调节的 role=slider 分割线（左原图/右效果）；Escape 关闭临时视图；缩放/平移/对比位置不写入会话。
+- **编辑历史**：新建 `lib/refine-history.ts` 纯函数（`refineCommit`/`refineUndo`/`refineRedo`），undo/redo 返回扁平状态可直接链式传递；**会话兼容**：`RefineSession` 仅新增可选 `future` 字段，旧字段 `history/historyIndex/edits` 语义不变，旧草稿恢复后可撤销、不可重做。滑杆 `onChange` 预览（`previewEdits` 不进历史）+ `onChangeComplete` 提交（`commitEdits` 一条历史）。
+- **其他要点**：`CanvasNodeCropDialog.onConfirm` 增加可选第二参数 `ratioPreset`（画布调用方零改动），精修确认后同步主页面比例状态；页面级 Ctrl+V 粘贴（排除输入控件）；`validateRefineSource`（`lib/refine-image.ts`）统一校验 JPG/PNG/WebP + 50MB（上传/拖入/剪贴板/资产/AI 结果同一入口）；AI 模式与补充要求内聚在设置面板，能力检查与失败反馈不变。
+- **坑**：① `useImageEditorViewport` 的 zoom 是「相对适应基准」的倍率，绝对比例显示用其 `imageScale`，绝对上限经 `maxAbsoluteScale` 由 hook 内部换算；② 预览图 natural 尺寸变化（裁切/换图）会触发 hook 重置回适应，同尺寸调色重渲染不重置——不要在 img onLoad 之外另设重置时机；③ 对比模式两层 img 的 `onLoad` 只挂普通模式那张，imageSize 以普通模式加载为准。
+- **配置编排器组合输入修复**（`canvas-config-composer.tsx`，用户随版合入）：contentEditable 编辑器在输入法组合阶段（`composingRef`）跳过 DOM 重建，避免候选词区被重建打断拼音并遗留首字母；`compositionend` 后下一帧再读 DOM（部分输入法最终 input 晚于 compositionend）；@ 引用匹配与覆盖层刷新延后到稳定输入帧执行；快捷键在组合态整段忽略。
+- **发布核验**：见本节末（发布后补记）。
 
 ### 3.23 v0.4.7 变更要点
 
@@ -308,7 +322,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 - `docs/content/docs/progress/todo.mdx`：画布插件稳定性、图像/视频/音频渠道兼容性
 - `docs/content/docs/progress/pending-test.mdx`：Agnes 中国站（`api.agnes-ai.cn`）视频生成实测（平台维护中）、参考图托管链路、OSS 配置
-- 用户当前重点：画布交互体验（框选/连线/指针）、更新下载体验（暂停/断点续传）、窗口与主题适配
+- **精修工作台待验收**：3.32 参考图重构已随 v0.5.6 发布，人工验收清单见 `pending-test.mdx` 顶部（空状态/上传/缩放平移/原图对比/四页签/撤销重做/导出发送/多分辨率与主题）；验收通过前不得更新 features.mdx。
+- 用户当前重点：画布中文输入法未提交修复的保护与人工验收、精修工作台参考图重构、画布交互体验（框选/连线/指针）、窗口与主题适配
 
 ## 7. 用户偏好
 

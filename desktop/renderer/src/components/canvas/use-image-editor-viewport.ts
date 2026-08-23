@@ -2,12 +2,27 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
 
 type ImageSize = { width: number; height: number };
 
-const minZoom = 1;
-const maxZoom = 4;
+const defaultMinZoom = 1;
+const defaultMaxZoom = 4;
 const zoomStep = 1.2;
 const viewportPadding = 16;
 
-export function useImageEditorViewport(image: ImageSize | null, open: boolean) {
+/** 可选视口配置：默认值保持裁切弹窗等既有调用方的行为不变 */
+export type ImageViewportOptions = {
+    /** 最小缩放（相对适应窗口基准），默认 1 */
+    minZoom?: number;
+    /** 最大缩放（相对适应窗口基准），默认 4；需要绝对像素上限的调用方自行换算传入 */
+    maxZoom?: number;
+    /** 适应窗口时是否允许把小图放大铺满视口，默认 false（不放大） */
+    fitUpscale?: boolean;
+    /** 显示像素相对图片原始像素的比例上限（如 8 = 800%），设置后优先于 maxZoom 收紧上限 */
+    maxAbsoluteScale?: number;
+};
+
+export function useImageEditorViewport(image: ImageSize | null, open: boolean, options?: ImageViewportOptions) {
+    const minZoom = options?.minZoom ?? defaultMinZoom;
+    const maxZoom = options?.maxZoom ?? defaultMaxZoom;
+    const fitUpscale = options?.fitUpscale ?? false;
     const viewportNodeRef = useRef<HTMLDivElement>(null);
     const stageRef = useRef<HTMLDivElement>(null);
     const panRef = useRef<{ pointerId: number; x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
@@ -77,7 +92,10 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean) {
         return () => observer.disconnect();
     }, [open, viewportElement]);
 
-    const baseSize = fitImage(image, viewportSize);
+    const baseSize = fitImageToViewport(image, viewportSize, fitUpscale);
+    // 显示像素相对图片原始像素的基准比例；maxAbsoluteScale 优先于 maxZoom 收紧上限
+    const baseScale = image && baseSize.width ? baseSize.width / image.width : 0;
+    const effectiveMaxZoom = options?.maxAbsoluteScale && baseScale > 0 ? Math.min(maxZoom, options.maxAbsoluteScale / baseScale) : maxZoom;
     const stageSize = { width: baseSize.width * zoom, height: baseSize.height * zoom };
     const contentSize = {
         width: Math.max(viewportSize.width, stageSize.width),
@@ -107,7 +125,7 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean) {
             const stage = stageRef.current;
             if (!viewport || !stage || !baseSize.width || !baseSize.height) return;
 
-            const boundedZoom = clamp(nextZoom, minZoom, maxZoom);
+            const boundedZoom = clamp(nextZoom, minZoom, effectiveMaxZoom);
             if (Math.abs(boundedZoom - zoom) < 0.001) return;
 
             const viewportRect = viewport.getBoundingClientRect();
@@ -122,7 +140,7 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean) {
             zoomAnchorRef.current = { zoom: boundedZoom, ratioX, ratioY, viewportX, viewportY };
             setZoom(boundedZoom);
         },
-        [baseSize.height, baseSize.width, zoom],
+        [baseSize.height, baseSize.width, effectiveMaxZoom, zoom],
     );
 
     useEffect(() => {
@@ -182,12 +200,14 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean) {
             onPointerCancelCapture: stopPan,
             onAuxClick: preventAuxClick,
         },
-        canZoomIn: zoom < maxZoom,
+        canZoomIn: zoom < effectiveMaxZoom,
         canZoomOut: zoom > minZoom,
         imageScale: image ? stageSize.width / image.width : 0,
         zoomIn: () => setZoomAround(zoom * zoomStep),
         zoomOut: () => setZoomAround(zoom / zoomStep),
         resetZoom: () => setZoomAround(minZoom),
+        zoomTo: (nextZoom: number, clientX?: number, clientY?: number) => setZoomAround(nextZoom, clientX, clientY),
+        zoomToActualPixel: () => setZoomAround(baseScale > 0 ? 1 / baseScale : minZoom),
         contentStyle: { width: contentSize.width, height: contentSize.height } satisfies CSSProperties,
         stageStyle: {
             left: stageOffset.left,
@@ -204,12 +224,25 @@ export function useImageEditorViewport(image: ImageSize | null, open: boolean) {
     };
 }
 
-function fitImage(image: ImageSize | null, viewport: ImageSize): ImageSize {
+/** 计算图片在视口内适应后的基准尺寸（默认不放大，fitUpscale 时允许铺满视口） */
+export function fitImageToViewport(image: ImageSize | null, viewport: ImageSize, fitUpscale = false): ImageSize {
     if (!image || !viewport.width || !viewport.height) return { width: 0, height: 0 };
     const availableWidth = Math.max(1, viewport.width - viewportPadding * 2);
     const availableHeight = Math.max(1, viewport.height - viewportPadding * 2);
-    const scale = Math.min(availableWidth / image.width, availableHeight / image.height, 1);
+    const scale = Math.min(availableWidth / image.width, availableHeight / image.height, fitUpscale ? Number.POSITIVE_INFINITY : 1);
     return { width: Math.max(1, Math.floor(image.width * scale)), height: Math.max(1, Math.floor(image.height * scale)) };
+}
+
+/** 实际像素 1:1 对应的相对缩放倍率（基准适应尺寸相对图片原始像素的比例取倒数） */
+export function actualPixelZoom(baseSize: ImageSize, image: ImageSize | null): number {
+    if (!image || !image.width || !baseSize.width) return 1;
+    return image.width / baseSize.width;
+}
+
+/** 当前显示的绝对像素比例（显示像素 / 图片原始像素），用于按实际像素显示缩放百分比 */
+export function absoluteViewportScale(baseSize: ImageSize, zoom: number, image: ImageSize | null): number {
+    if (!image || !image.width || !baseSize.width) return 0;
+    return (baseSize.width * zoom) / image.width;
 }
 
 function clamp(value: number, min: number, max: number) {

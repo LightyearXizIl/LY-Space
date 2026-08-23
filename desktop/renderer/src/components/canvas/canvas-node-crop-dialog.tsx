@@ -31,7 +31,7 @@ const ratioOptions = [
     { label: "9:16", value: "9:16" },
 ];
 
-export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm, initialCrop, initialRatioPreset }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (crop: CanvasImageCropRect) => void; initialCrop?: CanvasImageCropRect; initialRatioPreset?: string }) {
+export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm, initialCrop, initialRatioPreset }: { dataUrl: string; open: boolean; onClose: () => void; onConfirm: (crop: CanvasImageCropRect, ratioPreset?: string) => void; initialCrop?: CanvasImageCropRect; initialRatioPreset?: string }) {
     const [crop, setCrop] = useState<CanvasImageCropRect>(defaultCrop);
     const [ratioPreset, setRatioPreset] = useState("free");
     const [fixedRatio, setFixedRatio] = useState<number | null>(null);
@@ -164,7 +164,7 @@ export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm, initia
                     <Button icon={<X className="size-4" />} onClick={onClose}>
                         取消
                     </Button>
-                    <Button type="primary" icon={<Check className="size-4" />} onClick={() => onConfirm(crop)}>
+                    <Button type="primary" icon={<Check className="size-4" />} onClick={() => onConfirm(crop, ratioPreset)}>
                         确认裁剪
                     </Button>
                 </div>

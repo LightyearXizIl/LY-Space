@@ -1,2 +1,3 @@
+# NSIS 打包不依赖 electron-winstaller 的构建产物（Squirrel.Windows 专用），按 false 处理以通过依赖构建检查
 allowBuilds:
-  electron-winstaller: set this to true or false
+  electron-winstaller: false

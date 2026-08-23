@@ -10,7 +10,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 ## 0. 给 ZCode 的快速上手
 
 - **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.5.6`）
-- **最新发布状态**：`v0.5.6` 已于 2026-08-24 发布，包含精修工作台参考图重构（3.32）与画布配置编排器中文组合输入修复；发布核验详情发布后补充于 3.32。上一正式版 `v0.5.5`（2026-08-23，CI `32647155232` 成功）。
+- **最新发布状态**：`v0.5.6` 已于 2026-08-24 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `32651593335` 为 `completed/success`，Release 的 exe、blockmap、`latest.yml` 均为 `uploaded`；`latest.yml` 的 version/path/size 与远端 EXE 一致（核验明细见 3.32 发布核验）。该版本包含精修工作台参考图重构（3.32）与画布配置编排器中文组合输入修复；Windows 安装包按维护者明确授权维持无签名发布。
 - **当前未提交工作区**：预期干净；若存在未提交改动，接手者不得 reset、覆盖、删除或误并入其他修改。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
@@ -282,7 +282,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **其他要点**：`CanvasNodeCropDialog.onConfirm` 增加可选第二参数 `ratioPreset`（画布调用方零改动），精修确认后同步主页面比例状态；页面级 Ctrl+V 粘贴（排除输入控件）；`validateRefineSource`（`lib/refine-image.ts`）统一校验 JPG/PNG/WebP + 50MB（上传/拖入/剪贴板/资产/AI 结果同一入口）；AI 模式与补充要求内聚在设置面板，能力检查与失败反馈不变。
 - **坑**：① `useImageEditorViewport` 的 zoom 是「相对适应基准」的倍率，绝对比例显示用其 `imageScale`，绝对上限经 `maxAbsoluteScale` 由 hook 内部换算；② 预览图 natural 尺寸变化（裁切/换图）会触发 hook 重置回适应，同尺寸调色重渲染不重置——不要在 img onLoad 之外另设重置时机；③ 对比模式两层 img 的 `onLoad` 只挂普通模式那张，imageSize 以普通模式加载为准。
 - **配置编排器组合输入修复**（`canvas-config-composer.tsx`，用户随版合入）：contentEditable 编辑器在输入法组合阶段（`composingRef`）跳过 DOM 重建，避免候选词区被重建打断拼音并遗留首字母；`compositionend` 后下一帧再读 DOM（部分输入法最终 input 晚于 compositionend）；@ 引用匹配与覆盖层刷新延后到稳定输入帧执行；快捷键在组合态整段忽略。
-- **发布核验**：见本节末（发布后补记）。
+- **发布核验**（2026-08-24）：Release `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.5.6` 为正式版；Actions `32651593335` 成功。远端资产 `LY-Space-Setup-0.5.6.exe`（92,545,593 字节，GitHub API digest SHA-256 `2522537f628b95768457ec68586e0712ee0800456f07b37ac8326346b3acdce4`）、blockmap（97,887 字节）与 `latest.yml` 均为 `uploaded`；`latest.yml` 的 version `0.5.6`、path/文件名、size 92545593 与远端 EXE 一致，`files` 条目与顶层 sha512 相同（`E9El8v5WcLU4mdxOnWCIlJZ+8l7JQlIa2R7gOYMC2eo6QUM2kh5uxylVKou+T6TnZE2q+cRF6uCI9qwRx+ELeg==`）。本地安装包 `release\LY Space Setup 0.5.6.exe` 为 92,545,455 字节（88.26 MiB，verify-package 通过），SHA-256 `C8A321E014A68B67182B0250EFF65B168DCEE281FA8746BFEABC8538B7B67DA3`；本地与 CI 构建时间不同，字节大小与哈希不同属预期（同 3.29 先例）。
+- **本地打包坑（pnpm v11.18）**：`pnpm --dir desktop run pack:win` 首次失败于 `ERR_PNPM_IGNORED_BUILDS: electron-winstaller@5.4.0`——`desktop/pnpm-workspace.yaml` 里被写入占位 `allowBuilds: electron-winstaller: set this to true or false`，必须明确决定。已设 `false`（本项目仅打 NSIS 包，不需要 Squirrel.Windows 的 electron-winstaller 构建产物），`pnpm install` 与打包随即通过；后续环境遇到同类占位按此处理，勿删文件。
 
 ### 3.23 v0.4.7 变更要点
 

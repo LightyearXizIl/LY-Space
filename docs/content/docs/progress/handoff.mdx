@@ -10,7 +10,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 ## 0. 给 ZCode 的快速上手
 
 - **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；当前发布版本 `v0.5.9`，发布流水线会构建桌面安装包与官方插件）
-- **最新发布状态**：`v0.5.8` 已于 2026-08-25 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `32804913317`、`Publish Feature Plugins` 运行 `32804913334`、`Publish Official Plugins` 运行 `32804913325` 均为 `completed/success`。桌面 Release 的 exe、blockmap、`latest.yml` 均为 `uploaded`，并已在工作流中重新下载核验；功能插件 CDN 清单已主动刷新，`minAppVersion` 正确为 `>=0.5.6`（核验明细见 3.34）。Windows 安装包按维护者明确授权维持无签名发布。
+- **最新发布状态**：`v0.5.9` 已于 2026-08-25 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `32819082808`、`Publish Feature Plugins` 运行 `32819082816`、`Publish Official Plugins` 运行 `32819082812` 均为 `completed/success`。桌面 Release 的 exe、blockmap、`latest.yml` 均为 `uploaded`；工作流已重新下载校验，随后独立下载核验远端安装包大小 `92,561,666` 字节、SHA-256 `09ac8d04b1af50920fd0a074cf2cc6c49bd1abf6da48a408f6c20604759efc93`，并确认 `latest.yml` 的 SHA-512 和大小一致、公开下载 HTTP 200。Windows 安装包按维护者明确授权维持无签名发布。
 - **v0.5.9 发布内容**：Agent Core 0.2.0 服务归档与运行时探测、画布引用编辑器输入法修复，以及生成配置节点运行中的「再次生成」文案均已纳入本次版本；真实 Codex 登录、远程 Agent 与人工输入法验收仍按待测文档执行。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）

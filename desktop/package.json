@@ -1,6 +1,6 @@
 {
   "name": "ly-space-desktop",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "description": "LY Space desktop creative workspace",
   "author": "LY Space",
   "private": true,
@@ -29,6 +29,7 @@
       "storage-migration.cjs",
       "storage-settings.cjs",
       "update-install-coordinator.cjs",
+      "feature-plugin-manager.cjs",
       "preload.cjs",
       "build/icon.png",
       "renderer/dist/**/*"

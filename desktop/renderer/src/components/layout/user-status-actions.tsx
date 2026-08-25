@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useConfigStore } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { FeatureAgentTrigger } from "@/components/layout/feature-plugin-host";
 
 type UserStatusActionsProps = {
     showConfig?: boolean;
@@ -35,6 +36,7 @@ export function UserStatusActions({ showConfig = true, variant = "default", onOp
                     <Puzzle className="size-4" />
                 </button>
             ) : null}
+            <FeatureAgentTrigger className={naturalIconClass} style={iconStyle} />
             <a href={DOCS_URL} target="_blank" rel="noopener noreferrer" className={naturalIconClass} style={iconStyle} aria-label="文档" title="文档">
                 <BookOpen className="size-4" />
             </a>

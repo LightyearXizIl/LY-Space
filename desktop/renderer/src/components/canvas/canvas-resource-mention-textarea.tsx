@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { FileText, Image as ImageIcon, Music2, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { isImeComposing, isPlainEnterKey, syncControlledTextChange } from "@/lib/keyboard-event";
+import { isImeCompositionActive, isPlainEnterKey, syncControlledTextChange } from "@/lib/keyboard-event";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
@@ -147,7 +147,7 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                     props.onPointerUp?.(event);
                 }}
                 onKeyDown={(event) => {
-                    if (isImeComposing(event)) return;
+                    if (isImeCompositionActive(event, composingRef.current)) return;
                     if ((event.key === "Backspace" || event.key === "Delete") && !mention) {
                         const el = textareaRef.current;
                         if (el && el.selectionStart === el.selectionEnd) {

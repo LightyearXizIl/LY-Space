@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
-import { Image as ImageIcon, LoaderCircle, MessageSquare, Music2, Play, Settings2, Square, Video } from "lucide-react";
-import { Button, Segmented } from "antd";
+import { Image as ImageIcon, MessageSquare, Music2, Play, Settings2, Square, Video } from "lucide-react";
+import { Button, Segmented, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
 import { defaultConfig, resolveModelForCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -111,29 +111,19 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                 )}
             </div>
 
-            <Button
-                type="primary"
-                className="mt-auto !h-9 !w-full !cursor-pointer !rounded-lg"
-                danger={isRunning}
-                disabled={!isRunning && !canGenerate}
-                onMouseDown={(event) => event.stopPropagation()}
-                onClick={() => (isRunning ? onStop(node.id) : onGenerate(node.id))}
-            >
-                <span className="inline-flex items-center gap-1.5">
-                    {isRunning ? (
-                        <>
-                            <LoaderCircle className="size-4 animate-spin" />
-                            <Square className="size-3.5 fill-current" />
-                            <span>停止</span>
-                        </>
-                    ) : (
-                        <>
-                            <Play className="size-4" />
-                            <span>开始生成</span>
-                        </>
-                    )}
-                </span>
-            </Button>
+            <div className="mt-auto flex w-full items-center gap-2" onMouseDown={(event) => event.stopPropagation()}>
+                <Button type="primary" className="!h-9 !min-w-0 flex-1 !cursor-pointer !rounded-lg" disabled={!canGenerate} onClick={() => onGenerate(node.id)}>
+                    <span className="inline-flex items-center gap-1.5">
+                        <Play className="size-4" />
+                        <span>开始生成</span>
+                    </span>
+                </Button>
+                {isRunning ? (
+                    <Tooltip title="停止该节点全部未完成生成">
+                        <Button type="primary" danger className="!h-9 !w-9 !min-w-9 shrink-0 !cursor-pointer !rounded-lg !p-0" onClick={() => onStop(node.id)} title="停止生成" aria-label="停止生成" icon={<Square className="size-3.5 fill-current" />} />
+                    </Tooltip>
+                ) : null}
+            </div>
         </div>
     );
 }

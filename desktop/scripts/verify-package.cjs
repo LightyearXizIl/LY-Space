@@ -10,7 +10,8 @@ const blockmap = `${installer}.blockmap`;
 const updateMetadata = path.join(releaseDir, "latest.yml");
 const unpackedDir = path.join(releaseDir, "win-unpacked");
 const appExe = path.join(unpackedDir, "LY Space.exe");
-const maxInstallerBytes = 180 * 1024 * 1024;
+// v0.5.6 本地基线 88.26 MiB；功能插件仅允许引入轻量宿主，重型 Agent/Codex 必须按需下载。
+const maxInstallerBytes = 92_545_455 + 3 * 1024 * 1024;
 
 for (const target of [installer, blockmap, updateMetadata, appExe]) {
     if (!fs.existsSync(target)) throw new Error(`Missing packaged artifact: ${target}`);
@@ -24,6 +25,8 @@ const codexExecutables = files.filter((file) => path.basename(file).toLowerCase(
 if (codexExecutables.length) throw new Error(`Codex must not be bundled: ${codexExecutables.slice(0, 5).join(", ")}`);
 const bundledAgentFiles = files.filter((file) => /\\resources\\canvas-agent(?:\\|$)/i.test(file));
 if (bundledAgentFiles.length) throw new Error(`Canvas Agent must not be bundled: ${bundledAgentFiles.slice(0, 5).join(", ")}`);
+const bundledFeaturePluginFiles = files.filter((file) => /\\resources\\(?:feature-plugins|plugins\\features)(?:\\|$)/i.test(file));
+if (bundledFeaturePluginFiles.length) throw new Error(`Feature plugins must not be bundled: ${bundledFeaturePluginFiles.slice(0, 5).join(", ")}`);
 
 verifyWindowsMetadata(appExe);
 console.log(`Verified installer: ${(installerSize / 1024 / 1024).toFixed(2)} MiB`);

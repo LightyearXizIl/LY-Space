@@ -9,6 +9,7 @@ import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
 import { AboutPanel } from "@/components/layout/about-panel";
 import { AppLogsPanel } from "@/components/layout/app-logs-panel";
 import { OssSettingsPanel } from "@/components/layout/oss-settings-panel";
+import { FeaturePluginCenter } from "@/components/layout/feature-plugin-center";
 import { exportAppConfig, importAppConfig } from "@/services/config-file";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
@@ -435,6 +436,14 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                         key: "logs",
                         label: "运行日志",
                         children: <AppLogsPanel />,
+                    },
+                    {
+                        key: "plugins",
+                        label: "插件中心",
+                        children: <FeaturePluginCenter openNodePlugins={() => {
+                            setConfigDialogOpen(false);
+                            window.setTimeout(() => window.dispatchEvent(new Event("lyspace:open-canvas-plugin-manager")), 0);
+                        }} />,
                     },
                     {
                         key: "about",

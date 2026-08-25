@@ -1,0 +1,49 @@
+name: Publish Feature Plugins
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-feature-plugins
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build official feature plugins
+        working-directory: plugins/features/registry
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+      - name: Publish pinned Codex runtime to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          runtime_version=0.146.0
+          runtime_tag=feature-runtime-v${runtime_version}
+          runtime_file=codex-${runtime_version}-win32-x64.tgz
+          curl --fail --location --retry 3 --output "$runtime_file" "https://registry.npmjs.org/@openai/codex/-/$runtime_file"
+          gh release create "$runtime_tag" --title "LY Space Agent runtime ${runtime_version}" --notes "Pinned Codex runtime used by the optional Agent Core plugin." || true
+          gh release upload "$runtime_tag" "$runtime_file" --clobber
+      - name: Publish feature bundles to plugins-dist
+        working-directory: plugins/features/registry/dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git init -q
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -q -b plugins-dist
+          git add -A
+          git commit -q -m "publish feature plugins @ ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" plugins-dist

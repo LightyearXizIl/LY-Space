@@ -36,4 +36,32 @@ contextBridge.exposeInMainWorld("lySpaceDesktop", {
         ipcRenderer.on("lyspace:flush-persistence", handler);
         return () => ipcRenderer.removeListener("lyspace:flush-persistence", handler);
     },
+    featurePluginsList: () => ipcRenderer.invoke("lyspace:feature-plugins-list"),
+    refreshFeaturePlugins: () => ipcRenderer.invoke("lyspace:feature-plugins-refresh"),
+    installFeaturePlugin: (id, options) => ipcRenderer.invoke("lyspace:feature-plugins-install", id, options),
+    cancelFeaturePluginDownload: () => ipcRenderer.invoke("lyspace:feature-plugins-cancel-download"),
+    setFeaturePluginEnabled: (id, enabled) => ipcRenderer.invoke("lyspace:feature-plugins-set-enabled", id, enabled),
+    uninstallFeaturePlugin: (id) => ipcRenderer.invoke("lyspace:feature-plugins-uninstall", id),
+    getFeaturePluginSource: (id) => ipcRenderer.invoke("lyspace:feature-plugins-source", id),
+    probeCodexRuntime: () => ipcRenderer.invoke("lyspace:feature-runtime-probe"),
+    chooseCodexRuntime: () => ipcRenderer.invoke("lyspace:feature-runtime-choose"),
+    installManagedCodexRuntime: () => ipcRenderer.invoke("lyspace:feature-runtime-install"),
+    startAgent: () => ipcRenderer.invoke("lyspace:agent-start"),
+    stopAgent: () => ipcRenderer.invoke("lyspace:agent-stop"),
+    agentRequest: (payload) => ipcRenderer.invoke("lyspace:agent-request", payload),
+    subscribeAgent: (clientId) => ipcRenderer.invoke("lyspace:agent-subscribe", clientId),
+    stopAgentEvents: () => ipcRenderer.invoke("lyspace:agent-stop-events"),
+    resolveAgentTool: (clientId, payload) => ipcRenderer.invoke("lyspace:agent-tool-result", clientId, payload),
+    setRemoteAgentCredentials: (payload) => ipcRenderer.invoke("lyspace:agent-remote-credentials", payload),
+    clearRemoteAgentCredentials: () => ipcRenderer.invoke("lyspace:agent-clear-remote-credentials"),
+    onFeaturePluginState: (listener) => {
+        const handler = (_event, state) => listener(state);
+        ipcRenderer.on("lyspace:feature-plugin-state", handler);
+        return () => ipcRenderer.removeListener("lyspace:feature-plugin-state", handler);
+    },
+    onAgentEvent: (listener) => {
+        const handler = (_event, payload) => listener(payload);
+        ipcRenderer.on("lyspace:agent-event", handler);
+        return () => ipcRenderer.removeListener("lyspace:agent-event", handler);
+    },
 });

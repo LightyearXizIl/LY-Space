@@ -1,0 +1,14 @@
+.ly-agent { display: flex; min-height: 100%; flex-direction: column; gap: 10px; padding: 12px; color: #292524; font: 13px/1.5 system-ui, sans-serif; }
+.ly-agent__status { border-radius: 8px; background: #f5f5f4; padding: 8px 10px; color: #57534e; }
+.ly-agent__status[data-error="true"] { background: #fef2f2; color: #b91c1c; }
+.ly-agent__toolbar { display: flex; flex-wrap: wrap; gap: 6px; }
+.ly-agent button { border: 1px solid #d6d3d1; border-radius: 7px; background: transparent; padding: 5px 9px; color: inherit; cursor: pointer; }
+.ly-agent button:hover { background: #f5f5f4; }
+.ly-agent__messages { min-height: 180px; flex: 1; overflow: auto; border: 1px solid #e7e5e4; border-radius: 10px; padding: 10px; }
+.ly-agent__message { margin-bottom: 10px; white-space: pre-wrap; word-break: break-word; }
+.ly-agent__message strong { display: block; font-size: 11px; color: #78716c; }
+.ly-agent__message--error { color: #b91c1c; }
+.ly-agent__composer { display: grid; gap: 8px; }
+.ly-agent__composer textarea { width: 100%; resize: vertical; border: 1px solid #d6d3d1; border-radius: 8px; padding: 8px; background: transparent; color: inherit; font: inherit; box-sizing: border-box; }
+.ly-agent__composer button { justify-self: end; background: #292524; color: white; border-color: #292524; }
+@media (prefers-color-scheme: dark) { .ly-agent { color: #e7e5e4; } .ly-agent__status, .ly-agent button:hover { background: #292524; } .ly-agent__status[data-error="true"] { background: #450a0a; color: #fecaca; } .ly-agent__messages, .ly-agent button, .ly-agent__composer textarea { border-color: #44403c; } .ly-agent__composer button { background: #e7e5e4; color: #1c1917; } }

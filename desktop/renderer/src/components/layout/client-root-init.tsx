@@ -7,6 +7,7 @@ import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
 import { flushLocalState, flushPendingStorageWrites } from "@/services/desktop-storage";
 import { initializeAppLogging, logAppEvent } from "@/services/app-logger";
 import { UpdatePrompt } from "@/components/layout/update-prompt";
+import { FeaturePluginHost } from "@/components/layout/feature-plugin-host";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
     const { message } = App.useApp();
@@ -80,6 +81,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     return (
         <>
             {children}
+            <FeaturePluginHost />
             <UpdatePrompt />
         </>
     );

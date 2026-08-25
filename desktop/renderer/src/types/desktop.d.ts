@@ -18,6 +18,11 @@ declare global {
     type AppLogLevel = "info" | "warn" | "error";
     type AppLogCategory = "system" | "network" | "operation" | "error";
     type AppLogEntry = { id: string; time: string; level: AppLogLevel; category: AppLogCategory; message: string; details?: unknown };
+    type FeaturePluginStatus = "downloading" | "ready" | "runtime-required" | "disabled" | "update-available" | "incompatible" | "repair" | "error";
+    type FeaturePluginAsset = { path: string; url: string; size: number; sha256: string };
+    type FeaturePluginManifest = { schemaVersion: 1; id: "agent-core" | "skill-manager"; name: string; description: string; version: string; minAppVersion: string; protocolVersion: string; permissions: string[]; dependencies: Array<{ id: "agent-core" | "skill-manager"; range: string }>; rendererEntry: string; serviceEntry?: string; assets: FeaturePluginAsset[]; runtime?: { versionRange: string; version: string; entry: string; asset: FeaturePluginAsset; format: "file" | "tar" } | null };
+    type InstalledFeaturePlugin = { id: "agent-core" | "skill-manager"; name: string; version: string; enabled: boolean; status: FeaturePluginStatus; installedAt: string; error: string; manifest: FeaturePluginManifest };
+    type FeaturePluginState = { catalog: FeaturePluginManifest[]; plugins: InstalledFeaturePlugin[]; runtime: { source?: "system" | "manual" | "managed"; path?: string; version?: string; checkedAt?: string }; remoteAgent: { url: string; configured: boolean } | null; downloading: { id: string; received: number; total: number; stage: string } | null };
     interface Window {
         lySpaceDesktop?: {
             getUpdateState: () => Promise<AppUpdateState>;
@@ -47,6 +52,26 @@ declare global {
             persistenceFlushed: (requestId: string) => Promise<{ accepted: boolean }>;
             relaunchAfterFlush: () => Promise<void>;
             onFlushPersistence: (listener: (request: { id: string; action: "install" | "quit" | "relaunch" }) => void) => () => void;
+            featurePluginsList: () => Promise<FeaturePluginState>;
+            refreshFeaturePlugins: () => Promise<FeaturePluginState>;
+            installFeaturePlugin: (id: "agent-core" | "skill-manager", options?: { withDependencies?: boolean }) => Promise<FeaturePluginState | { needsDependencies: Array<{ id: "agent-core" | "skill-manager"; range: string }>; state: FeaturePluginState }>;
+            cancelFeaturePluginDownload: () => Promise<FeaturePluginState>;
+            setFeaturePluginEnabled: (id: "agent-core" | "skill-manager", enabled: boolean) => Promise<FeaturePluginState>;
+            uninstallFeaturePlugin: (id: "agent-core" | "skill-manager") => Promise<FeaturePluginState>;
+            getFeaturePluginSource: (id: "agent-core" | "skill-manager") => Promise<string>;
+            probeCodexRuntime: () => Promise<{ candidates: Array<{ path: string; available: boolean; version: string; error: string }>; compatible: { path: string; available: boolean; version: string; error: string } | null; state: FeaturePluginState }>;
+            chooseCodexRuntime: () => Promise<FeaturePluginState>;
+            installManagedCodexRuntime: () => Promise<FeaturePluginState>;
+            startAgent: () => Promise<{ url: string }>;
+            stopAgent: () => Promise<void>;
+            agentRequest: (payload: { method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; path: string; body?: unknown }) => Promise<unknown>;
+            subscribeAgent: (clientId: string) => Promise<{ connected: boolean }>;
+            stopAgentEvents: () => Promise<void>;
+            resolveAgentTool: (clientId: string, payload: { requestId: string; result?: unknown; error?: string }) => Promise<unknown>;
+            setRemoteAgentCredentials: (payload: { url: string; token: string }) => Promise<FeaturePluginState>;
+            clearRemoteAgentCredentials: () => Promise<FeaturePluginState>;
+            onFeaturePluginState: (listener: (state: FeaturePluginState) => void) => () => void;
+            onAgentEvent: (listener: (payload: { clientId: string; event: string; data: unknown }) => void) => () => void;
         };
     }
 }

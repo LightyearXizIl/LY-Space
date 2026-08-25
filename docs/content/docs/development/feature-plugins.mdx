@@ -1,0 +1,35 @@
+---
+title: 功能插件开发规范
+description: 官方 Agent Core 与 Skill 管理的按需交付、权限边界和发布规则
+---
+
+# 功能插件开发规范
+
+功能插件用于交付应用级能力，与画布中的 ESM 节点插件完全隔离。桌面安装包只包含宿主、插件中心和安装服务；Agent、Skills 及 Codex 运行时必须由用户在插件中心显式下载。
+
+## 目录与构建
+
+- 源码位于 `plugins/features/<plugin-id>/`；构建与官方清单位于 `plugins/features/registry/`。
+- 每个插件导出浏览器入口，并遵循 `activate(runtime) -> dispose`。插件通过 `runtime.registerPanel({ mount(container) })` 注册面板，不能向宿主传递 React 组件或依赖宿主的 React 实例。
+- Agent Core 的 Node 服务必须被独立打包，Codex 运行时不得放入其资产或桌面 `build.files`。
+- 执行 `cd plugins/features/registry && npm install && npm run build` 生成独立发布资产及 `official-feature-plugins.json`。
+
+## 清单与安装边界
+
+官方清单中的条目必须包含 `schemaVersion`、`id`、`version`、`minAppVersion`、`protocolVersion`、权限、依赖、渲染入口、资产大小和 SHA-256。服务入口和 Codex 运行时为可选字段。
+
+主进程只接受 `agent-core` 与 `skill-manager` 两个白名单 ID，并只从 HTTPS 官方清单资产安装。渲染进程不得提交任意下载 URL、命令或文件路径。安装以 `.part` 下载、哈希校验、staging 和原子切换完成；失败必须保留旧版本。
+
+## 安全与生命周期
+
+- 本地服务只监听随机 `127.0.0.1` 端口；主进程生成并持有令牌，渲染层只能通过受限 IPC 代理请求和事件。
+- 远程 Agent 仅接受 HTTPS（`localhost` 调试例外）。凭据使用 Electron `safeStorage`；不可用时只能保留当前会话。
+- 画布写入、删除、文件、外网和 MCP 工具调用默认逐次审批。日志不得包含令牌、认证头、请求正文或附件内容。
+- 禁用停止功能但保留二进制与数据。卸载删除二进制和无引用的受管运行时，始终保留 `%APPDATA%\\LY Space\\Plugin Data` 中的历史、凭据和 Skills。
+
+## 体积与发布
+
+- 桌面包相对 v0.5.6 的 88.26 MiB 基线最多增加 3 MiB，并在打包验证中拒绝 `codex.exe`、Canvas Agent 或功能插件产物。
+- Agent Core 发布资产不得超过 15 MiB；Skill 管理不得超过 3 MiB。Codex 运行时单独发布、单独计量并在下载前显示。
+- 功能插件由 `.github/workflows/publish-feature-plugins.yml` 构建并发布到 `plugins-dist` 分支；固定 Codex 运行时发布到对应 GitHub Release。该工作流不会由桌面客户端自动触发下载。
+

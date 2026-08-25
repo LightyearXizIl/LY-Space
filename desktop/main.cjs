@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, net: electronNet, protocol, shell, Tray } = require("electron");
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, net: electronNet, protocol, safeStorage, shell, Tray } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -8,6 +8,7 @@ const { pathToFileURL } = require("node:url");
 const { copyDirectoryExact, directoryManifest, restoreBridgeBackup, sameManifest } = require("./storage-migration.cjs");
 const { assertWritableDirectory, ensureStorageDirectories: ensureConfiguredStorageDirectories, readStorageSettingsFile, writeStorageSettingsFile } = require("./storage-settings.cjs");
 const { buildInstallerArgs, buildInstallerLaunchOptions, createPersistenceFlushCoordinator } = require("./update-install-coordinator.cjs");
+const { createFeaturePluginManager } = require("./feature-plugin-manager.cjs");
 
 protocol.registerSchemesAsPrivileged([
     { scheme: "lyspace", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
@@ -688,6 +689,12 @@ function createTray() {
 app.setName("LY Space");
 app.setPath("userData", path.join(app.getPath("appData"), "LY Space"));
 app.setAppUserModelId("com.lyspace.desktop");
+const featurePluginManager = createFeaturePluginManager({
+    app,
+    safeStorage,
+    getMainWindow: () => mainWindow,
+    log: (entry) => writeAppLog(entry),
+});
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
     app.quit();
@@ -731,6 +738,32 @@ app.whenReady().then(async () => {
         fs.mkdirSync(appLogDirectory(), { recursive: true });
         return shell.openPath(appLogDirectory());
     });
+    // 功能插件只能按官方清单 id 操作；渲染层没有原生路径、命令或下载地址入口。
+    ipcMain.handle("lyspace:feature-plugins-list", () => featurePluginManager.list());
+    ipcMain.handle("lyspace:feature-plugins-refresh", () => featurePluginManager.refresh());
+    ipcMain.handle("lyspace:feature-plugins-install", (_event, id, options) => featurePluginManager.install(String(id || ""), { withDependencies: Boolean(options?.withDependencies) }));
+    ipcMain.handle("lyspace:feature-plugins-cancel-download", () => featurePluginManager.cancelDownload());
+    ipcMain.handle("lyspace:feature-plugins-set-enabled", (_event, id, enabled) => featurePluginManager.setEnabled(String(id || ""), Boolean(enabled)));
+    ipcMain.handle("lyspace:feature-plugins-uninstall", (_event, id) => featurePluginManager.uninstall(String(id || "")));
+    ipcMain.handle("lyspace:feature-plugins-source", (_event, id) => featurePluginManager.readPluginSource(String(id || "")));
+    ipcMain.handle("lyspace:feature-runtime-probe", () => featurePluginManager.probeCodexCandidates());
+    ipcMain.handle("lyspace:feature-runtime-choose", async () => {
+        const selected = await dialog.showOpenDialog(mainWindow, { title: "选择现有 Codex", properties: ["openFile"], filters: [{ name: "Codex", extensions: ["exe", "cmd"] }] });
+        if (selected.canceled || !selected.filePaths[0]) return featurePluginManager.list();
+        return featurePluginManager.chooseCodexRuntime(selected.filePaths[0]);
+    });
+    ipcMain.handle("lyspace:feature-runtime-install", () => featurePluginManager.installManagedRuntime());
+    ipcMain.handle("lyspace:agent-start", async () => {
+        const connection = await featurePluginManager.startAgent();
+        return { url: connection.url };
+    });
+    ipcMain.handle("lyspace:agent-stop", () => featurePluginManager.stopAgent());
+    ipcMain.handle("lyspace:agent-request", (_event, payload) => featurePluginManager.agentRequest(payload));
+    ipcMain.handle("lyspace:agent-subscribe", (_event, clientId) => featurePluginManager.subscribeAgent(clientId));
+    ipcMain.handle("lyspace:agent-stop-events", () => featurePluginManager.stopAgentEvents());
+    ipcMain.handle("lyspace:agent-tool-result", (_event, clientId, payload) => featurePluginManager.resolveAgentTool(clientId, payload));
+    ipcMain.handle("lyspace:agent-remote-credentials", (_event, payload) => featurePluginManager.setRemoteAgentCredentials(payload));
+    ipcMain.handle("lyspace:agent-clear-remote-credentials", () => featurePluginManager.clearRemoteAgentCredentials());
     ipcMain.handle("lyspace:storage-settings", () => storageInfo());
     ipcMain.handle("lyspace:choose-storage-directory", async (_event, kind) => {
         const selected = await dialog.showOpenDialog(mainWindow, { title: kind === "cache" ? "选择缓存目录" : "选择结果保存目录", properties: ["openDirectory", "createDirectory"] });
@@ -943,5 +976,6 @@ app.whenReady().then(async () => {
     if (app.isPackaged) void checkForUpdate("auto");
 });
 app.on("window-all-closed", () => app.quit());
+app.on("before-quit", () => featurePluginManager.shutdown());
 }
 }

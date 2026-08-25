@@ -610,7 +610,7 @@ function ImageNodeContent(props: NodeContentRendererProps) {
         const content = props.node.metadata.status === "loading" ? <LoadingContent theme={props.theme} /> : <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
         return (
             <BatchFrame batchCount={props.batchCount} batchExpanded={props.batchExpanded} batchOpening={props.batchOpening} batchRecovering={props.batchRecovering} onToggleBatch={props.onToggleBatch}>
-                {content}
+                <div className="flex h-full w-full items-center justify-center">{content}</div>
             </BatchFrame>
         );
     }

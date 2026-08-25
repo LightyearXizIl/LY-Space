@@ -26,6 +26,11 @@ export function isImeComposing(event: EventLike) {
     return Boolean(event.isComposing || nativeEvent?.isComposing || event.keyCode === 229 || event.which === 229 || nativeEvent?.keyCode === 229 || nativeEvent?.which === 229);
 }
 
+/** React 本地组合态是事件标记缺失时的兜底，优先保障候选键不被快捷键抢走。 */
+export function isImeCompositionActive(event: KeyboardEventLike, localComposing = false) {
+    return localComposing || isImeComposing(event);
+}
+
 export function isPlainEnterKey(event: KeyboardEventLike) {
     return event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !isImeComposing(event);
 }

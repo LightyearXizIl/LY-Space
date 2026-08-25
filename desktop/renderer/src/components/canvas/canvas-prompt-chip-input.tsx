@@ -5,7 +5,7 @@ import { Image } from "antd";
 import { FileText, Image as ImageIcon, Music2, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { isImeComposing, isPlainEnterKey } from "@/lib/keyboard-event";
+import { isImeCompositionActive, isPlainEnterKey } from "@/lib/keyboard-event";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 
@@ -34,6 +34,8 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const editorRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
+    const mentionFrameRef = useRef<number | null>(null);
+    const compositionCommitFrameRef = useRef<number | null>(null);
     // 记录我们最近一次向父级 emit 的 value。聚焦时若 value 与它一致,说明是本组件输入的回声,
     // 跳过重建以免打断光标 / IME;若不一致(如发送后父级把 prompt 清空、或从提示词库插入),即使聚焦也要重建。
     const lastEmittedRef = useRef(value);
@@ -72,6 +74,14 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
         lastEmittedRef.current = value;
     }, [tokens, referenceByLabel, theme, value]);
 
+    useEffect(
+        () => () => {
+            if (mentionFrameRef.current !== null) cancelAnimationFrame(mentionFrameRef.current);
+            if (compositionCommitFrameRef.current !== null) cancelAnimationFrame(compositionCommitFrameRef.current);
+        },
+        [],
+    );
+
     const emit = (next: string) => {
         lastEmittedRef.current = next;
         onChange(next);
@@ -85,6 +95,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
     };
 
     const syncMention = () => {
+        if (composingRef.current) return;
         const text = textBeforeCaret();
         const match = /@([^\s@]*)$/.exec(text);
         if (!match || !activeReferences.length) {
@@ -142,18 +153,24 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                 className={`${className || ""} select-text overflow-y-auto whitespace-pre-wrap break-words outline-none`}
                 style={{ ...style, cursor: "text" }}
                 onInput={(event) => {
-                    if (!composingRef.current && !isImeComposing(event)) syncFromEditor();
+                    if (!isImeCompositionActive(event, composingRef.current)) syncFromEditor();
                 }}
                 onCompositionStart={() => {
                     composingRef.current = true;
+                    if (mentionFrameRef.current !== null) cancelAnimationFrame(mentionFrameRef.current);
+                    if (compositionCommitFrameRef.current !== null) cancelAnimationFrame(compositionCommitFrameRef.current);
                 }}
                 onCompositionEnd={() => {
                     composingRef.current = false;
-                    syncFromEditor();
+                    if (compositionCommitFrameRef.current !== null) cancelAnimationFrame(compositionCommitFrameRef.current);
+                    compositionCommitFrameRef.current = requestAnimationFrame(() => {
+                        compositionCommitFrameRef.current = null;
+                        if (!composingRef.current) syncFromEditor();
+                    });
                 }}
                 onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                     event.stopPropagation();
-                    if (isImeComposing(event)) return;
+                    if (isImeCompositionActive(event, composingRef.current)) return;
                     if (mention && candidates.length) {
                         if (event.key === "ArrowDown") {
                             event.preventDefault();
@@ -178,7 +195,11 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                     }
                     if ((event.key === "Backspace" || event.key === "Delete") && deleteAdjacentReference(event.key)) {
                         event.preventDefault();
-                        requestAnimationFrame(syncFromEditor);
+                        if (mentionFrameRef.current !== null) cancelAnimationFrame(mentionFrameRef.current);
+                        mentionFrameRef.current = requestAnimationFrame(() => {
+                            mentionFrameRef.current = null;
+                            syncFromEditor();
+                        });
                         return;
                     }
                     if (isPlainEnterKey(event) && onSubmit) {
@@ -186,7 +207,11 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                         onSubmit();
                         return;
                     }
-                    requestAnimationFrame(syncMention);
+                    if (mentionFrameRef.current !== null) cancelAnimationFrame(mentionFrameRef.current);
+                    mentionFrameRef.current = requestAnimationFrame(() => {
+                        mentionFrameRef.current = null;
+                        syncMention();
+                    });
                 }}
                 onBlur={() => window.setTimeout(closeMention, 120)}
             />

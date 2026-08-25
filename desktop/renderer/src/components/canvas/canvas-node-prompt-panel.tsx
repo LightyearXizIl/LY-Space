@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowUp, LoaderCircle, Maximize2, Square, Wand2 } from "lucide-react";
+import { ArrowUp, Maximize2, Square, Wand2 } from "lucide-react";
 import { Button, Modal, Tooltip } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -68,7 +68,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
 
     const submit = () => {
         const text = prompt.trim();
-        if (!text || isRunning) return;
+        if (!text) return;
         onGenerate(node.id, mode, text);
     };
 
@@ -138,26 +138,16 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                         </>
                     )}
                 </div>
-                <Button
-                    type="primary"
-                    className="!h-10 !min-w-16 shrink-0 !rounded-full !px-3"
-                    danger={isRunning}
-                    disabled={!isRunning && !prompt.trim()}
-                    onClick={() => (isRunning ? onStop(node.id) : submit())}
-                    aria-label={isRunning ? "停止生成" : "生成"}
-                >
-                    <span className="flex items-center gap-1.5">
-                        {isRunning ? (
-                            <>
-                                <LoaderCircle className="size-4 animate-spin" />
-                                <Square className="size-3.5 fill-current" />
-                                <span className="text-xs font-medium">停止</span>
-                            </>
-                        ) : (
-                            <ArrowUp className="size-4" />
-                        )}
-                    </span>
-                </Button>
+                <div className="flex shrink-0 items-center gap-2">
+                    <Button type="primary" className="!h-10 !min-w-16 !rounded-full !px-3" disabled={!prompt.trim()} onClick={submit} aria-label="生成">
+                        <ArrowUp className="size-4" />
+                    </Button>
+                    {isRunning ? (
+                        <Tooltip title="停止该节点全部未完成生成">
+                            <Button type="primary" danger className="!h-10 !w-10 !min-w-10 !rounded-full !p-0" onClick={() => onStop(node.id)} title="停止生成" aria-label="停止生成" icon={<Square className="size-3.5 fill-current" />} />
+                        </Tooltip>
+                    ) : null}
+                </div>
             </div>
             <Modal title="编辑提示词" open={expanded} centered width={760} footer={null} onCancel={() => setExpanded(false)} destroyOnHidden>
                 <div data-canvas-no-zoom className="pt-2" onWheelCapture={(event) => event.stopPropagation()}>

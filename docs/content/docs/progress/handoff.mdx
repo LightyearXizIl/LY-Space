@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.5.7`）
-- **最新发布状态**：`v0.5.7` 已于 2026-08-25 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `32804217256`、`Publish Feature Plugins` 运行 `32804217137`、`Publish Official Plugins` 运行 `32804217266` 均为 `completed/success`。桌面 Release 的 exe、blockmap、`latest.yml` 均为 `uploaded`，并已在工作流中重新下载核验；功能插件资产已发布到独立分支/运行时 Release（核验明细见 3.33）。Windows 安装包按维护者明确授权维持无签名发布。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.5.8`）
+- **最新发布状态**：`v0.5.8` 已于 2026-08-25 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `32804913317`、`Publish Feature Plugins` 运行 `32804913334`、`Publish Official Plugins` 运行 `32804913325` 均为 `completed/success`。桌面 Release 的 exe、blockmap、`latest.yml` 均为 `uploaded`，并已在工作流中重新下载核验；功能插件 CDN 清单已主动刷新，`minAppVersion` 正确为 `>=0.5.6`（核验明细见 3.34）。Windows 安装包按维护者明确授权维持无签名发布。
 - **当前未提交工作区**：预期干净；若存在未提交改动，接手者不得 reset、覆盖、删除或误并入其他修改。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
@@ -27,7 +27,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.5.7（`VERSION`、两个 package 版本与发布 tag 一致；发布 tag 为 `v0.5.7`）
+- **当前版本**：v0.5.8（`VERSION`、两个 package 版本与发布 tag 一致；发布 tag 为 `v0.5.8`）
 
 ## 2. 数据存储
 
@@ -292,6 +292,12 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **运行时与发布**：系统 Codex 仅在实际执行 `--version`、版本范围匹配且服务握手成功后复用；WindowsApps 路径存在但拒绝访问视为不可用。功能插件构建资产 Agent Core 约 1.55 MiB、Skill 管理约 5.6 KiB，Codex 运行时独立约 144.66 MiB；发布工作流 `publish-feature-plugins.yml` 成功发布资产，客户端无自动下载。
 - **验证边界**：本地版本检查、76 项自动化测试、功能插件构建、`git diff --check` 和 `pack:win` 均通过；本地安装包 `release\\LY Space Setup 0.5.7.exe` 为 92,559,250 字节（88.27 MiB，SHA-256 `32F9FC5B29CF6524B02B053827C367A253B2AA11A8BE97584701170B7DBA987D`），包校验确认不含 Codex、Canvas Agent 或功能插件产物。真实 API/MCP/账号授权、网络受限下载与输入法人工验收仍以 `pending-test.mdx` 为准。
 - **发布核验**（2026-08-25）：Release `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.5.7` 为正式版；Actions `32804217256` 成功。远端 `LY-Space-Setup-0.5.7.exe`（92,559,226 字节，GitHub digest SHA-256 `bed68114ba2dc8b7835dcd396db3dfeaf79ce2652dfe825c49d9a5065efefc7d`）、blockmap（97,980 字节，SHA-256 `6ccaa73ed5db1836057d6f14ad99e2c78e735aec08e76cea386674c7a5540420`）与 `latest.yml`（344 字节，SHA-256 `4516aa006a012ea24479879e9a611eac04ca305cec28cd0f79215725f9ff2cfa`）均为 `uploaded`；远端 `latest.yml` 的 version `0.5.7`、path/文件名、size `92559226` 与远端 EXE 一致，SHA-512 为 `0exgdCeRgtp/SDGFctKaxNbVlpIVEH8mxYmGLkOeDwSUiVxtsvg2pD6ZOWRjfdxuOs29TjmK3ck7GbBd/nNH/w==`。本地与 CI 构建时间不同，字节大小与哈希不同属预期。
+
+### 3.34 v0.5.8 功能插件最低版本判断热修复
+
+- **根因**：官方清单把 `minAppVersion` 写为裸版本 `0.5.6`，而 v0.5.7 的通用范围判断把裸版本按精确等值处理，导致 v0.5.7 被误判为“不支持 Agent Core”。
+- **修复与兼容**：主进程新增最低版本专用判断，裸 `minAppVersion` 按 `>=` 解释；依赖和 Codex 运行时仍保留精确范围语义。功能插件构建器同步发布显式 `>=0.5.6` 清单，且已刷新 jsDelivr 缓存；v0.5.7 点击插件中心“刷新清单”后即可恢复安装，v0.5.8 还覆盖了未来裸最低版本清单。
+- **验证与发布核验**：新增 4 项功能插件单测均通过；`v0.5.8` 本地打包通过（88.27 MiB）。Release `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.5.8` 为正式版；Actions `32804913317` 成功。远端 `LY-Space-Setup-0.5.8.exe`（92,559,495 字节，SHA-256 `b506c2a153a3d5bc7226270a5b565b3e3a4883846db3377685b6cb9a80a93b23`）、blockmap（97,933 字节，SHA-256 `7e24af44d22ddb6ecefa0ad31d789b5589fa5eae77ab27b5cf96deb9c30412b3`）与 `latest.yml`（344 字节，SHA-256 `76e906bf35f5453e2a65a903ecef57f40b9e3eb8033a2fb8f7d29784fadd5445`）均为 `uploaded`；远端 `latest.yml` 的 version `0.5.8`、path/文件名、size `92559495` 与远端 EXE 一致，SHA-512 为 `lKrv6rkuUXzqjU+aNc5WIpaVjJ5taOIj6qjI2ykpHQkdsgGv9FfPSMf0kfqIlNYy5ibzWKtmNLn9XAwocgmEGA==`。
 
 ### 3.23 v0.4.7 变更要点
 

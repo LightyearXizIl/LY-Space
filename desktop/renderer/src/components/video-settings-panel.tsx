@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import { Switch } from "antd";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
+import { AGNES_VIDEO_25_ASPECT_RATIOS, AGNES_VIDEO_25_RESOLUTIONS, isAgnesVideo25Family, isAgnesVideo25FlashModel, normalizeAgnesVideo25AspectRatio, normalizeAgnesVideo25Resolution, normalizeAgnesVideo25Seconds } from "@/lib/agnes-video";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
@@ -40,13 +41,16 @@ type VideoSettingsPanelProps = {
 
 export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", model }: VideoSettingsPanelProps) {
     // 渠道判断统一基于当前视频模型（避免被全局默认生图模型误导）
-    const videoModel = model || config.videoModel;
+    const videoModel = model || config.videoModel || config.model;
     if (isSeedanceVideoConfig({ ...config, model: videoModel })) {
         return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
 
     // Agnes 渠道启用文档对齐的选项（18s 上限、1152x768 默认横屏、高级参数）；其他渠道保持现状
     const isAgnes = resolveModelRequestConfig(config, videoModel).apiFormat === "agnes";
+    if (isAgnes && isAgnesVideo25Family(videoModel)) {
+        return <AgnesVideo25SettingsPanel config={config} model={videoModel} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+    }
     const seconds = config.videoSeconds || "6";
     const size = normalizeVideoSizeValue(config.size);
     const dimensions = readSizeDimensions(size);
@@ -148,6 +152,57 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     );
 }
 
+function AgnesVideo25SettingsPanel({ config, model, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps & { model: string }) {
+    const flash = isAgnesVideo25FlashModel(model);
+    const resolution = normalizeAgnesVideo25Resolution(config.vquality, flash);
+    const aspectRatio = normalizeAgnesVideo25AspectRatio(config.size);
+    const seconds = normalizeAgnesVideo25Seconds(config.videoSeconds);
+    const secondsOptions = [4, 5, 6, 8, 10, 12];
+    return (
+        <ImageSettingsTheme theme={theme}>
+            <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
+                {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
+                <SettingGroup title="清晰度" color={theme.node.muted}>
+                    <div className="grid grid-cols-3 gap-2.5">
+                        {(flash ? ["720P"] : AGNES_VIDEO_25_RESOLUTIONS).map((value) => (
+                            <OptionPill key={value} selected={resolution === value} disabled={flash} theme={theme} onClick={() => onConfigChange("vquality", value)}>
+                                {value}
+                            </OptionPill>
+                        ))}
+                    </div>
+                </SettingGroup>
+                <SettingGroup title="画幅" color={theme.node.muted}>
+                    <div className="grid grid-cols-3 gap-2.5">
+                        {AGNES_VIDEO_25_ASPECT_RATIOS.map((value) => (
+                            <OptionPill key={value} selected={aspectRatio === value} theme={theme} onClick={() => onConfigChange("size", value)}>
+                                {value}
+                            </OptionPill>
+                        ))}
+                    </div>
+                </SettingGroup>
+                <SettingGroup title="秒数" color={theme.node.muted}>
+                    <div className="grid grid-cols-3 gap-2.5">
+                        {secondsOptions.map((value) => (
+                            <OptionPill key={value} selected={seconds === String(value)} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
+                                {value}s
+                            </OptionPill>
+                        ))}
+                        <NumberInput value={seconds} min={4} max={12} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
+                    </div>
+                </SettingGroup>
+                <SettingGroup title="高级参数" color={theme.node.muted}>
+                    <div className="flex items-center gap-2">
+                        <span className="w-14 shrink-0 text-xs" style={{ color: theme.node.muted }}>
+                            种子
+                        </span>
+                        <NumberInput value={config.videoSeed || ""} min={0} theme={theme} onChange={(value) => onConfigChange("videoSeed", value)} />
+                    </div>
+                </SettingGroup>
+            </div>
+        </ImageSettingsTheme>
+    );
+}
+
 function SeedanceVideoSettingsPanel({ config, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
     const resolution = normalizeSeedanceResolution(config.vquality);
     const ratio = normalizeSeedanceRatio(config.size);
@@ -207,11 +262,13 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, theme, showTitle, 
     );
 }
 
-export function videoResolutionLabel(value: string) {
+export function videoResolutionLabel(value: string, model = "") {
+    if (isAgnesVideo25Family(model)) return normalizeAgnesVideo25Resolution(value, isAgnesVideo25FlashModel(model));
     return `${normalizeVideoResolutionValue(value)}p`;
 }
 
-export function videoSizeLabel(value: string) {
+export function videoSizeLabel(value: string, model = "") {
+    if (isAgnesVideo25Family(model)) return normalizeAgnesVideo25AspectRatio(value);
     const ratio = normalizeSeedanceRatio(value);
     if (value === "adaptive" || value === "auto") return "自适应";
     if (ratio === value) return seedanceRatioOptions.find((item) => item.value === ratio)?.label || ratio;

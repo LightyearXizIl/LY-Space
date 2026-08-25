@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { App, Button, Form, Input, Space } from "antd";
+import { App, Button, Form, Input, Select, Space } from "antd";
 
 import { loadOssHostingConfig, saveOssHostingConfig, type OssHostingConfig } from "@/services/oss-hosting";
 import { enqueueReferenceHandoff } from "@/services/reference-handoff";
@@ -9,6 +9,7 @@ export function OssSettingsPanel() {
     const [form] = Form.useForm<OssHostingConfig>();
     const [saving, setSaving] = useState(false);
     const [publicImageUrl, setPublicImageUrl] = useState("");
+    const provider = Form.useWatch("provider", form) || "aliyun-oss";
 
     useEffect(() => {
         void loadOssHostingConfig().then((config) => form.setFieldsValue(config));
@@ -43,26 +44,38 @@ export function OssSettingsPanel() {
     return (
         <div className="space-y-5">
             <section className="rounded-lg border border-stone-200 p-4 dark:border-stone-800">
-                <div className="mb-3 text-sm font-semibold">阿里云 OSS 托管</div>
+                <div className="mb-3 text-sm font-semibold">参考素材托管</div>
                 <div className="mb-3 text-xs leading-5 text-stone-500 dark:text-stone-400">
-                    配置后，视频创作台的本地参考图会优先通过 OSS 转为公网 HTTPS 地址（安全 STS/签名直传），适配 Agnes 等只接受公网图片的服务。
+                    配置后，本地参考图、参考视频和参考音频会转为公网 HTTPS 地址，适配 Agnes 等只接受公网素材的服务。密钥只保存在你自己的签名服务或 Cloudflare Worker 中。
                 </div>
                 <Form form={form} layout="vertical" requiredMark={false}>
-                    <Form.Item name="signatureEndpoint" label="签名接口" rules={[{ required: true, message: "请输入签名接口地址" }]}>
-                        <Input placeholder="https://api.example.com/oss/signature" />
+                    <Form.Item name="provider" label="托管方式" initialValue="aliyun-oss">
+                        <Select options={[{ value: "aliyun-oss", label: "阿里云 OSS（签名直传）" }, { value: "cloudflare-r2", label: "Cloudflare R2 + Worker（推荐长期免费层）" }]} />
                     </Form.Item>
+                    {provider === "aliyun-oss" ? (
+                        <Form.Item name="signatureEndpoint" label="签名接口" rules={[{ required: true, message: "请输入签名接口地址" }]}>
+                            <Input placeholder="https://api.example.com/oss/signature" />
+                        </Form.Item>
+                    ) : (
+                        <>
+                            <Form.Item name="r2WorkerEndpoint" label="Worker 地址" rules={[{ required: true, message: "请输入 Worker 地址" }]}>
+                                <Input placeholder="https://ly-space-r2-media.example.workers.dev" />
+                            </Form.Item>
+                            <Form.Item name="r2UploadToken" label="上传令牌" rules={[{ required: true, message: "请输入 Worker 上传令牌" }]}>
+                                <Input.Password placeholder="与 Worker 的 UPLOAD_TOKEN 保持一致" autoComplete="off" />
+                            </Form.Item>
+                        </>
+                    )}
                     <Form.Item name="publicBaseUrl" label="公网域名" rules={[{ required: true, message: "请输入公网域名" }]}>
-                        <Input placeholder="https://bucket.oss-cn-hangzhou.aliyuncs.com" />
+                        <Input placeholder={provider === "cloudflare-r2" ? "https://media.example.com" : "https://bucket.oss-cn-hangzhou.aliyuncs.com"} />
                     </Form.Item>
-                    <Form.Item name="objectPrefix" label="对象前缀">
-                        <Input placeholder="ly-space/references" />
-                    </Form.Item>
+                    {provider === "aliyun-oss" ? <Form.Item name="objectPrefix" label="对象前缀"><Input placeholder="ly-space/references" /></Form.Item> : null}
                 </Form>
                 <div className="flex flex-wrap items-center gap-3 text-xs text-stone-500 dark:text-stone-400">
                     <Button type="primary" loading={saving} onClick={() => void handleSave()}>
                         保存设置
                     </Button>
-                    <span>签名接口应返回 OSS PostObject 的 host、dir、policy 与临时签名字段；请勿填写长期 AccessKey。</span>
+                    <span>{provider === "cloudflare-r2" ? "R2 Worker 模板位于仓库 cloudflare/r2-media-worker；免费计划单个素材最大 100MB，生产环境请使用 R2 自定义域名。" : "签名接口应返回 OSS PostObject 的 host、dir、policy 与临时签名字段；请勿填写长期 AccessKey。"}</span>
                 </div>
             </section>
 

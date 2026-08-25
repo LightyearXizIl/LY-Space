@@ -1,0 +1,15 @@
+{
+  "name": "ly-space-r2-media",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-25",
+  "r2_buckets": [
+    {
+      "binding": "MEDIA_BUCKET",
+      "bucket_name": "replace-with-your-r2-bucket"
+    }
+  ],
+  "vars": {
+    "PUBLIC_BASE_URL": "https://media.example.com",
+    "OBJECT_PREFIX": "ly-space/references"
+  }
+}

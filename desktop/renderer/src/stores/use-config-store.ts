@@ -86,6 +86,8 @@ export const AGNES_DEFAULT_MODELS: ChannelModel[] = [
     { name: "agnes-image-2.0-flash", capability: "image", imageFeatures: ["image-edit", "generative-upscale"] },
     { name: "agnes-image-2.1-flash", capability: "image", imageFeatures: ["image-edit", "generative-upscale"] },
     { name: "agnes-video-v2.0", capability: "video" },
+    { name: "agnes-video-2.5", capability: "video" },
+    { name: "agnes-video-2.5-flash", capability: "video" },
 ];
 
 export const GRSAI_DEFAULT_MODELS: ChannelModel[] = [

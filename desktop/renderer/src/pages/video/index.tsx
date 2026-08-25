@@ -10,6 +10,7 @@ import { CameraTrigger } from "@/components/camera-trigger";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoSizeLabel } from "@/components/video-settings-panel";
+import { isAgnesVideo25Family, isAgnesVideo25FlashModel, normalizeAgnesVideo25AspectRatio, normalizeAgnesVideo25Resolution, normalizeAgnesVideo25Seconds } from "@/lib/agnes-video";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { buildCameraPrompt, formatCameraSelection, normalizeCameraSelection, type CameraSelection } from "@/lib/camera";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
@@ -26,7 +27,6 @@ import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { loadWorkbenchSession, saveWorkbenchSession } from "@/services/workbench-session";
 import { trackWrite } from "@/services/desktop-storage";
 import { acknowledgeReferenceHandoff, getReferenceHandoffs } from "@/services/reference-handoff";
-import { hostImageOnOss } from "@/services/oss-hosting";
 
 type GeneratedVideo = {
     id: string;
@@ -133,6 +133,11 @@ export default function VideoPage() {
     referencesRef.current = references;
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
+    const requestConfig = resolveModelRequestConfig({ ...effectiveConfig, model }, model);
+    const isAgnesVideo25 = requestConfig.apiFormat === "agnes" && isAgnesVideo25Family(model);
+    const isAgnesVideo25Flash = isAgnesVideo25 && isAgnesVideo25FlashModel(model);
+    const imageReferenceLimit = isAgnesVideo25Flash ? 5 : SEEDANCE_REFERENCE_LIMITS.images;
+    const videoReferenceLimit = isAgnesVideo25Flash ? 0 : SEEDANCE_REFERENCE_LIMITS.videos;
     const canGenerate = Boolean(prompt.trim());
 
     useEffect(() => {
@@ -210,8 +215,10 @@ export default function VideoPage() {
         const selectedFiles = Array.from(files || []);
         const unsupported = selectedFiles.filter((file) => !file.type.startsWith("image/") && !SEEDANCE_VIDEO_MIME_TYPES.includes(file.type) && !isSupportedAudioFile(file));
         if (unsupported.length) message.warning("已忽略不支持的参考资产，请使用图片、mp4/mov 视频或 mp3/wav 音频");
-        const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/")).slice(0, SEEDANCE_REFERENCE_LIMITS.images - references.length);
-        const videoFiles = selectedFiles.filter((file) => SEEDANCE_VIDEO_MIME_TYPES.includes(file.type)).slice(0, SEEDANCE_REFERENCE_LIMITS.videos - videoReferences.length);
+        const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/")).slice(0, Math.max(0, imageReferenceLimit - references.length));
+        const requestedVideos = selectedFiles.filter((file) => SEEDANCE_VIDEO_MIME_TYPES.includes(file.type));
+        if (isAgnesVideo25Flash && requestedVideos.length) message.warning("Agnes Video 2.5 Flash 不支持参考视频，请改用 Agnes Video 2.5 或移除视频。");
+        const videoFiles = requestedVideos.slice(0, Math.max(0, videoReferenceLimit - videoReferences.length));
         const audioFiles = selectedFiles.filter((file) => isSupportedAudioFile(file)).slice(0, SEEDANCE_REFERENCE_LIMITS.audios - audioReferences.length);
         const nextReferences = await Promise.all(
             imageFiles.map(async (file) => {
@@ -225,18 +232,15 @@ export default function VideoPage() {
                 return { id: nanoid(), name: file.name, type: video.mimeType, url: video.url, storageKey: video.storageKey, bytes: video.bytes, width: video.width, height: video.height, durationMs: video.durationMs };
             }),
         );
-        const nextAudioReferences = filterAudioReferencesByDuration(
-            audioReferences,
-            await Promise.all(
-                audioFiles.map(async (file) => {
-                    const audio = await uploadMediaFile(file, "audio-reference");
-                    return { id: nanoid(), name: file.name, type: audio.mimeType, url: audio.url, storageKey: audio.storageKey, durationMs: audio.durationMs };
-                }),
-            ),
-            message.warning,
+        const uploadedAudioReferences = await Promise.all(
+            audioFiles.map(async (file) => {
+                const audio = await uploadMediaFile(file, "audio-reference");
+                return { id: nanoid(), name: file.name, type: audio.mimeType, url: audio.url, storageKey: audio.storageKey, durationMs: audio.durationMs };
+            }),
         );
-        setReferences((value) => [...value, ...nextReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.images));
-        setVideoReferences((value) => [...value, ...nextVideoReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.videos));
+        const nextAudioReferences = isSeedanceVideoConfig({ ...effectiveConfig, model }) ? filterAudioReferencesByDuration(audioReferences, uploadedAudioReferences, message.warning) : uploadedAudioReferences;
+        setReferences((value) => [...value, ...nextReferences].slice(0, imageReferenceLimit));
+        setVideoReferences((value) => [...value, ...nextVideoReferences].slice(0, videoReferenceLimit));
         setAudioReferences((value) => [...value, ...nextAudioReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.audios));
     };
 
@@ -339,9 +343,15 @@ export default function VideoPage() {
             openConfigDialog(true);
             return null;
         }
-        const videoReferenceError = seedanceVideoReferenceError(videoReferences);
-        if (videoReferenceError) {
-            message.error(`${videoReferenceError}。${seedanceVideoReferenceHint}`);
+        if (isSeedanceVideoConfig({ ...effectiveConfig, model })) {
+            const videoReferenceError = seedanceVideoReferenceError(videoReferences);
+            if (videoReferenceError) {
+                message.error(`${videoReferenceError}。${seedanceVideoReferenceHint}`);
+                return null;
+            }
+        }
+        if (isAgnesVideo25Flash && (videoReferences.length || references.length > 5)) {
+            message.error(videoReferences.length ? "Agnes Video 2.5 Flash 不支持参考视频，请改用 Agnes Video 2.5。" : "Agnes Video 2.5 Flash 最多支持 5 张参考图，请移除多余图片后重试。");
             return null;
         }
         const selection = normalizeCameraSelection(camera);
@@ -592,7 +602,7 @@ export default function VideoPage() {
                                             </div>
                                         ))}
                                     </Image.PreviewGroup>
-                                    {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{referenceDragTarget === "image" ? "松开即可上传参考资产" : "暂无参考图，可拖入文件或直接粘贴，最多 9 张"}</div> : null}
+                                    {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{referenceDragTarget === "image" ? "松开即可上传参考资产" : `暂无参考图，可拖入文件或直接粘贴，最多 ${imageReferenceLimit} 张`}</div> : null}
                                 </div>
                             </div>
 
@@ -628,7 +638,7 @@ export default function VideoPage() {
                                             </button>
                                         </div>
                                     ))}
-                                    {!videoReferences.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{referenceDragTarget === "video" ? "松开即可上传参考资产" : "暂无参考视频，可拖入文件，最多 3 个"}</div> : null}
+                                    {!videoReferences.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{isAgnesVideo25Flash ? "当前模型不支持参考视频" : referenceDragTarget === "video" ? "松开即可上传参考资产" : `暂无参考视频，可拖入文件，最多 ${videoReferenceLimit} 个`}</div> : null}
                                 </div>
                             </div>
 
@@ -1044,13 +1054,15 @@ function buildLog({ prompt, camera, model, config, references, videoReferences, 
 function buildVideoConfig(config: AiConfig, model: string): AiConfig {
     const seedance = isSeedanceVideoConfig({ ...config, model });
     const agnes = resolveModelRequestConfig({ ...config, model }, model).apiFormat === "agnes";
+    const agnes25 = agnes && isAgnesVideo25Family(model);
+    const flash = agnes25 && isAgnesVideo25FlashModel(model);
     return {
         ...config,
         model,
         videoModel: model,
-        size: seedance ? normalizeSeedanceRatio(config.size) : normalizeVideoSize(config.size),
-        videoSeconds: normalizeVideoSeconds(config.videoSeconds, agnes),
-        vquality: normalizeResolution(config.vquality),
+        size: seedance ? normalizeSeedanceRatio(config.size) : agnes25 ? normalizeAgnesVideo25AspectRatio(config.size) : normalizeVideoSize(config.size),
+        videoSeconds: agnes25 ? normalizeAgnesVideo25Seconds(config.videoSeconds) : normalizeVideoSeconds(config.videoSeconds, agnes),
+        vquality: agnes25 ? normalizeAgnesVideo25Resolution(config.vquality, flash) : normalizeResolution(config.vquality),
         videoGenerateAudio: String(boolConfig(config.videoGenerateAudio, true)),
         videoWatermark: String(boolConfig(config.videoWatermark, false)),
         videoFrameRate: normalizeVideoFrameRate(config.videoFrameRate),

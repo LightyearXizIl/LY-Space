@@ -3,8 +3,9 @@ import { nanoid } from "nanoid";
 
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { saveGeneratedBlob } from "@/services/desktop-storage";
-import { hostReferenceImage } from "@/services/image-hosting";
+import { hostReferenceAudio, hostReferenceImage, hostReferenceVideo } from "@/services/image-hosting";
 import { imageToDataUrl, imageToFile } from "@/services/image-storage";
+import { isAgnesVideo25Family, isAgnesVideo25FlashModel, normalizeAgnesVideo25AspectRatio, normalizeAgnesVideo25Resolution, normalizeAgnesVideo25Seconds } from "@/lib/agnes-video";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
@@ -58,14 +59,14 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
     throw new Error("视频生成超时，请稍后重试");
 }
 
-// Agnes 只接受公网 HTTPS 参考图：本地图自动托管（OSS/免费图床），托管失败时明确报错引导
-async function ensurePublicReferenceUrlsForRequest(refs: ReferenceImage[]): Promise<ReferenceImage[]> {
+// Agnes 参考素材需使用公网 HTTPS 地址；本地素材仅托管到用户已配置的签名 OSS。
+async function ensurePublicReferenceUrlsForRequest(refs: ReferenceImage[], options?: RequestOptions): Promise<ReferenceImage[]> {
     const localRefs = refs.filter((item) => !/^https:\/\//i.test(item.url || item.dataUrl || ""));
     if (!localRefs.length) return refs;
     const hosted = await Promise.all(
         localRefs.map(async (item) => {
             try {
-                return await hostReferenceImage(item);
+                return await hostReferenceImage(item, options);
             } catch (error) {
                 throw new Error(error instanceof Error ? `${error.message}；Agnes 生成需参考图为公网可访问地址` : "参考图片无法托管，请改用公网 HTTPS 图片 URL");
             }
@@ -73,6 +74,32 @@ async function ensurePublicReferenceUrlsForRequest(refs: ReferenceImage[]): Prom
     );
     const hostedById = new Map(hosted.map((item) => [item.id, item]));
     return refs.map((item) => hostedById.get(item.id) || item);
+}
+
+async function ensurePublicVideoReferenceUrlsForRequest(refs: ReferenceVideo[], options?: RequestOptions): Promise<ReferenceVideo[]> {
+    return Promise.all(
+        refs.map(async (item) => {
+            if (/^https:\/\//i.test(item.url)) return item;
+            try {
+                return await hostReferenceVideo(item, options);
+            } catch (error) {
+                throw new Error(error instanceof Error ? `${error.message}；Agnes 生成需参考视频为公网可访问地址` : "参考视频无法托管，请改用公网 HTTPS 视频 URL");
+            }
+        }),
+    );
+}
+
+async function ensurePublicAudioReferenceUrlsForRequest(refs: ReferenceAudio[], options?: RequestOptions): Promise<ReferenceAudio[]> {
+    return Promise.all(
+        refs.map(async (item) => {
+            if (/^https:\/\//i.test(item.url)) return item;
+            try {
+                return await hostReferenceAudio(item, options);
+            } catch (error) {
+                throw new Error(error instanceof Error ? `${error.message}；Agnes 生成需参考音频为公网可访问地址` : "参考音频无法托管，请改用公网 HTTPS 音频 URL");
+            }
+        }),
+    );
 }
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationTask> {
@@ -85,9 +112,14 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
         return createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     }
     if (requestConfig.apiFormat === "agnes") {
-        // Agnes 只接受公网 HTTPS 参考图：本地图片自动托管（OSS 优先，未配置时免费图床兜底），覆盖页面/画布/重试所有路径
-        const publicReferences = await ensurePublicReferenceUrlsForRequest(references);
-        return createAgnesVideoTask(requestConfig, selectedModel, prompt, publicReferences, videoReferences, audioReferences, options);
+        // 覆盖页面、画布和重试：本地 Agnes 参考素材托管至用户已配置的签名 OSS。
+        assertAgnesVideoReferenceInputs(selectedModel, references, videoReferences, audioReferences);
+        const [publicReferences, publicVideoReferences, publicAudioReferences] = await Promise.all([
+            ensurePublicReferenceUrlsForRequest(references, options),
+            ensurePublicVideoReferenceUrlsForRequest(videoReferences, options),
+            ensurePublicAudioReferenceUrlsForRequest(audioReferences, options),
+        ]);
+        return createAgnesVideoTask(requestConfig, selectedModel, prompt, publicReferences, publicVideoReferences, publicAudioReferences, options);
     }
     if (videoReferences.length || audioReferences.length) {
         throw new Error("当前视频接口不支持参考视频或参考音频，请切换到 Seedance 2.0 / 火山 Agent Plan 模型，或移除参考资产");
@@ -153,33 +185,80 @@ function agnesPublicImageUrl(image: ReferenceImage) {
     return url;
 }
 
-async function createAgnesVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
-    if (videoReferences.length || audioReferences.length) throw new Error("Agnes Video 当前不支持参考视频或参考音频，请移除这些参考资产后生成。");
-    const urls = references.map(agnesPublicImageUrl);
+function agnesPublicMediaUrl(item: ReferenceVideo | ReferenceAudio, label: string) {
+    if (!/^https:\/\//i.test(item.url)) throw new Error(`Agnes 视频只接受公网 HTTPS 参考${label} URL。请先配置 OSS 或改用已公开的${label} URL。`);
+    return item.url;
+}
+
+type AgnesVideoReferenceUrls = { images: string[]; videos: string[]; audios: string[] };
+
+export function buildAgnesVideoRequestBody(config: AiConfig, model: string, prompt: string, references: AgnesVideoReferenceUrls) {
+    const modelName = modelOptionName(model);
+    if (isAgnesVideo25Family(modelName)) return buildAgnesVideo25RequestBody(config, modelName, prompt, references);
+    if (references.videos.length || references.audios.length) throw new Error("Agnes Video V2.0 当前不支持参考视频或参考音频，请移除这些参考资产后生成。");
     const frameRate = Math.max(1, Math.min(60, Number(config.videoFrameRate) || 24));
     const numFrames = agnesFrames(config.videoSeconds, frameRate);
-    // size 为 auto 时不发送 width/height（文档参数可选，由服务端按默认规格处理）
     const size = normalizeVideoSize(config.size);
-    const [width, height] = size && size !== "auto" ? size.split("x").map(Number) : [undefined, undefined];
-    const hasSize = Boolean(size && size !== "auto" && width && height && width > 0 && height > 0);
+    const [width, height] = size ? size.split("x").map(Number) : [undefined, undefined];
+    const hasSize = Boolean(size && width && height && width > 0 && height > 0);
     const seed = (config.videoSeed || "").trim();
     const seedNumber = Number(seed);
     const negativePrompt = (config.videoNegativePrompt || "").trim();
     const steps = (config.videoNumInferenceSteps || "").trim();
     const stepsNumber = Number(steps);
+    return {
+        model: modelName,
+        prompt,
+        ...(hasSize ? { width, height } : {}),
+        num_frames: numFrames,
+        frame_rate: frameRate,
+        ...(seed && Number.isInteger(seedNumber) ? { seed: seedNumber } : {}),
+        ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
+        ...(steps && Number.isInteger(stepsNumber) && stepsNumber > 0 ? { num_inference_steps: stepsNumber } : {}),
+        ...(references.images.length === 1 ? { image: references.images[0] } : references.images.length > 1 ? { mode: "keyframes", extra_body: { image: references.images, mode: "keyframes" } } : {}),
+    };
+}
+
+function buildAgnesVideo25RequestBody(config: AiConfig, model: string, prompt: string, references: AgnesVideoReferenceUrls) {
+    const flash = isAgnesVideo25FlashModel(model);
+    if (flash && references.videos.length) throw new Error("Agnes Video 2.5 Flash 不支持参考视频，请移除参考视频或改用 Agnes Video 2.5。");
+    if (flash && references.images.length > 5) throw new Error("Agnes Video 2.5 Flash 最多支持 5 张参考图，请移除多余图片后重试。");
+    const hasMediaReferences = references.images.length + references.videos.length + references.audios.length > 0;
+    const keyframe = !references.videos.length && !references.audios.length && references.images.length > 0 && references.images.length <= 2;
+    const seed = Number((config.videoSeed || "").trim());
+    return {
+        model,
+        prompt,
+        mode: keyframe ? "keyframe" : hasMediaReferences ? "reference" : "text",
+        seconds: normalizeAgnesVideo25Seconds(config.videoSeconds),
+        size: normalizeAgnesVideo25Resolution(config.vquality, flash),
+        aspect_ratio: normalizeAgnesVideo25AspectRatio(config.size),
+        n: 1,
+        ...(Number.isInteger(seed) ? { seed } : {}),
+        ...(keyframe ? { first_frame: references.images[0], ...(references.images[1] ? { last_frame: references.images[1] } : {}) } : hasMediaReferences ? {
+            ...(references.images.length ? { images: references.images } : {}),
+            ...(references.audios.length ? { audios: references.audios } : {}),
+            ...(references.videos.length ? { videos: references.videos.map((url) => ({ url, start_seconds: 0, require_audio: false })) } : {}),
+        } : {}),
+    };
+}
+
+function assertAgnesVideoReferenceInputs(model: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[]) {
+    if (isAgnesVideo25FlashModel(model)) {
+        if (videoReferences.length) throw new Error("Agnes Video 2.5 Flash 不支持参考视频，请移除参考视频或改用 Agnes Video 2.5。");
+        if (references.length > 5) throw new Error("Agnes Video 2.5 Flash 最多支持 5 张参考图，请移除多余图片后重试。");
+        return;
+    }
+    if (!isAgnesVideo25Family(model) && (videoReferences.length || audioReferences.length)) throw new Error("Agnes Video V2.0 当前不支持参考视频或参考音频，请移除这些参考资产后生成。");
+}
+
+async function createAgnesVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
+    const urls = references.map(agnesPublicImageUrl);
+    const videoUrls = videoReferences.map((item) => agnesPublicMediaUrl(item, "视频"));
+    const audioUrls = audioReferences.map((item) => agnesPublicMediaUrl(item, "音频"));
     try {
         const url = aiApiUrl(config, "/videos");
-        const body = JSON.stringify({
-            model: modelOptionName(model),
-            prompt,
-            ...(hasSize ? { width, height } : {}),
-            num_frames: numFrames,
-            frame_rate: frameRate,
-            ...(seed && Number.isInteger(seedNumber) ? { seed: seedNumber } : {}),
-            ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
-            ...(steps && Number.isInteger(stepsNumber) && stepsNumber > 0 ? { num_inference_steps: stepsNumber } : {}),
-            ...(urls.length === 1 ? { image: urls[0] } : urls.length > 1 ? { mode: "keyframes", extra_body: { image: urls, mode: "keyframes" } } : {}),
-        });
+        const body = JSON.stringify(buildAgnesVideoRequestBody(config, model, prompt, { images: urls, videos: videoUrls, audios: audioUrls }));
         const data = await agnesRequest<ApiEnvelope<VideoResponse>>(config, url, { method: "POST", headers: aiHeaders(config, "application/json"), body, signal: options?.signal });
         const created = unwrapEnvelope(data, "Agnes 接口没有返回视频任务");
         // 文档推荐用 video_id 查询结果；旧接口可能只返回 id，回退兼容

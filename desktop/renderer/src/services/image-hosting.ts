@@ -1,5 +1,10 @@
-import { hostImageOnOss, loadOssHostingConfig, type OssHostingConfig } from "@/services/oss-hosting";
+import { getMediaBlob } from "@/services/file-storage";
+import { hostFileOnOss, loadOssHostingConfig, type OssHostingConfig } from "@/services/oss-hosting";
+import { getImageBlob } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
+import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+
+type HostingOptions = { signal?: AbortSignal };
 
 /** 上传前统一处理：非 PNG/JPEG 转码、限制最长边 1024px、JPEG 压缩，避免格式不支持与体积过大 */
 async function normalizeImageForUpload(input: Blob): Promise<Blob> {
@@ -27,10 +32,14 @@ async function normalizeImageForUpload(input: Blob): Promise<Blob> {
     }
 }
 
-async function readReferenceBlob(item: ReferenceImage): Promise<Blob> {
+async function readReferenceBlob(item: ReferenceImage, options?: HostingOptions): Promise<Blob> {
+    if (item.storageKey) {
+        const stored = await getImageBlob(item.storageKey);
+        if (stored) return stored;
+    }
     const url = item.dataUrl || item.url || "";
     try {
-        const response = await fetch(url);
+        const response = await fetch(url, { signal: options?.signal });
         if (!response.ok) throw new Error("无法读取本地参考图片");
         return response.blob();
     } catch (error) {
@@ -44,11 +53,45 @@ async function readReferenceBlob(item: ReferenceImage): Promise<Blob> {
 }
 
 /** 把本地参考图转为公网 HTTPS URL：仅使用用户明确配置的 OSS，绝不静默上传到匿名公开图床。 */
-export async function hostReferenceImage(item: ReferenceImage): Promise<ReferenceImage> {
+export async function hostReferenceImage(item: ReferenceImage, options?: HostingOptions): Promise<ReferenceImage> {
     const ossConfig: OssHostingConfig = await loadOssHostingConfig();
     if (!ossConfig.signatureEndpoint || !ossConfig.publicBaseUrl) throw new Error("本地参考图需要公网 HTTPS 地址，请先在设置中配置阿里云 OSS，或改用已公开的图片 URL");
-    const blob = await readReferenceBlob(item);
+    const blob = await readReferenceBlob(item, options);
     const normalized = await normalizeImageForUpload(blob);
-    const url = await hostImageOnOss(normalized, item.name, ossConfig);
+    const url = await hostFileOnOss(normalized, item.name, ossConfig, options);
     return { ...item, url, dataUrl: url };
+}
+
+async function readReferenceMediaBlob(item: ReferenceVideo | ReferenceAudio, label: string, options?: HostingOptions) {
+    if (item.storageKey) {
+        const stored = await getMediaBlob(item.storageKey);
+        if (stored) return stored;
+    }
+    try {
+        const response = await fetch(item.url, { signal: options?.signal });
+        if (!response.ok) throw new Error(`无法读取本地参考${label}`);
+        return response.blob();
+    } catch (error) {
+        if (window.lySpaceDesktop && !options?.signal?.aborted) {
+            const fetched = await window.lySpaceDesktop.fetchUrl(item.url);
+            return new Blob([fetched.bytes], { type: fetched.mimeType || item.type || "application/octet-stream" });
+        }
+        throw error;
+    }
+}
+
+async function hostReferenceMedia<T extends ReferenceVideo | ReferenceAudio>(item: T, label: string, options?: HostingOptions): Promise<T> {
+    const ossConfig = await loadOssHostingConfig();
+    if (!ossConfig.signatureEndpoint || !ossConfig.publicBaseUrl) throw new Error(`本地参考${label}需要公网 HTTPS 地址，请先在设置中配置阿里云 OSS，或改用已公开的${label} URL`);
+    const blob = await readReferenceMediaBlob(item, label, options);
+    const url = await hostFileOnOss(blob, item.name, ossConfig, options);
+    return { ...item, url };
+}
+
+export function hostReferenceVideo(item: ReferenceVideo, options?: HostingOptions) {
+    return hostReferenceMedia(item, "视频", options);
+}
+
+export function hostReferenceAudio(item: ReferenceAudio, options?: HostingOptions) {
+    return hostReferenceMedia(item, "音频", options);
 }

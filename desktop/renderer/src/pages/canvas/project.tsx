@@ -2619,6 +2619,10 @@ function InfiniteCanvasPage() {
                             vquality: generationConfig.vquality,
                             generateAudio: generationConfig.videoGenerateAudio,
                             watermark: generationConfig.videoWatermark,
+                            videoFrameRate: generationConfig.videoFrameRate,
+                            videoSeed: generationConfig.videoSeed,
+                            videoNegativePrompt: generationConfig.videoNegativePrompt,
+                            videoNumInferenceSteps: generationConfig.videoNumInferenceSteps,
                             references: generationReferenceUrls(generationContext),
                         },
                     };
@@ -2657,6 +2661,10 @@ function InfiniteCanvasPage() {
                                               vquality: generationConfig.vquality,
                                               generateAudio: generationConfig.videoGenerateAudio,
                                               watermark: generationConfig.videoWatermark,
+                                              videoFrameRate: generationConfig.videoFrameRate,
+                                              videoSeed: generationConfig.videoSeed,
+                                              videoNegativePrompt: generationConfig.videoNegativePrompt,
+                                              videoNumInferenceSteps: generationConfig.videoNumInferenceSteps,
                                               references: generationReferenceUrls(generationContext),
                                           },
                                       }
@@ -2878,6 +2886,10 @@ function InfiniteCanvasPage() {
                                           vquality: generationConfig.vquality,
                                           generateAudio: generationConfig.videoGenerateAudio,
                                           watermark: generationConfig.videoWatermark,
+                                          videoFrameRate: generationConfig.videoFrameRate,
+                                          videoSeed: generationConfig.videoSeed,
+                                          videoNegativePrompt: generationConfig.videoNegativePrompt,
+                                          videoNumInferenceSteps: generationConfig.videoNumInferenceSteps,
                                       },
                                   }
                                 : item,

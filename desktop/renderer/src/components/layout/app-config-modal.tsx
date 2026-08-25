@@ -429,7 +429,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                     },
                     {
                         key: "oss",
-                        label: "阿里云设置",
+                        label: "OSS设置",
                         children: <OssSettingsPanel />,
                     },
                     {

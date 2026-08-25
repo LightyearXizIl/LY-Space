@@ -1,5 +1,5 @@
 import { getMediaBlob } from "@/services/file-storage";
-import { hostFileOnOss, loadOssHostingConfig, type OssHostingConfig } from "@/services/oss-hosting";
+import { assertOssHostingConfigReady, hostFileOnOss, loadOssHostingConfig } from "@/services/oss-hosting";
 import { getImageBlob } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -23,9 +23,7 @@ async function normalizeImageForUpload(input: Blob): Promise<Blob> {
         bitmap.close();
         // PNG（可能含透明）保持 PNG，其余统一转 JPEG（白底合成避免透明变黑）
         const keepPng = input.type === "image/png";
-        const blob = await new Promise<Blob>((resolve, reject) =>
-            canvas.toBlob((result) => (result ? resolve(result) : reject(new Error("图片编码失败"))), keepPng ? "image/png" : "image/jpeg", keepPng ? undefined : 0.85),
-        );
+        const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((result) => (result ? resolve(result) : reject(new Error("图片编码失败"))), keepPng ? "image/png" : "image/jpeg", keepPng ? undefined : 0.85));
         return blob;
     } catch {
         return input;
@@ -54,8 +52,7 @@ async function readReferenceBlob(item: ReferenceImage, options?: HostingOptions)
 
 /** 把本地参考图转为公网 HTTPS URL：仅使用用户明确配置的 OSS，绝不静默上传到匿名公开图床。 */
 export async function hostReferenceImage(item: ReferenceImage, options?: HostingOptions): Promise<ReferenceImage> {
-    const ossConfig: OssHostingConfig = await loadOssHostingConfig();
-    if (!ossConfig.signatureEndpoint || !ossConfig.publicBaseUrl) throw new Error("本地参考图需要公网 HTTPS 地址，请先在设置中配置阿里云 OSS，或改用已公开的图片 URL");
+    const ossConfig = assertOssHostingConfigReady(await loadOssHostingConfig());
     const blob = await readReferenceBlob(item, options);
     const normalized = await normalizeImageForUpload(blob);
     const url = await hostFileOnOss(normalized, item.name, ossConfig, options);
@@ -81,8 +78,7 @@ async function readReferenceMediaBlob(item: ReferenceVideo | ReferenceAudio, lab
 }
 
 async function hostReferenceMedia<T extends ReferenceVideo | ReferenceAudio>(item: T, label: string, options?: HostingOptions): Promise<T> {
-    const ossConfig = await loadOssHostingConfig();
-    if (!ossConfig.signatureEndpoint || !ossConfig.publicBaseUrl) throw new Error(`本地参考${label}需要公网 HTTPS 地址，请先在设置中配置阿里云 OSS，或改用已公开的${label} URL`);
+    const ossConfig = assertOssHostingConfigReady(await loadOssHostingConfig());
     const blob = await readReferenceMediaBlob(item, label, options);
     const url = await hostFileOnOss(blob, item.name, ossConfig, options);
     return { ...item, url };

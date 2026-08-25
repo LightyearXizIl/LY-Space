@@ -177,7 +177,7 @@ export default function VideoPage() {
         void saveWorkbenchSession(SESSION_STORE_KEY, { prompt, camera, references, videoReferences, audioReferences, results, elapsedMs });
     }, [audioReferences, camera, prompt, references, results, sessionHydrated, videoReferences]);
 
-    // 消费参考图 handoff（精修图片 / 阿里云设置添加的公网 URL），支持 url 直接加入
+    // 消费参考图 handoff（精修图片 / OSS设置添加的公网 URL），支持 url 直接加入
     const consumeReferenceHandoffs = async () => {
         const handoffs = await getReferenceHandoffs("video");
         if (!handoffs.length) return;

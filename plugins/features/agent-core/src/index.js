@@ -21,7 +21,7 @@ const plugin = {
             order: 10,
             mount(container) {
                 let disposed = false;
-                let clientId = `ly-space-${crypto.randomUUID()}`;
+                let clientId = runtime.agent.clientId();
                 let activeThreadId = "";
                 let conversation = null;
                 let unsubscribeEvents = null;
@@ -111,7 +111,8 @@ const plugin = {
                             await runtime.agent.resolveTool(clientId, { requestId: data.requestId, result: { ok: true, applied: ops.length } });
                             return;
                         }
-                        throw new Error(`当前桌面插件未提供工具「${data.name}」的宿主实现`);
+                        const result = await runtime.host.executeTool(String(data.name || ""), data.input && typeof data.input === "object" ? data.input : {});
+                        await runtime.agent.resolveTool(clientId, { requestId: data.requestId, result });
                     } catch (error) {
                         await runtime.agent.resolveTool(clientId, { requestId: data.requestId, error: error instanceof Error ? error.message : String(error) });
                     }

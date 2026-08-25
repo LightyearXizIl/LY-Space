@@ -12,6 +12,7 @@ import { isImeCompositionActive } from "@/lib/keyboard-event";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasGenerationMode, CanvasNodeMetadata } from "@/types/canvas";
+import { appendReferenceChip, deleteAdjacentReference, insertReferenceChip, removeActiveReferenceMention, serializeReferenceEditor, textBeforeReferenceCaret } from "./contenteditable-reference-utils";
 import type { NodeGenerationInput } from "./canvas-node-generation";
 
 type CanvasConfigComposerProps = {
@@ -43,8 +44,11 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
     const [textModel, setTextModel] = useState(globalConfig.textModel || globalConfig.model);
     const editorRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
+    const compositionPendingRef = useRef(false);
     const mentionFrameRef = useRef<number | null>(null);
     const compositionCommitFrameRef = useRef<number | null>(null);
+    const lastEmittedRef = useRef(value);
+    const flushRef = useRef<() => void>(() => {});
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -58,8 +62,8 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
     }, [inputs, mention]);
 
     useEffect(() => {
-        // contentEditable 的候选词区由输入法持有；组合阶段或正在编辑时重建子节点会打断拼音并遗留首字母。
-        if (composingRef.current || document.activeElement === editorRef.current) return;
+        // 组合阶段由输入法持有 DOM；聚焦时只忽略本组件自己的 state 回声，外部更新仍要应用。
+        if (composingRef.current || (document.activeElement === editorRef.current && value === lastEmittedRef.current)) return;
         const editor = editorRef.current;
         if (!editor) return;
         editor.textContent = "";
@@ -69,29 +73,35 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
                 return;
             }
             const input = referenceById.get(token.nodeId);
-            if (input) editor.append(createReferenceChip(input, inputs, theme, setImagePreview));
+            if (input) appendReferenceChip(editor, createReferenceChip(input, inputs, theme, setImagePreview));
         });
+        lastEmittedRef.current = value;
     }, [inputs, referenceById, theme, tokens]);
 
     useEffect(
         () => () => {
+            flushRef.current();
             if (mentionFrameRef.current !== null) cancelAnimationFrame(mentionFrameRef.current);
             if (compositionCommitFrameRef.current !== null) cancelAnimationFrame(compositionCommitFrameRef.current);
         },
         [],
     );
 
-    const syncFromEditor = () => {
+    const syncFromEditor = (syncMentionAfter = !composingRef.current) => {
         const editor = editorRef.current;
         if (!editor) return;
-        const next = serializeEditor(editor);
+        const next = serializeReferenceEditor(editor, "referenceNodeId", (nodeId) => `@[node:${nodeId}]`);
+        lastEmittedRef.current = next;
         onChange(next);
-        syncMention();
+        if (syncMentionAfter) syncMention();
     };
+    flushRef.current = () => syncFromEditor(false);
 
     const syncMention = () => {
         if (composingRef.current) return;
-        const text = textBeforeCaret();
+        const editor = editorRef.current;
+        if (!editor) return;
+        const text = textBeforeReferenceCaret(editor, "referenceNodeId");
         const match = /@([^\s@]*)$/.exec(text);
         if (!match || !inputs.length) {
             closeMention();
@@ -109,24 +119,11 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
     const insertReference = (input: NodeGenerationInput) => {
         const editor = editorRef.current;
         if (!editor) return;
-        removeActiveMention();
+        removeActiveReferenceMention(editor, "referenceNodeId");
         const chip = createReferenceChip(input, inputs, theme, setImagePreview);
-        const space = document.createTextNode(" ");
-        const selection = window.getSelection();
-        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-        if (range) {
-            range.insertNode(space);
-            range.insertNode(chip);
-            range.setStartAfter(space);
-            range.collapse(true);
-            selection?.removeAllRanges();
-            selection?.addRange(range);
-        } else {
-            editor.append(chip, space);
-            placeCaretAtEnd(editor);
-        }
+        insertReferenceChip(editor, chip);
         closeMention();
-        onChange(serializeEditor(editor));
+        syncFromEditor();
     };
 
     const stopCanvasInteraction = (event: PointerEvent | MouseEvent) => event.stopPropagation();
@@ -156,7 +153,7 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
                     <div className="shrink-0 text-xs font-semibold">组装提示词</div>
                     <div className="truncate text-[11px] opacity-55">@ 引用已连接资产，发送前按当前连接重新编号</div>
                 </div>
-                <Button size="small" type="text" className="!h-7 !w-7 !min-w-7 !p-0" icon={<X className="size-3.5" />} onClick={onClose} />
+                <Button size="small" type="text" className="!h-7 !w-7 !min-w-7 !p-0" icon={<X className="size-3.5" />} onClick={() => { syncFromEditor(false); onClose(); }} />
             </div>
             <div className="relative rounded-xl">
                 {!value.trim() ? <div className="pointer-events-none absolute left-3 top-2 text-sm leading-7" style={{ color: theme.node.placeholder }}>输入提示词，按 @ 引用连接的图片或文本</div> : null}
@@ -168,20 +165,32 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
                     className="thin-scrollbar min-h-28 max-h-72 w-full select-text overflow-y-auto overscroll-contain whitespace-pre-wrap break-words px-3 py-2 text-sm leading-7 outline-none"
                     style={{ color: theme.node.text }}
                     onInput={(event) => {
-                        if (!isImeCompositionActive(event, composingRef.current)) syncFromEditor();
+                        const composing = isImeCompositionActive(event, composingRef.current);
+                        syncFromEditor(!composing && !compositionPendingRef.current);
+                        if (!composing && compositionPendingRef.current) {
+                            compositionPendingRef.current = false;
+                            if (compositionCommitFrameRef.current !== null) cancelAnimationFrame(compositionCommitFrameRef.current);
+                            compositionCommitFrameRef.current = null;
+                            syncMention();
+                        }
                     }}
                     onCompositionStart={() => {
                         composingRef.current = true;
+                        compositionPendingRef.current = false;
                         if (mentionFrameRef.current !== null) cancelAnimationFrame(mentionFrameRef.current);
                         if (compositionCommitFrameRef.current !== null) cancelAnimationFrame(compositionCommitFrameRef.current);
                     }}
                     onCompositionEnd={() => {
                         composingRef.current = false;
-                        // compositionend 早于部分输入法最终 input；下一帧再读取 DOM，避免把未确认的拼音字母写入 state。
+                        // 微信上 compositionend 可能早于最终 input；先等稳定 input，RAF 只作兜底。
+                        compositionPendingRef.current = true;
                         if (compositionCommitFrameRef.current !== null) cancelAnimationFrame(compositionCommitFrameRef.current);
                         compositionCommitFrameRef.current = requestAnimationFrame(() => {
                             compositionCommitFrameRef.current = null;
-                            if (!composingRef.current) syncFromEditor();
+                            if (!composingRef.current && compositionPendingRef.current) {
+                                compositionPendingRef.current = false;
+                                syncFromEditor();
+                            }
                         });
                     }}
                     onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
@@ -209,9 +218,9 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
                                 return;
                             }
                         }
-                        if ((event.key === "Backspace" || event.key === "Delete") && deleteAdjacentReference(event.key)) {
+                    if ((event.key === "Backspace" || event.key === "Delete") && editorRef.current && deleteAdjacentReference(editorRef.current, event.key, "referenceNodeId")) {
                             event.preventDefault();
-                            requestAnimationFrame(syncFromEditor);
+                            requestAnimationFrame(() => syncFromEditor());
                             return;
                         }
                         if (mentionFrameRef.current !== null) cancelAnimationFrame(mentionFrameRef.current);
@@ -220,7 +229,13 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose, mode = 
                             syncMention();
                         });
                     }}
-                    onBlur={() => window.setTimeout(closeMention, 120)}
+                    onBlur={() => {
+                        compositionPendingRef.current = false;
+                        if (compositionCommitFrameRef.current !== null) cancelAnimationFrame(compositionCommitFrameRef.current);
+                        compositionCommitFrameRef.current = null;
+                        syncFromEditor(false);
+                        window.setTimeout(closeMention, 120);
+                    }}
                 />
                 {mention && candidates.length ? <MentionMenu inputs={candidates} allInputs={inputs} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} /> : null}
             </div>
@@ -325,92 +340,6 @@ function createReferenceChip(input: NodeGenerationInput, inputs: NodeGenerationI
         wrapper.appendChild(text);
     }
     return wrapper;
-}
-
-function serializeEditor(editor: HTMLElement) {
-    return serializeNodes(editor.childNodes).replace(/\uFEFF/g, "");
-}
-
-function serializeNodes(nodes: NodeListOf<ChildNode>) {
-    let result = "";
-    nodes.forEach((node) => {
-        if (node.nodeType === Node.TEXT_NODE) result += node.textContent || "";
-        if (!(node instanceof HTMLElement)) return;
-        const nodeId = node.dataset.referenceNodeId;
-        if (nodeId) result += `@[node:${nodeId}]`;
-        else if (node.tagName === "BR") result += "\n";
-        else result += serializeNodes(node.childNodes);
-    });
-    return result;
-}
-
-function removeActiveMention() {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount) return;
-    const range = selection.getRangeAt(0);
-    const text = textBeforeCaret();
-    const match = /@([^\s@]*)$/.exec(text);
-    if (!match) return;
-    range.setStart(range.startContainer, Math.max(0, range.startOffset - (match[1] || "").length - 1));
-    range.deleteContents();
-}
-
-function deleteAdjacentReference(key: string) {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount || !selection.isCollapsed) return false;
-    const range = selection.getRangeAt(0);
-    const target = adjacentReferenceNode(range, key);
-    if (!target) return false;
-    const nextCaretNode = document.createTextNode("");
-    target.replaceWith(nextCaretNode);
-    range.setStart(nextCaretNode, 0);
-    range.collapse(true);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    return true;
-}
-
-function adjacentReferenceNode(range: Range, key: string) {
-    const container = range.startContainer;
-    const offset = range.startOffset;
-    const previous = key === "Backspace";
-    if (container.nodeType === Node.TEXT_NODE) {
-        const text = container.textContent || "";
-        if ((previous && offset > 0) || (!previous && offset < text.length)) return null;
-        return findReferenceSibling(container, previous);
-    }
-    const children = Array.from(container.childNodes);
-    return findReferenceSibling(children[previous ? offset - 1 : offset] || container, previous, true);
-}
-
-function findReferenceSibling(node: Node, previous: boolean, includeSelf = false): HTMLElement | null {
-    let current: Node | null = includeSelf ? node : previous ? node.previousSibling : node.nextSibling;
-    while (current && current.nodeType === Node.TEXT_NODE && !(current.textContent || "").trim()) current = previous ? current.previousSibling : current.nextSibling;
-    return current instanceof HTMLElement && current.dataset.referenceNodeId ? current : null;
-}
-
-function textBeforeCaret() {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount) return "";
-    const range = selection.getRangeAt(0).cloneRange();
-    const editor = closestEditor(range.startContainer);
-    if (!editor) return "";
-    range.setStart(editor, 0);
-    return range.toString();
-}
-
-function closestEditor(node: Node) {
-    const element = node instanceof Element ? node : node.parentElement;
-    return element?.closest("[contenteditable='true']") || null;
-}
-
-function placeCaretAtEnd(element: HTMLElement) {
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    range.collapse(false);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
 }
 
 function parseComposerTokens(value: string): Token[] {

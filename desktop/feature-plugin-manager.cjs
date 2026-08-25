@@ -11,6 +11,9 @@ const OFFICIAL_FEATURE_PLUGIN_IDS = new Set(["agent-core", "skill-manager"]);
 const FEATURE_REGISTRY_URL = process.env.LY_SPACE_FEATURE_PLUGIN_REGISTRY_URL || "https://cdn.jsdelivr.net/gh/LightyearXizIl/LY-Space@plugins-dist/official-feature-plugins.json";
 const MAX_PLUGIN_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_RUNTIME_FILE_BYTES = 512 * 1024 * 1024;
+const MAX_SERVICE_ARCHIVE_BYTES = 128 * 1024 * 1024;
+const MAX_SERVICE_FILES = 10000;
+const MAX_SERVICE_UNPACKED_BYTES = 256 * 1024 * 1024;
 const MAX_RENDERER_SOURCE_BYTES = 4 * 1024 * 1024;
 const CODEX_TIMEOUT_MS = 5000;
 
@@ -93,6 +96,7 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
                 serviceEntry: safeRelativePath(String(item.serviceEntry || "")) ? String(item.serviceEntry || "") : "",
                 assets,
                 runtime: item.runtime && typeof item.runtime === "object" ? validateRuntime(item.runtime) : null,
+                serviceArchive: item.serviceArchive && typeof item.serviceArchive === "object" ? validateServiceArchive(item.serviceArchive, assets) : null,
             };
         });
     }
@@ -121,6 +125,16 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
         return { versionRange: String(raw.versionRange || ""), version: String(raw.version || ""), entry, asset, format: raw.format === "tar" ? "tar" : "file" };
     }
 
+    function validateServiceArchive(raw, assets) {
+        const asset = validateAsset(raw.asset);
+        const root = String(raw.root || "");
+        const tree = raw.tree || {};
+        if (raw.format !== "tar.gz" || raw.platform !== "win32" || raw.arch !== "x64" || !safeRelativePath(root) || asset.size > MAX_SERVICE_ARCHIVE_BYTES) throw new Error("Agent 服务归档信息无效");
+        if (!assets.some((item) => item.path === asset.path && item.sha256 === asset.sha256)) throw new Error("Agent 服务归档必须属于插件资产");
+        if (!safeRelativePath(String(tree.path || "")) || !/^[a-f0-9]{64}$/i.test(String(tree.sha256 || "")) || !Number.isSafeInteger(tree.fileCount) || tree.fileCount < 1 || tree.fileCount > MAX_SERVICE_FILES || !Number.isSafeInteger(tree.totalBytes) || tree.totalBytes < 1 || tree.totalBytes > MAX_SERVICE_UNPACKED_BYTES) throw new Error("Agent 服务树清单无效");
+        return { schemaVersion: Number(raw.schemaVersion || 1), format: "tar.gz", platform: "win32", arch: "x64", root, asset, tree: { path: String(tree.path), sha256: String(tree.sha256).toLowerCase(), fileCount: tree.fileCount, totalBytes: tree.totalBytes } };
+    }
+
     async function refresh() {
         const response = await fetch(FEATURE_REGISTRY_URL, { headers: { "accept": "application/json" }, signal: AbortSignal.timeout(15000) });
         if (!response.ok) throw new Error(`获取功能插件清单失败：HTTP ${response.status}`);
@@ -139,7 +153,7 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
             else if (!pluginFilesHealthy(record)) record.status = "repair";
             else if (record.version !== manifest.version) record.status = "update-available";
             else if (record.enabled === false) record.status = "disabled";
-            else record.status = runtimeNeeded(manifest) && !runtimeMatches(manifest.runtime) ? "runtime-required" : "ready";
+            else record.status = "ready";
         }
         writeState();
     }
@@ -171,6 +185,11 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
             activeDownload.stage = "verifying";
             emit();
             for (const asset of manifest.assets) verifyAsset(safeJoin(stagingRoot, asset.path), asset);
+            if (manifest.serviceArchive) {
+                activeDownload.stage = "extracting";
+                emit();
+                extractServiceArchive(stagingRoot, manifest.serviceArchive);
+            }
             fs.mkdirSync(path.dirname(targetRoot), { recursive: true });
             const backupRoot = `${targetRoot}.previous-${Date.now()}`;
             if (fs.existsSync(targetRoot)) fs.renameSync(targetRoot, backupRoot);
@@ -182,7 +201,7 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
             }
             // 新版本已完整就绪，旧版本的清理失败不影响当前可用版本。
             fs.rmSync(backupRoot, { recursive: true, force: true });
-            nextRecord.status = runtimeNeeded(manifest) && !runtimeMatches(manifest.runtime) ? "runtime-required" : "ready";
+            nextRecord.status = "ready";
             state.plugins[manifest.id] = nextRecord;
             writeState();
             log({ category: "operation", message: `已安装功能插件：${manifest.name}`, details: { pluginId: manifest.id, version: manifest.version } });
@@ -264,7 +283,7 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
             }
         }
         record.enabled = Boolean(enabled);
-        record.status = record.enabled ? (runtimeNeeded(record.manifest) && !runtimeMatches(record.manifest.runtime) ? "runtime-required" : "ready") : "disabled";
+        record.status = record.enabled ? "ready" : "disabled";
         writeState();
         emit();
         return publicState();
@@ -301,13 +320,15 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
 
     function dependencyReady(dependency) {
         const record = state.plugins[dependency.id];
-        return Boolean(record?.enabled && ["ready", "update-available", "runtime-required"].includes(record.status) && isVersionCompatible(record.version, dependency.range));
+        return Boolean(record?.enabled && ["ready", "update-available"].includes(record.status) && isVersionCompatible(record.version, dependency.range));
     }
 
     function pluginFilesHealthy(record) {
         try {
             const root = path.join(pluginRoot, record.id, record.version);
-            return record.manifest.assets.every((asset) => fs.existsSync(safeJoin(root, asset.path)));
+            if (!record.manifest.assets.every((asset) => fs.existsSync(safeJoin(root, asset.path)))) return false;
+            if (record.manifest.serviceArchive) verifyServiceTree(root, record.manifest.serviceArchive);
+            return !record.manifest.serviceEntry || fs.statSync(safeJoin(root, record.manifest.serviceEntry)).isFile();
         } catch {
             return false;
         }
@@ -333,6 +354,7 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
             state.runtime = { source: compatible.path === state.runtime?.path ? state.runtime.source || "manual" : "system", path: compatible.path, version: compatible.version, checkedAt: new Date().toISOString() };
             writeState();
         }
+        reconcileInstalled();
         emit();
         return { candidates: results, compatible, state: publicState() };
     }
@@ -344,6 +366,7 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
         if (!result.available || (agent?.runtime && !isVersionCompatible(result.version, agent.runtime.versionRange))) throw new Error(result.error || "所选 Codex 版本不兼容");
         state.runtime = { source: "manual", path: result.path, version: result.version, checkedAt: new Date().toISOString() };
         writeState();
+        reconcileInstalled();
         emit();
         return publicState();
     }
@@ -363,6 +386,7 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
             if (runtime.format === "tar") executable = extractTarRuntime(target, runtimeRoot, runtime.entry);
             state.runtime = { source: "managed", path: executable, version: runtime.version, checkedAt: new Date().toISOString() };
             writeState();
+            reconcileInstalled();
             return publicState();
         } finally {
             activeDownload = null;
@@ -583,7 +607,7 @@ async function consumeAgentEvents(body, clientId, getWindow, controller) {
 }
 
 function safeRelativePath(value) {
-    return Boolean(value && !path.isAbsolute(value) && !value.includes("..") && !value.includes("\\") && value === path.posix.normalize(value));
+    return Boolean(value && !path.isAbsolute(value) && !value.includes("..") && !value.includes("\\") && !value.includes(":") && !value.startsWith("//") && value === path.posix.normalize(value));
 }
 
 function safeJoin(root, relative) {
@@ -703,6 +727,39 @@ function extractTarRuntime(archive, runtimeRoot, entry) {
     fs.renameSync(safeJoin(staging, "package"), finalRoot);
     fs.rmSync(staging, { recursive: true, force: true });
     return safeJoin(runtimeRoot, entry);
+}
+
+function extractServiceArchive(stagingRoot, descriptor) {
+    const archive = safeJoin(stagingRoot, descriptor.asset.path);
+    const listed = spawnSync("tar.exe", ["-tvzf", archive], { encoding: "utf8", windowsHide: true, timeout: 30000 });
+    if (listed.status !== 0) throw new Error(`无法检查 Agent 服务归档：${listed.stderr || listed.stdout}`);
+    const lines = String(listed.stdout || "").split(/\r?\n/).filter(Boolean);
+    if (!lines.length || lines.length > MAX_SERVICE_FILES + 8) throw new Error("Agent 服务归档文件数无效");
+    const prefix = `${descriptor.root}/`;
+    for (const line of lines) {
+        const name = (line.trim().split(/\s+/).at(-1) || "").replace(/\\/g, "/");
+        if (/^[lh]/.test(line) || !safeRelativePath(name) || (name !== descriptor.root && !name.startsWith(prefix))) throw new Error("Agent 服务归档包含不安全路径或链接");
+    }
+    const extracted = spawnSync("tar.exe", ["-xzf", archive, "-C", stagingRoot], { encoding: "utf8", windowsHide: true, timeout: 120000 });
+    if (extracted.status !== 0) throw new Error(`无法解压 Agent 服务：${extracted.stderr || extracted.stdout}`);
+    verifyServiceTree(stagingRoot, descriptor);
+}
+
+function verifyServiceTree(pluginRoot, descriptor) {
+    const root = safeJoin(pluginRoot, descriptor.root);
+    const treeFile = safeJoin(root, descriptor.tree.path);
+    if (!fs.existsSync(treeFile) || crypto.createHash("sha256").update(fs.readFileSync(treeFile)).digest("hex") !== descriptor.tree.sha256) throw new Error("Agent 服务树清单校验失败");
+    const tree = JSON.parse(fs.readFileSync(treeFile, "utf8"));
+    if (!Array.isArray(tree.files) || tree.fileCount !== descriptor.tree.fileCount || tree.totalBytes !== descriptor.tree.totalBytes || tree.files.length !== descriptor.tree.fileCount) throw new Error("Agent 服务树清单内容无效");
+    let totalBytes = 0;
+    for (const entry of tree.files) {
+        if (!safeRelativePath(String(entry?.path || "")) || !Number.isSafeInteger(entry?.size) || entry.size < 0 || !/^[a-f0-9]{64}$/i.test(String(entry?.sha256 || ""))) throw new Error("Agent 服务树条目无效");
+        const file = safeJoin(root, entry.path);
+        const info = fs.lstatSync(file);
+        if (!info.isFile() || info.isSymbolicLink() || info.size !== entry.size || crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex") !== entry.sha256) throw new Error(`Agent 服务文件校验失败：${entry.path}`);
+        totalBytes += info.size;
+    }
+    if (totalBytes !== descriptor.tree.totalBytes || totalBytes > MAX_SERVICE_UNPACKED_BYTES) throw new Error("Agent 服务解压体积无效");
 }
 
 module.exports = { createFeaturePluginManager, OFFICIAL_FEATURE_PLUGIN_IDS, FEATURE_REGISTRY_URL, isVersionCompatible, isMinAppVersionCompatible, safeRelativePath, validateRemoteUrl };

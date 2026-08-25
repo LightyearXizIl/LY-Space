@@ -8,6 +8,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { isImeCompositionActive, isPlainEnterKey } from "@/lib/keyboard-event";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { appendReferenceChip, caretRect, deleteAdjacentReference, insertReferenceChip, removeActiveReferenceMention, serializeReferenceEditor, textBeforeReferenceCaret } from "./contenteditable-reference-utils";
 
 type Props = {
     value: string;
@@ -34,8 +35,10 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const editorRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
+    const compositionPendingRef = useRef(false);
     const mentionFrameRef = useRef<number | null>(null);
     const compositionCommitFrameRef = useRef<number | null>(null);
+    const flushRef = useRef<() => void>(() => {});
     // 记录我们最近一次向父级 emit 的 value。聚焦时若 value 与它一致,说明是本组件输入的回声,
     // 跳过重建以免打断光标 / IME;若不一致(如发送后父级把 prompt 清空、或从提示词库插入),即使聚焦也要重建。
     const lastEmittedRef = useRef(value);
@@ -60,7 +63,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
     useEffect(() => {
         const editor = editorRef.current;
         if (!editor) return;
-        if (document.activeElement === editor && value === lastEmittedRef.current) return;
+        if (composingRef.current || (document.activeElement === editor && value === lastEmittedRef.current)) return;
         editor.textContent = "";
         tokens.forEach((token) => {
             if (token.type === "text") {
@@ -68,7 +71,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                 return;
             }
             const reference = referenceByLabel.get(token.label);
-            if (reference) editor.append(createReferenceChip(reference, theme, setImagePreview));
+            if (reference) appendReferenceChip(editor, createReferenceChip(reference, theme, setImagePreview));
             else editor.append(document.createTextNode(token.label));
         });
         lastEmittedRef.current = value;
@@ -76,6 +79,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
 
     useEffect(
         () => () => {
+            flushRef.current();
             if (mentionFrameRef.current !== null) cancelAnimationFrame(mentionFrameRef.current);
             if (compositionCommitFrameRef.current !== null) cancelAnimationFrame(compositionCommitFrameRef.current);
         },
@@ -87,22 +91,25 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
         onChange(next);
     };
 
-    const syncFromEditor = () => {
+    const syncFromEditor = (syncMentionAfter = !composingRef.current) => {
         const editor = editorRef.current;
         if (!editor) return;
-        emit(serializeEditor(editor));
-        syncMention();
+        emit(serializeReferenceEditor(editor, "refLabel"));
+        if (syncMentionAfter) syncMention();
     };
+    flushRef.current = () => syncFromEditor(false);
 
     const syncMention = () => {
         if (composingRef.current) return;
-        const text = textBeforeCaret();
+        const editor = editorRef.current;
+        if (!editor) return;
+        const text = textBeforeReferenceCaret(editor, "refLabel");
         const match = /@([^\s@]*)$/.exec(text);
         if (!match || !activeReferences.length) {
             closeMention();
             return;
         }
-        setMention({ query: match[1] || "", rect: caretRect() });
+        setMention({ query: match[1] || "", rect: caretRect(editor) });
         setActiveIndex(0);
     };
 
@@ -114,24 +121,11 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
     const insertReference = (reference: CanvasResourceReference) => {
         const editor = editorRef.current;
         if (!editor) return;
-        removeActiveMention();
+        removeActiveReferenceMention(editor, "refLabel");
         const chip = createReferenceChip(reference, theme, setImagePreview);
-        const space = document.createTextNode(" ");
-        const selection = window.getSelection();
-        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-        if (range) {
-            range.insertNode(space);
-            range.insertNode(chip);
-            range.setStartAfter(space);
-            range.collapse(true);
-            selection?.removeAllRanges();
-            selection?.addRange(range);
-        } else {
-            editor.append(chip, space);
-            placeCaretAtEnd(editor);
-        }
+        insertReferenceChip(editor, chip);
         closeMention();
-        emit(serializeEditor(editor));
+        syncFromEditor();
     };
 
     const showPlaceholder = !value.trim();
@@ -153,19 +147,31 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                 className={`${className || ""} select-text overflow-y-auto whitespace-pre-wrap break-words outline-none`}
                 style={{ ...style, cursor: "text" }}
                 onInput={(event) => {
-                    if (!isImeCompositionActive(event, composingRef.current)) syncFromEditor();
+                    const composing = isImeCompositionActive(event, composingRef.current);
+                    syncFromEditor(!composing && !compositionPendingRef.current);
+                    if (!composing && compositionPendingRef.current) {
+                        compositionPendingRef.current = false;
+                        if (compositionCommitFrameRef.current !== null) cancelAnimationFrame(compositionCommitFrameRef.current);
+                        compositionCommitFrameRef.current = null;
+                        syncMention();
+                    }
                 }}
                 onCompositionStart={() => {
                     composingRef.current = true;
+                    compositionPendingRef.current = false;
                     if (mentionFrameRef.current !== null) cancelAnimationFrame(mentionFrameRef.current);
                     if (compositionCommitFrameRef.current !== null) cancelAnimationFrame(compositionCommitFrameRef.current);
                 }}
                 onCompositionEnd={() => {
                     composingRef.current = false;
+                    compositionPendingRef.current = true;
                     if (compositionCommitFrameRef.current !== null) cancelAnimationFrame(compositionCommitFrameRef.current);
                     compositionCommitFrameRef.current = requestAnimationFrame(() => {
                         compositionCommitFrameRef.current = null;
-                        if (!composingRef.current) syncFromEditor();
+                        if (!composingRef.current && compositionPendingRef.current) {
+                            compositionPendingRef.current = false;
+                            syncFromEditor();
+                        }
                     });
                 }}
                 onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
@@ -193,7 +199,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                             return;
                         }
                     }
-                    if ((event.key === "Backspace" || event.key === "Delete") && deleteAdjacentReference(event.key)) {
+                    if ((event.key === "Backspace" || event.key === "Delete") && editorRef.current && deleteAdjacentReference(editorRef.current, event.key, "refLabel")) {
                         event.preventDefault();
                         if (mentionFrameRef.current !== null) cancelAnimationFrame(mentionFrameRef.current);
                         mentionFrameRef.current = requestAnimationFrame(() => {
@@ -213,7 +219,13 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, c
                         syncMention();
                     });
                 }}
-                onBlur={() => window.setTimeout(closeMention, 120)}
+                onBlur={() => {
+                    compositionPendingRef.current = false;
+                    if (compositionCommitFrameRef.current !== null) cancelAnimationFrame(compositionCommitFrameRef.current);
+                    compositionCommitFrameRef.current = null;
+                    syncFromEditor(false);
+                    window.setTimeout(closeMention, 120);
+                }}
             />
             {mention && candidates.length ? (
                 <MentionMenu rect={mention.rect} references={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} />
@@ -323,105 +335,6 @@ function createReferenceChip(reference: CanvasResourceReference, theme: (typeof 
         wrapper.appendChild(text);
     }
     return wrapper;
-}
-
-function serializeEditor(editor: HTMLElement) {
-    return serializeNodes(editor.childNodes).replace(/﻿/g, "");
-}
-
-function serializeNodes(nodes: NodeListOf<ChildNode>) {
-    let result = "";
-    nodes.forEach((node) => {
-        if (node.nodeType === Node.TEXT_NODE) result += node.textContent || "";
-        if (!(node instanceof HTMLElement)) return;
-        const label = node.dataset.refLabel;
-        if (label) result += label;
-        else if (node.tagName === "BR") result += "\n";
-        else result += serializeNodes(node.childNodes);
-    });
-    return result;
-}
-
-function removeActiveMention() {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount) return;
-    const range = selection.getRangeAt(0);
-    const text = textBeforeCaret();
-    const match = /@([^\s@]*)$/.exec(text);
-    if (!match) return;
-    range.setStart(range.startContainer, Math.max(0, range.startOffset - (match[1] || "").length - 1));
-    range.deleteContents();
-}
-
-// chip 是 contentEditable="false" 的原子块,光标紧邻它按 Backspace/Delete 时整块删除。
-function deleteAdjacentReference(key: string) {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount || !selection.isCollapsed) return false;
-    const range = selection.getRangeAt(0);
-    const target = adjacentReferenceNode(range, key);
-    if (!target) return false;
-    const nextCaretNode = document.createTextNode("");
-    target.replaceWith(nextCaretNode);
-    range.setStart(nextCaretNode, 0);
-    range.collapse(true);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    return true;
-}
-
-function adjacentReferenceNode(range: Range, key: string) {
-    const container = range.startContainer;
-    const offset = range.startOffset;
-    const previous = key === "Backspace";
-    if (container.nodeType === Node.TEXT_NODE) {
-        const text = container.textContent || "";
-        if ((previous && offset > 0) || (!previous && offset < text.length)) return null;
-        return findReferenceSibling(container, previous);
-    }
-    const children = Array.from(container.childNodes);
-    return findReferenceSibling(children[previous ? offset - 1 : offset] || container, previous, true);
-}
-
-function findReferenceSibling(node: Node, previous: boolean, includeSelf = false): HTMLElement | null {
-    let current: Node | null = includeSelf ? node : previous ? node.previousSibling : node.nextSibling;
-    while (current && current.nodeType === Node.TEXT_NODE && !(current.textContent || "").trim()) current = previous ? current.previousSibling : current.nextSibling;
-    return current instanceof HTMLElement && current.dataset.refLabel ? current : null;
-}
-
-function textBeforeCaret() {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount) return "";
-    const range = selection.getRangeAt(0).cloneRange();
-    const editor = closestEditor(range.startContainer);
-    if (!editor) return "";
-    range.setStart(editor, 0);
-    return range.toString();
-}
-
-function caretRect(): DOMRect | null {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount) return null;
-    const range = selection.getRangeAt(0).cloneRange();
-    range.collapse(true);
-    const rect = range.getBoundingClientRect();
-    if (rect.width || rect.height || rect.left || rect.top) return rect;
-    // 空行/空编辑器时 range 无尺寸,退回到编辑器盒子。
-    const editor = closestEditor(range.startContainer);
-    return editor ? editor.getBoundingClientRect() : null;
-}
-
-function closestEditor(node: Node) {
-    const element = node instanceof Element ? node : node.parentElement;
-    return element?.closest("[contenteditable='true']") || null;
-}
-
-function placeCaretAtEnd(element: HTMLElement) {
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    range.collapse(false);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
 }
 
 // 按 active label(已按长度降序)把 value 文本切成「文本片段 + 命中的引用 label」。

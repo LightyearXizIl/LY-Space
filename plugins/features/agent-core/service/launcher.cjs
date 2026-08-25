@@ -27,7 +27,9 @@ async function waitForHealth(url, token) {
     const port = await reservePort();
     if (!port || !process.env.LY_SPACE_AGENT_TOKEN || !process.env.LY_SPACE_AGENT_DATA_DIR || !process.env.LY_SPACE_CODEX_PATH) throw new Error("Agent 服务启动参数不完整");
     process.env.PORT = String(port);
-    await import("./agent-service.mjs");
+    // 保留上游包的相对模块结构；单文件 ESM bundle 会在 Node 内置模块上触发 dynamic require 错误。
+    process.env.LY_SPACE_CANVAS_AGENT_MCP_ENTRY = process.env.LY_SPACE_CANVAS_AGENT_MCP_ENTRY || require("node:path").join(__dirname, "..", "node_modules", "@basketikun", "canvas-agent", "dist", "index.js");
+    await import("../node_modules/@basketikun/canvas-agent/dist/index.js");
     const url = `http://127.0.0.1:${port}`;
     await waitForHealth(url, process.env.LY_SPACE_AGENT_TOKEN);
     process.stdout.write(`LY_SPACE_AGENT_READY:${JSON.stringify({ url })}\n`);

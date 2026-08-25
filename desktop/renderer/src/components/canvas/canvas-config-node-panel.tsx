@@ -34,6 +34,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
     const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());
     const canGenerate = hasComposerContent || (mode === "audio" ? inputSummary.textCount > 0 : hasAnyInput);
+    const generateLabel = isRunning ? "再次生成" : "开始生成";
 
     return (
         <div className="flex h-full w-full cursor-move flex-col px-3 pb-3 pt-7 text-sm" style={{ color: theme.node.text }} onWheel={(event) => event.stopPropagation()}>
@@ -112,10 +113,10 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
             </div>
 
             <div className="mt-auto flex w-full items-center gap-2" onMouseDown={(event) => event.stopPropagation()}>
-                <Button type="primary" className="!h-9 !min-w-0 flex-1 !cursor-pointer !rounded-lg" disabled={!canGenerate} onClick={() => onGenerate(node.id)}>
+                <Button type="primary" className="!h-9 !min-w-0 flex-1 !cursor-pointer !rounded-lg" disabled={!canGenerate} onClick={() => onGenerate(node.id)} aria-label={generateLabel}>
                     <span className="inline-flex items-center gap-1.5">
                         <Play className="size-4" />
-                        <span>开始生成</span>
+                        <span>{generateLabel}</span>
                     </span>
                 </Button>
                 {isRunning ? (

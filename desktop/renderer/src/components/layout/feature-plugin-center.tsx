@@ -3,14 +3,11 @@ import { Alert, App, Button, Popconfirm, Progress, Switch, Tabs, Tag } from "ant
 import { Bot, Download, FolderCog, Puzzle, RefreshCw, ShieldCheck, Trash2, Wrench } from "lucide-react";
 
 const statusText: Record<FeaturePluginStatus, string> = {
-    downloading: "下载中",
     ready: "可用",
-    "runtime-required": "需要 Codex 运行时",
     disabled: "已停用",
     "update-available": "有新版本",
     incompatible: "当前应用不兼容",
     repair: "需要修复",
-    error: "安装失败",
 };
 
 function sizeText(bytes: number) {
@@ -89,14 +86,14 @@ export function FeaturePluginCenter({ openNodePlugins }: { openNodePlugins?: () 
                                 const record = records.get(manifest.id);
                                 const runtime = manifest.runtime;
                                 const pluginSize = manifest.assets.reduce((sum, asset) => sum + asset.size, 0);
-                                const requiresRuntime = manifest.id === "agent-core" && record?.status === "runtime-required";
+                                const requiresRuntime = manifest.id === "agent-core" && Boolean(record?.enabled && runtime && (!state.runtime.version || !state.runtime.path));
                                 return (
                                     <section key={manifest.id} className="rounded-xl border border-stone-200 p-4 dark:border-stone-800">
                                         <div className="flex flex-wrap items-start justify-between gap-3">
                                             <div className="flex min-w-0 gap-3">
                                                 <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-stone-100 text-stone-700 dark:bg-stone-900 dark:text-stone-200">{manifest.id === "agent-core" ? <Bot className="size-5" /> : <Puzzle className="size-5" />}</span>
                                                 <div className="min-w-0">
-                                                    <div className="flex flex-wrap items-center gap-2 text-sm font-semibold"><span>{manifest.name}</span><Tag>v{record?.version || manifest.version}</Tag>{record ? <Tag color={record.status === "ready" ? "success" : record.status === "error" ? "error" : "warning"}>{statusText[record.status]}</Tag> : null}</div>
+                                                    <div className="flex flex-wrap items-center gap-2 text-sm font-semibold"><span>{manifest.name}</span><Tag>v{record?.version || manifest.version}</Tag>{record ? <Tag color={record.status === "ready" ? "success" : record.status === "incompatible" ? "error" : "warning"}>{statusText[record.status]}</Tag> : null}</div>
                                                     <p className="mt-1 text-xs leading-5 text-stone-500">{manifest.description}</p>
                                                     <div className="mt-2 text-xs text-stone-500">插件 {sizeText(pluginSize)}{runtime ? ` · Codex 运行时 ${sizeText(runtime.asset.size)}` : ""}</div>
                                                 </div>
@@ -108,7 +105,7 @@ export function FeaturePluginCenter({ openNodePlugins }: { openNodePlugins?: () 
                                                 {record ? <Popconfirm title={`卸载 ${manifest.name}？`} description="会移除插件程序和受管运行时，保留对话、凭据和 Skills 数据。" okText="卸载" cancelText="取消" onConfirm={() => run(manifest.id, async () => await window.lySpaceDesktop!.uninstallFeaturePlugin(manifest.id))}><Button size="small" danger icon={<Trash2 className="size-4" />} /></Popconfirm> : null}
                                             </div>
                                         </div>
-                                        {requiresRuntime && runtime ? <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-100"><FolderCog className="size-4" /><span>未发现兼容的 Codex。可复用已有安装，也可单独下载受管运行时。</span><Button size="small" onClick={() => run("runtime-probe", async () => (await window.lySpaceDesktop!.probeCodexRuntime()).state)}>重新检测</Button><Button size="small" onClick={() => run("runtime-choose", async () => await window.lySpaceDesktop!.chooseCodexRuntime())}>选择已有 Codex</Button><Button size="small" type="primary" loading={busy === "runtime-install"} onClick={() => run("runtime-install", async () => await window.lySpaceDesktop!.installManagedCodexRuntime())}>下载运行时</Button></div> : null}
+                                        {record?.enabled && runtime ? <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-100"><FolderCog className="size-4" /><span>{requiresRuntime ? "未发现兼容的 Codex。本地 Agent 需安装运行时；也可直接在 Agent 面板配置 HTTPS 远程服务。" : `本地 Codex 已就绪：${state.runtime.version}`}</span><Button size="small" onClick={() => run("runtime-probe", async () => (await window.lySpaceDesktop!.probeCodexRuntime()).state)}>重新检测</Button><Button size="small" onClick={() => run("runtime-choose", async () => await window.lySpaceDesktop!.chooseCodexRuntime())}>选择已有 Codex</Button>{requiresRuntime ? <Button size="small" type="primary" loading={busy === "runtime-install"} onClick={() => run("runtime-install", async () => await window.lySpaceDesktop!.installManagedCodexRuntime())}>下载运行时</Button> : null}</div> : null}
                                         {record?.error ? <div className="mt-2 text-xs text-red-500">{record.error}</div> : null}
                                         {manifest.permissions.length ? <div className="mt-3 text-xs text-stone-500">权限：{manifest.permissions.join("、")}</div> : null}
                                     </section>

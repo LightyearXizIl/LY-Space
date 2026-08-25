@@ -20,7 +20,7 @@ const plugin = {
             title: "Skills",
             order: 20,
             mount(container) {
-                const clientId = `ly-space-skills-${crypto.randomUUID()}`;
+                const clientId = runtime.agent.clientId();
                 let activeThreadId = "";
                 container.innerHTML = `<div class="ly-skills"><div class="ly-skills__bar"><button data-refresh>刷新</button><button data-create>新建 Skill</button><button data-draft="conversation">从对话生成草稿</button><button data-draft="canvas">从画布生成草稿</button></div><div data-status class="ly-skills__status">正在读取 Skills…</div><div data-list></div></div>`;
                 const status = container.querySelector("[data-status]");

@@ -76,7 +76,7 @@ import {
 import { getNodeDefinition, isBuiltinNodeType as isBuiltinType, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
 import { registerBuiltinNodes } from "@/components/canvas/nodes/builtin-nodes";
 import { CanvasPluginManagerModal } from "@/components/canvas/canvas-plugin-manager-modal";
-import { setFeatureCanvasBridge } from "@/lib/feature-plugins/feature-plugin-runtime";
+import { notifyFeatureCanvasChanged, setFeatureCanvasBridge } from "@/lib/feature-plugins/feature-plugin-runtime";
 import { CanvasRefreshShell } from "@/components/canvas/canvas-refresh-shell";
 import { CanvasTopBar } from "@/components/canvas/canvas-top-bar";
 import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } from "@/components/canvas/canvas-create-menus";
@@ -797,6 +797,10 @@ function InfiniteCanvasPage() {
         });
         return () => setFeatureCanvasBridge(null);
     }, [applyPluginOps]);
+
+    useEffect(() => {
+        notifyFeatureCanvasChanged();
+    }, [nodes, connections, selectedNodeIds, viewport]);
 
     const { pluginHost, renderPluginPanel, buildNodeToolbarItems } = usePluginHost({
         effectiveConfig,

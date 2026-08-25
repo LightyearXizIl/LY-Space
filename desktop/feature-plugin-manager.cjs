@@ -135,7 +135,7 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
         for (const [id, record] of Object.entries(state.plugins)) {
             const manifest = catalog.find((item) => item.id === id);
             if (!manifest) continue;
-            if (!isVersionCompatible(app.getVersion(), manifest.minAppVersion)) record.status = "incompatible";
+            if (!isMinAppVersionCompatible(app.getVersion(), manifest.minAppVersion)) record.status = "incompatible";
             else if (!pluginFilesHealthy(record)) record.status = "repair";
             else if (record.version !== manifest.version) record.status = "update-available";
             else if (record.enabled === false) record.status = "disabled";
@@ -147,7 +147,7 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
     async function install(id, options = {}) {
         id = assertPluginId(id);
         const manifest = findManifest(id);
-        if (!isVersionCompatible(app.getVersion(), manifest.minAppVersion)) throw new Error(`当前应用版本不支持 ${manifest.name}`);
+        if (!isMinAppVersionCompatible(app.getVersion(), manifest.minAppVersion)) throw new Error(`当前应用版本不支持 ${manifest.name}`);
         const missing = manifest.dependencies.filter((dependency) => !dependencyReady(dependency));
         if (missing.length && !options.withDependencies) return { needsDependencies: missing, state: publicState() };
         for (const dependency of missing) await install(dependency.id, { withDependencies: true });
@@ -630,6 +630,17 @@ function isVersionCompatible(version, range) {
     });
 }
 
+// 清单的 minAppVersion 是最低支持版本，裸版本（例如 0.5.6）不是“仅支持该版本”。
+// 依赖和 Codex 运行时范围继续使用 isVersionCompatible 的精确语义。
+function isMinAppVersionCompatible(version, minimum) {
+    const normalized = String(minimum || "").trim();
+    if (/^\d+\.\d+\.\d+$/.test(normalized)) {
+        const result = compareSemver(version, normalized);
+        return Number.isFinite(result) && result >= 0;
+    }
+    return isVersionCompatible(version, normalized);
+}
+
 function probeCodex(candidate) {
     const target = path.resolve(String(candidate || ""));
     if (!fs.existsSync(target)) return { path: target, available: false, version: "", error: "文件不存在" };
@@ -694,4 +705,4 @@ function extractTarRuntime(archive, runtimeRoot, entry) {
     return safeJoin(runtimeRoot, entry);
 }
 
-module.exports = { createFeaturePluginManager, OFFICIAL_FEATURE_PLUGIN_IDS, FEATURE_REGISTRY_URL, isVersionCompatible, safeRelativePath, validateRemoteUrl };
+module.exports = { createFeaturePluginManager, OFFICIAL_FEATURE_PLUGIN_IDS, FEATURE_REGISTRY_URL, isVersionCompatible, isMinAppVersionCompatible, safeRelativePath, validateRemoteUrl };

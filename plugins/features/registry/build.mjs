@@ -37,7 +37,7 @@ for (const definition of definitions) {
         const assetPath = relative(output, file).replaceAll("\\", "/");
         return { path: assetPath, url: `${ASSET_BASE_URL}/${assetPath}`, size: (await stat(file)).size, sha256: await sha256(file) };
     }));
-    plugins.push({ schemaVersion: 1, id: definition.id, name: definition.name, description: definition.description, version: "0.1.0", minAppVersion: "0.5.6", protocolVersion: "6", permissions: definition.permissions, dependencies: definition.dependencies, rendererEntry: `${definition.id}.mjs`, ...(definition.serviceEntry ? { serviceEntry: `agent-core-service/${definition.serviceEntry}` } : {}), assets, ...(definition.id === "agent-core" ? { runtime } : {}) });
+    plugins.push({ schemaVersion: 1, id: definition.id, name: definition.name, description: definition.description, version: "0.1.0", minAppVersion: ">=0.5.6", protocolVersion: "6", permissions: definition.permissions, dependencies: definition.dependencies, rendererEntry: `${definition.id}.mjs`, ...(definition.serviceEntry ? { serviceEntry: `agent-core-service/${definition.serviceEntry}` } : {}), assets, ...(definition.id === "agent-core" ? { runtime } : {}) });
 }
 await writeFile(join(output, "official-feature-plugins.json"), `${JSON.stringify({ schemaVersion: 1, plugins }, null, 2)}\n`);
 console.log(`wrote ${plugins.length} feature plugins to ${output}`);

@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.5.6`）
-- **最新发布状态**：`v0.5.6` 已于 2026-08-24 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `32651593335` 为 `completed/success`，Release 的 exe、blockmap、`latest.yml` 均为 `uploaded`；`latest.yml` 的 version/path/size 与远端 EXE 一致（核验明细见 3.32 发布核验）。该版本包含精修工作台参考图重构（3.32）与画布配置编排器中文组合输入修复；Windows 安装包按维护者明确授权维持无签名发布。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支，当前版本 `v0.5.7`）
+- **最新发布状态**：`v0.5.7` 已于 2026-08-25 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `32804217256`、`Publish Feature Plugins` 运行 `32804217137`、`Publish Official Plugins` 运行 `32804217266` 均为 `completed/success`。桌面 Release 的 exe、blockmap、`latest.yml` 均为 `uploaded`，并已在工作流中重新下载核验；功能插件资产已发布到独立分支/运行时 Release（核验明细见 3.33）。Windows 安装包按维护者明确授权维持无签名发布。
 - **当前未提交工作区**：预期干净；若存在未提交改动，接手者不得 reset、覆盖、删除或误并入其他修改。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
@@ -27,7 +27,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.5.6（`VERSION`、两个 package 版本与发布 tag 一致；发布 tag 为 `v0.5.6`）
+- **当前版本**：v0.5.7（`VERSION`、两个 package 版本与发布 tag 一致；发布 tag 为 `v0.5.7`）
 
 ## 2. 数据存储
 
@@ -284,6 +284,14 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **配置编排器组合输入修复**（`canvas-config-composer.tsx`，用户随版合入）：contentEditable 编辑器在输入法组合阶段（`composingRef`）跳过 DOM 重建，避免候选词区被重建打断拼音并遗留首字母；`compositionend` 后下一帧再读 DOM（部分输入法最终 input 晚于 compositionend）；@ 引用匹配与覆盖层刷新延后到稳定输入帧执行；快捷键在组合态整段忽略。
 - **发布核验**（2026-08-24）：Release `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.5.6` 为正式版；Actions `32651593335` 成功。远端资产 `LY-Space-Setup-0.5.6.exe`（92,545,593 字节，GitHub API digest SHA-256 `2522537f628b95768457ec68586e0712ee0800456f07b37ac8326346b3acdce4`）、blockmap（97,887 字节）与 `latest.yml` 均为 `uploaded`；`latest.yml` 的 version `0.5.6`、path/文件名、size 92545593 与远端 EXE 一致，`files` 条目与顶层 sha512 相同（`E9El8v5WcLU4mdxOnWCIlJZ+8l7JQlIa2R7gOYMC2eo6QUM2kh5uxylVKou+T6TnZE2q+cRF6uCI9qwRx+ELeg==`）。本地安装包 `release\LY Space Setup 0.5.6.exe` 为 92,545,455 字节（88.26 MiB，verify-package 通过），SHA-256 `C8A321E014A68B67182B0250EFF65B168DCEE281FA8746BFEABC8538B7B67DA3`；本地与 CI 构建时间不同，字节大小与哈希不同属预期（同 3.29 先例）。
 - **本地打包坑（pnpm v11.18）**：`pnpm --dir desktop run pack:win` 首次失败于 `ERR_PNPM_IGNORED_BUILDS: electron-winstaller@5.4.0`——`desktop/pnpm-workspace.yaml` 里被写入占位 `allowBuilds: electron-winstaller: set this to true or false`，必须明确决定。已设 `false`（本项目仅打 NSIS 包，不需要 Squirrel.Windows 的 electron-winstaller 构建产物），`pnpm install` 与打包随即通过；后续环境遇到同类占位按此处理，勿删文件。
+
+### 3.33 v0.5.7 画布修复与可选 Agent 功能插件
+
+- **画布修复**：批次根节点的加载/失败内容与「一键重试」双轴居中；所有可生成节点保留生成按钮并显示独立停止按钮，支持同源与跨节点并行；`@` 引用输入统一规避中文输入法组合态候选键。
+- **功能插件**：桌面“设置 → 插件中心”只携带轻量宿主。`agent-core` 与 `skill-manager` 由用户显式安装，原节点插件系统保持独立；Agent 服务、Skill 管理和 Codex 运行时不进入桌面包。主进程验证官方清单、大小与 SHA-256，使用 staging 原子切换和可续传 `.part`；本地 Agent 只监听随机 `127.0.0.1` 端口，令牌不暴露到渲染层。
+- **运行时与发布**：系统 Codex 仅在实际执行 `--version`、版本范围匹配且服务握手成功后复用；WindowsApps 路径存在但拒绝访问视为不可用。功能插件构建资产 Agent Core 约 1.55 MiB、Skill 管理约 5.6 KiB，Codex 运行时独立约 144.66 MiB；发布工作流 `publish-feature-plugins.yml` 成功发布资产，客户端无自动下载。
+- **验证边界**：本地版本检查、76 项自动化测试、功能插件构建、`git diff --check` 和 `pack:win` 均通过；本地安装包 `release\\LY Space Setup 0.5.7.exe` 为 92,559,250 字节（88.27 MiB，SHA-256 `32F9FC5B29CF6524B02B053827C367A253B2AA11A8BE97584701170B7DBA987D`），包校验确认不含 Codex、Canvas Agent 或功能插件产物。真实 API/MCP/账号授权、网络受限下载与输入法人工验收仍以 `pending-test.mdx` 为准。
+- **发布核验**（2026-08-25）：Release `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.5.7` 为正式版；Actions `32804217256` 成功。远端 `LY-Space-Setup-0.5.7.exe`（92,559,226 字节，GitHub digest SHA-256 `bed68114ba2dc8b7835dcd396db3dfeaf79ce2652dfe825c49d9a5065efefc7d`）、blockmap（97,980 字节，SHA-256 `6ccaa73ed5db1836057d6f14ad99e2c78e735aec08e76cea386674c7a5540420`）与 `latest.yml`（344 字节，SHA-256 `4516aa006a012ea24479879e9a611eac04ca305cec28cd0f79215725f9ff2cfa`）均为 `uploaded`；远端 `latest.yml` 的 version `0.5.7`、path/文件名、size `92559226` 与远端 EXE 一致，SHA-512 为 `0exgdCeRgtp/SDGFctKaxNbVlpIVEH8mxYmGLkOeDwSUiVxtsvg2pD6ZOWRjfdxuOs29TjmK3ck7GbBd/nNH/w==`。本地与 CI 构建时间不同，字节大小与哈希不同属预期。
 
 ### 3.23 v0.4.7 变更要点
 

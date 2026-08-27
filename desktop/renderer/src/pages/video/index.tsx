@@ -1,12 +1,13 @@
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, Download, FolderPlus, History, LoaderCircle, Music2, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon, Wand2 } from "lucide-react";
-import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent as ReactClipboardEvent, type DragEvent } from "react";
-import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Tooltip, Typography } from "antd";
 import localforage from "localforage";
 import { nanoid } from "nanoid";
 import { saveAs } from "file-saver";
 
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { CameraTrigger } from "@/components/camera-trigger";
+import { ReferenceImageUploader } from "@/components/reference-image-uploader";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoSizeLabel } from "@/components/video-settings-panel";
@@ -93,7 +94,7 @@ function subscribeVideoTaskUpdate(listener: () => void) {
 
 export default function VideoPage() {
     const { message } = App.useApp();
-    const fileInputRef = useRef<HTMLInputElement>(null);
+    const mediaFileInputRef = useRef<HTMLInputElement>(null);
     const dragDepthRef = useRef(0);
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
@@ -119,7 +120,7 @@ export default function VideoPage() {
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
     const [previewLog, setPreviewLog] = useState<GenerationLog | null>(null);
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-    const [referenceDragTarget, setReferenceDragTarget] = useState<"image" | "video" | "audio" | null>(null);
+    const [referenceDragTarget, setReferenceDragTarget] = useState<"video" | "audio" | null>(null);
     const [sessionHydrated, setSessionHydrated] = useState(false);
 
     // 轮询闭包在页面卸载后仍后台继续(保存日志/通知新页面),但不再更新已卸载组件的 UI 状态
@@ -244,7 +245,7 @@ export default function VideoPage() {
         setAudioReferences((value) => [...value, ...nextAudioReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.audios));
     };
 
-    const handleReferenceDragEnter = (event: DragEvent<HTMLDivElement>, target: "image" | "video" | "audio") => {
+    const handleReferenceDragEnter = (event: DragEvent<HTMLDivElement>, target: "video" | "audio") => {
         event.preventDefault();
         dragDepthRef.current += 1;
         if (event.dataTransfer.types.includes("Files")) setReferenceDragTarget(target);
@@ -263,16 +264,6 @@ export default function VideoPage() {
         void addReferences(event.dataTransfer.files);
     };
 
-
-    const addReferencesFromPaste = (event: ReactClipboardEvent) => {
-        const files = Array.from(event.clipboardData.items)
-            .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
-            .map((item) => item.getAsFile())
-            .filter((file): file is File => Boolean(file));
-        if (!files.length) return;
-        event.preventDefault();
-        void addReferences(files);
-    };
     // 优化提示词：调用所选文本模型（默认 defaultConfig.textModel = gpt-5.5）流式优化并回填
     const optimizePrompt = async () => {
         const text = prompt.trim();
@@ -565,52 +556,13 @@ export default function VideoPage() {
                                 </div>
                             </div>
 
-                            <div className="min-w-0">
-                                <div className="mb-2 flex items-center justify-between gap-3">
-                                    <span className="text-base font-semibold">参考图</span>
-                                    <div className="flex gap-2">
-                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
-                                            上传
-                                        </Button>
-                                        <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!references.length} onClick={() => setReferences([])}>
-                                            清空
-                                        </Button>
-                                    </div>
-                                </div>
-                                <div
-                                    tabIndex={0}
-                                    className={`hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors focus:outline-none ${referenceDragTarget === "image" ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
-                                    onMouseEnter={(event) => event.currentTarget.focus({ preventScroll: true })}
-                                    onPaste={addReferencesFromPaste}
-                                    onDragEnter={(event) => handleReferenceDragEnter(event, "image")}
-                                    onDragOver={(event) => {
-                                        event.preventDefault();
-                                        event.dataTransfer.dropEffect = "copy";
-                                    }}
-                                    onDragLeave={handleReferenceDragLeave}
-                                    onDrop={handleReferenceDrop}
-                                >
-                                    <Image.PreviewGroup>
-                                        {references.map((item, index) => (
-                                            <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
-                                                <Image src={item.dataUrl} alt={item.name} className="size-full object-cover" />
-                                                <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{seedanceReferenceLabel("image", index)}</span>
-                                                <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
-                                                <button type="button" className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex" onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))} aria-label="移除参考图">
-                                                    <Trash2 className="size-3.5" />
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </Image.PreviewGroup>
-                                    {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{referenceDragTarget === "image" ? "松开即可上传参考资产" : `暂无参考图，可拖入文件或直接粘贴，最多 ${imageReferenceLimit} 张`}</div> : null}
-                                </div>
-                            </div>
+                            <ReferenceImageUploader references={references} setReferences={setReferences} limit={imageReferenceLimit} onOpenSettings={() => openConfigDialog(true)} />
 
                             <div className="min-w-0">
                                 <div className="mb-2 flex items-center justify-between gap-3">
                                     <span className="text-base font-semibold">参考视频</span>
                                     <div className="flex gap-2">
-                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
+                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => mediaFileInputRef.current?.click()}>
                                             上传
                                         </Button>
                                         <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!videoReferences.length} onClick={() => setVideoReferences([])}>
@@ -646,7 +598,7 @@ export default function VideoPage() {
                                 <div className="mb-2 flex items-center justify-between gap-3">
                                     <span className="text-base font-semibold">参考音频</span>
                                     <div className="flex gap-2">
-                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
+                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => mediaFileInputRef.current?.click()}>
                                             上传
                                         </Button>
                                         <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!audioReferences.length} onClick={() => setAudioReferences([])}>
@@ -722,9 +674,9 @@ export default function VideoPage() {
                 </section>
             </main>
             <input
-                ref={fileInputRef}
+                ref={mediaFileInputRef}
                 type="file"
-                accept="image/*,video/mp4,video/quicktime,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav"
+                accept="video/mp4,video/quicktime,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav"
                 multiple
                 className="hidden"
                 onChange={(event) => {

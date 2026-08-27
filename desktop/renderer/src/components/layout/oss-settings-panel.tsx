@@ -113,7 +113,7 @@ export function OssSettingsPanel() {
                     </Button>
                     <span>
                         {provider === "cloudflare-r2"
-                            ? "R2 Worker 模板位于仓库 cloudflare/r2-media-worker；免费计划单个素材最大 100MB，生产环境请使用 R2 自定义域名。"
+                            ? "R2 Worker 模板位于仓库 cloudflare/r2-media-worker；免费计划单个素材最大 100MB，公网域名可填写 Worker 地址或自定义 Worker 域名，无需开启 R2 Public Access。"
                             : "签名接口应返回 OSS PostObject 的 host、dir、policy 与临时签名字段；请勿填写长期 AccessKey。"}
                     </span>
                 </div>

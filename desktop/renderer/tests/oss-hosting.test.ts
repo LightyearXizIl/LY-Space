@@ -9,6 +9,7 @@ const localforageMock = vi.hoisted(() => ({
 vi.mock("localforage", () => ({ default: localforageMock }));
 
 import { hostReferenceVideo } from "@/services/image-hosting";
+import { ReferenceHostingConfigurationError, uploadReferenceImage, validateReferenceImageFile } from "@/services/media-hosting";
 import { assertOssHostingConfigReady, defaultOssHostingConfig, hostFileOnOss, loadOssHostingConfig, normalizeOssHostingConfig, saveOssHostingConfig, type OssHostingConfig } from "@/services/oss-hosting";
 
 const config: OssHostingConfig = {
@@ -85,7 +86,7 @@ describe("OSS 参考素材托管", () => {
     });
 
     it("通过受令牌保护的 Cloudflare R2 Worker 上传媒体，无需阿里云签名接口", async () => {
-        const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ url: "https://media.example.com/ly-space/references/video.mp4" }), { status: 201 }));
+        const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, success: true, key: "ly-space/references/video.mp4", publicUrl: "https://media.example.com/ly-space/references/video.mp4" }), { status: 201 }));
         globalThis.fetch = fetchMock;
 
         await expect(hostFileOnOss(new Blob(["video"], { type: "video/mp4" }), "reference.mp4", { ...r2Config, signatureEndpoint: "" })).resolves.toBe("https://media.example.com/ly-space/references/video.mp4");
@@ -94,9 +95,30 @@ describe("OSS 参考素材托管", () => {
             "https://ly-space-r2.example.workers.dev/upload",
             expect.objectContaining({
                 method: "POST",
-                headers: expect.objectContaining({ Authorization: "Bearer test-token", "X-LY-Space-Filename": "reference.mp4" }),
+                headers: { Authorization: "Bearer test-token" },
             }),
         );
+        const request = fetchMock.mock.calls[0][1];
+        expect(request.body).toBeInstanceOf(FormData);
+        expect((request.body as FormData).get("file")).toBeInstanceOf(Blob);
+    });
+
+    it("兼容 Worker 的 publicUrl、url 和仅 key 返回格式", async () => {
+        globalThis.fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ publicUrl: "https://media.example.com/a.png" }), { status: 201 })).mockResolvedValueOnce(new Response(JSON.stringify({ url: "https://media.example.com/b.png" }), { status: 201 })).mockResolvedValueOnce(new Response(JSON.stringify({ key: "ly-space/references/c.png" }), { status: 201 }));
+        await expect(hostFileOnOss(new Blob(["image"], { type: "image/png" }), "a.png", r2Config)).resolves.toBe("https://media.example.com/a.png");
+        await expect(hostFileOnOss(new Blob(["image"], { type: "image/png" }), "b.png", r2Config)).resolves.toBe("https://media.example.com/b.png");
+        await expect(hostFileOnOss(new Blob(["image"], { type: "image/png" }), "c.png", r2Config)).resolves.toBe("https://media.example.com/ly-space/references/c.png");
+    });
+
+    it("本地参考图上传只接受 R2 配置与受支持图片，不泄露令牌错误", async () => {
+        const file = Object.assign(new Blob(["image"], { type: "image/png" }), { name: "reference.png", lastModified: 0 }) as File;
+        expect(() => validateReferenceImageFile(Object.assign(new Blob(["image"], { type: "image/gif" }), { name: "reference.gif", lastModified: 0 }) as File)).toThrow("不支持该文件格式");
+        localforageMock.getItem.mockResolvedValueOnce({ ...defaultOssHostingConfig, provider: "aliyun-oss" });
+        await expect(uploadReferenceImage(file)).rejects.toBeInstanceOf(ReferenceHostingConfigurationError);
+
+        localforageMock.getItem.mockResolvedValueOnce(r2Config);
+        globalThis.fetch = vi.fn().mockResolvedValue(new Response("Unauthorized", { status: 401 }));
+        await expect(uploadReferenceImage(file)).rejects.toThrow("上传令牌无效");
     });
 
     it("参考素材入口可使用 R2 配置上传，不会误要求阿里云签名接口", async () => {

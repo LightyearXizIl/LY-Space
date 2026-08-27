@@ -55,7 +55,9 @@ export function textBeforeReferenceCaret(editor: HTMLElement, referenceKey: stri
     const before = current.cloneRange();
     before.selectNodeContents(editor);
     before.setEnd(current.startContainer, current.startOffset);
-    return serializeNodes(before.cloneContents().childNodes, referenceKey).replaceAll(REFERENCE_CARET_SENTINEL, "\uFFFC");
+    // 引用 chip 在 DOM 光标偏移中只占一个节点位置；这里也必须按一个逻辑字符计算，
+    // 不能使用其完整序列化内容，否则连续引用时删除 @ 查询词会发生偏移错位。
+    return serializeNodes(before.cloneContents().childNodes, referenceKey, () => "\uFFFC");
 }
 
 /** 删除 caret 前连续的 @query；逻辑偏移而非 Range.startOffset，避免删到 chip。 */

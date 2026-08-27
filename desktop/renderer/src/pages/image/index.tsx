@@ -1,17 +1,17 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, Copy, Download, Eye, FolderOpen, FolderPlus, ImagePlus, LoaderCircle, PenLine, RotateCcw, SlidersHorizontal, Sparkles, Trash2, Upload, Wand2, XCircle } from "lucide-react";
-import { useEffect, useRef, useState, type ChangeEvent, type ClipboardEvent as ReactClipboardEvent } from "react";
+import { BookOpen, CheckSquare, Copy, Download, Eye, FolderOpen, FolderPlus, ImagePlus, LoaderCircle, PenLine, RotateCcw, SlidersHorizontal, Sparkles, Trash2, Wand2, XCircle } from "lucide-react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { App, Button, Checkbox, Drawer, Dropdown, Empty, Image, Input, Modal, Tag, Tooltip, Typography, type MenuProps } from "antd";
 import localforage from "localforage";
 import { saveAs } from "file-saver";
 
 import { CameraTrigger } from "@/components/camera-trigger";
+import { ReferenceImageUploader } from "@/components/reference-image-uploader";
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { buildCameraPrompt, formatCameraSelection, normalizeCameraSelection, type CameraSelection } from "@/lib/camera";
-import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
@@ -63,8 +63,6 @@ function subscribeImageTasks(listener: () => void) {
 
 export default function ImagePage() {
     const { message } = App.useApp();
-    const fileInputRef = useRef<HTMLInputElement>(null);
-    const dragDepthRef = useRef(0);
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -86,7 +84,6 @@ export default function ImagePage() {
     const [selectedImageIds, setSelectedImageIds] = useState<string[]>([]);
     const [detailLog, setDetailLog] = useState<GenerationLog | null>(null);
     const [storageSettings, setStorageSettings] = useState<{ resultRoot: string; folders: Record<string, string> } | null>(null);
-    const [isReferenceDragActive, setIsReferenceDragActive] = useState(false);
     const [sessionHydrated, setSessionHydrated] = useState(false);
     const generationControllersRef = useRef(new Map<string, AbortController>());
 
@@ -203,34 +200,6 @@ export default function ImagePage() {
         // 交接仅在当前会话恢复完成后消费一次。
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sessionHydrated]);
-
-    const addReferences = async (files?: FileList | readonly File[] | null) => {
-        const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
-        if (!imageFiles.length) return;
-        const remaining = MAX_REFERENCE_IMAGES - references.length;
-        if (remaining <= 0) {
-            message.warning(`参考图最多添加 ${MAX_REFERENCE_IMAGES} 张，请先移除部分参考图`);
-            return;
-        }
-        if (imageFiles.length > remaining) message.warning(`参考图最多添加 ${MAX_REFERENCE_IMAGES} 张，已添加前 ${remaining} 张`);
-        const nextReferences = await Promise.all(
-            imageFiles.slice(0, remaining).map(async (file) => {
-                const image = await uploadImage(file);
-                return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
-            }),
-        );
-        setReferences((value) => [...value, ...nextReferences]);
-    };
-
-    const addReferencesFromPaste = (event: ReactClipboardEvent) => {
-        const files = Array.from(event.clipboardData.items)
-            .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
-            .map((item) => item.getAsFile())
-            .filter((file): file is File => Boolean(file));
-        if (!files.length) return;
-        event.preventDefault();
-        void addReferences(files);
-    };
 
     const cancelResult = (id: string) => {
         const task = activeImageTasks.get(id);
@@ -739,69 +708,7 @@ export default function ImagePage() {
                                 </div>
                             </div>
 
-                            <div className="min-w-0">
-                                <div className="mb-2 flex items-center justify-between gap-3">
-                                    <span className="text-base font-semibold">参考图</span>
-                                    <div className="flex gap-2">
-                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
-                                            上传
-                                        </Button>
-                                        <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!references.length} onClick={() => setReferences([])}>
-                                            清空
-                                        </Button>
-                                    </div>
-                                </div>
-                                <div
-                                    tabIndex={0}
-                                    className={`hover-scrollbar hover-scrollbar-hint relative flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed p-2 pb-3 overscroll-x-contain transition-colors focus:outline-none ${isReferenceDragActive ? "border-stone-900 bg-stone-100/80 dark:border-stone-100 dark:bg-stone-900/80" : "border-stone-300 dark:border-stone-700"}`}
-                                    onMouseEnter={(event) => event.currentTarget.focus({ preventScroll: true })}
-                                    onPaste={addReferencesFromPaste}
-                                    onDragEnter={(event) => {
-                                        event.preventDefault();
-                                        dragDepthRef.current += 1;
-                                        if (event.dataTransfer.types.includes("Files")) setIsReferenceDragActive(true);
-                                    }}
-                                    onDragOver={(event) => {
-                                        event.preventDefault();
-                                        event.dataTransfer.dropEffect = "copy";
-                                    }}
-                                    onDragLeave={(event) => {
-                                        event.preventDefault();
-                                        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
-                                        if (!dragDepthRef.current) setIsReferenceDragActive(false);
-                                    }}
-                                    onDrop={(event) => {
-                                        event.preventDefault();
-                                        dragDepthRef.current = 0;
-                                        setIsReferenceDragActive(false);
-                                        void addReferences(event.dataTransfer.files);
-                                    }}
-                                    onWheel={(event) => {
-                                        if (event.currentTarget.scrollWidth <= event.currentTarget.clientWidth) return;
-                                        event.preventDefault();
-                                        event.currentTarget.scrollLeft += event.deltaY;
-                                    }}
-                                >
-                                    <Image.PreviewGroup>
-                                        {references.map((item, index) => (
-                                            <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
-                                                <Image src={item.dataUrl} alt={item.name} className="size-full object-cover" />
-                                                <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{imageReferenceLabel(index)}</span>
-                                                <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
-                                                <button
-                                                    type="button"
-                                                    className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex"
-                                                    onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}
-                                                    aria-label="移除参考图"
-                                                >
-                                                    <Trash2 className="size-3.5" />
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </Image.PreviewGroup>
-                                    {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{isReferenceDragActive ? "松开即可添加参考图" : "暂无参考图，可将图片拖到这里或直接粘贴"}</div> : null}
-                                </div>
-                            </div>
+                            <ReferenceImageUploader references={references} setReferences={setReferences} limit={MAX_REFERENCE_IMAGES} onOpenSettings={() => openConfigDialog(true)} />
 
                             <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
                                 <span className="truncate text-stone-500 dark:text-stone-400">
@@ -882,17 +789,6 @@ export default function ImagePage() {
                     </div>
                 </section>
             </main>
-            <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(event) => {
-                    void addReferences(event.target.files);
-                    event.target.value = "";
-                }}
-            />
             <Drawer title="参数" placement="bottom" size="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 pb-4">
                     <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} camera={camera} onCameraChange={setCamera} />
@@ -1215,22 +1111,4 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
         count: log.config?.count || String(log.imageCount || log.successCount || 1),
         background: log.config?.background || "",
     };
-}
-
-function moveListItem<T>(items: T[], index: number, offset: number) {
-    const targetIndex = index + offset;
-    if (targetIndex < 0 || targetIndex >= items.length) return items;
-    const next = [...items];
-    [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
-    return next;
-}
-
-function ReferenceOrderButtons({ index, total, onMove }: { index: number; total: number; onMove: (offset: number) => void }) {
-    if (total <= 1) return null;
-    return (
-        <div className="absolute inset-x-1 bottom-1 flex justify-between">
-            <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm dark:!bg-stone-700/90 dark:!text-stone-100 dark:!shadow-none" icon={<ArrowLeft className="size-3" />} disabled={index <= 0} onClick={() => onMove(-1)} />
-            <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm dark:!bg-stone-700/90 dark:!text-stone-100 dark:!shadow-none" icon={<ArrowRight className="size-3" />} disabled={index >= total - 1} onClick={() => onMove(1)} />
-        </div>
-    );
 }

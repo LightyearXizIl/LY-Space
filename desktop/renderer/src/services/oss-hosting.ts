@@ -124,25 +124,35 @@ async function hostFileOnCloudflareR2(input: Blob, name: string, config: OssHost
     if (input.size > CLOUDFLARE_R2_WORKER_MAX_UPLOAD_BYTES) throw new Error("Cloudflare 免费 Worker 单个参考素材最大 100MB，请压缩素材或使用阿里云 OSS 直传");
     const extension = (name.match(/\.[a-z0-9]+$/i)?.[0] || mimeExtension(input.type) || ".bin").toLowerCase();
     try {
+        const form = new FormData();
+        form.append("file", input, name || `reference${extension}`);
         const response = await fetch(`${workerEndpoint.replace(/\/upload$/i, "")}/upload`, {
             method: "POST",
             credentials: "omit",
             headers: {
                 Authorization: `Bearer ${uploadToken}`,
-                "Content-Type": input.type || "application/octet-stream",
-                "X-LY-Space-Filename": encodeURIComponent(name || `reference${extension}`),
             },
-            body: input,
+            body: form,
             signal: options?.signal,
         });
-        if (!response.ok) throw new Error(`Worker 返回 ${response.status}`);
+        if (!response.ok) throw new Error(workerUploadError(response.status));
         const payload = record(await response.json());
-        const uploadedUrl = payload?.url;
-        if (typeof uploadedUrl !== "string" || !uploadedUrl.startsWith(`${publicBaseUrl}/`)) throw new Error("Worker 返回的素材地址与所填 R2 公网域名不一致");
+        const key = text(payload?.key).trim().replace(/^\/+/, "");
+        const uploadedUrl = text(payload?.publicUrl).trim() || text(payload?.url).trim() || (key ? `${publicBaseUrl}/${key.split("/").map(encodeURIComponent).join("/")}` : "");
+        if (!isHttpsUrl(uploadedUrl)) throw new Error("Worker 返回的素材地址无效");
         return uploadedUrl;
     } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") throw error;
         throw new Error(error instanceof Error ? `Cloudflare R2 上传失败：${error.message}` : "Cloudflare R2 上传失败");
     }
+}
+
+function workerUploadError(status: number) {
+    if (status === 401 || status === 403) return "上传令牌无效";
+    if (status === 413) return "文件超过 100MB，无法上传";
+    if (status === 415) return "不支持该文件格式";
+    if (status >= 500) return "素材存储服务配置异常";
+    return `Worker 返回 ${status}`;
 }
 
 /** @deprecated 图片调用请迁移到 hostFileOnOss；保留该入口避免影响既有调用。 */

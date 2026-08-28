@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Alert, App, Button, Checkbox, Modal } from "antd";
+import { Alert, App, Button, Checkbox, Modal, Spin } from "antd";
 import { Download, FileUp, Plus, RefreshCw } from "lucide-react";
 
 import { readZip } from "@/lib/zip";
@@ -33,37 +33,40 @@ export default function CanvasPage() {
     // 拖动排序状态:正在拖的项目 id + 目标卡片的插入位置
     const [dragProjectId, setDragProjectId] = useState<string | null>(null);
     const [dropTarget, setDropTarget] = useState<{ id: string; before: boolean } | null>(null);
-    const recoveryChecked = useRef(false);
     const [recoveryScan, setRecoveryScan] = useState<CanvasRecoveryScan | null>(null);
     const [recoveryOpen, setRecoveryOpen] = useState(false);
     const [recoveryScanning, setRecoveryScanning] = useState(false);
+    const [recoveryProgress, setRecoveryProgress] = useState<CanvasRecoveryProgress | null>(null);
     const [recoveryApplying, setRecoveryApplying] = useState(false);
     const [selectedRecoveryIds, setSelectedRecoveryIds] = useState<string[]>([]);
     const [restoreConfiguration, setRestoreConfiguration] = useState(false);
 
-    const scanRecovery = useCallback(async (openWhenEmpty = false) => {
+    const scanRecovery = useCallback(async () => {
         const desktop = window.lySpaceDesktop;
         if (!desktop) return;
+        // 手动触发：立即打开对话框显示扫描进度，扫描期间用户可关闭（结果不自动重开弹窗）。
+        setRecoveryScan(null);
+        setRecoveryProgress(null);
+        setRecoveryOpen(true);
         setRecoveryScanning(true);
         try {
             const scan = await desktop.scanCanvasRecovery(projects);
             setRecoveryScan(scan);
             setSelectedRecoveryIds(scan.projects.map((project) => project.id));
             setRestoreConfiguration(false);
-            if (scan.projects.length || openWhenEmpty) setRecoveryOpen(true);
-            if (!scan.projects.length && !openWhenEmpty) return;
         } catch (error) {
             message.error(error instanceof Error ? error.message : "无法扫描本机画布备份");
+            setRecoveryOpen(false);
         } finally {
             setRecoveryScanning(false);
         }
     }, [message, projects]);
 
     useEffect(() => {
-        if (!hydrated || recoveryChecked.current || !window.lySpaceDesktop) return;
-        recoveryChecked.current = true;
-        void scanRecovery(false);
-    }, [hydrated, scanRecovery]);
+        const desktop = window.lySpaceDesktop;
+        if (!desktop?.onCanvasRecoveryProgress) return;
+        return desktop.onCanvasRecoveryProgress((progress) => setRecoveryProgress(progress));
+    }, []);
 
     const applyRecovery = async () => {
         if (!recoveryScan || !selectedRecoveryIds.length || !window.lySpaceDesktop) return;
@@ -187,7 +190,7 @@ export default function CanvasPage() {
                         <Button disabled={!hydrated} icon={<FileUp className="size-4" />} onClick={() => inputRef.current?.click()}>
                             导入画布
                         </Button>
-                        <Button disabled={!hydrated || recoveryScanning} icon={<RefreshCw className={`size-4 ${recoveryScanning ? "animate-spin" : ""}`} />} onClick={() => void scanRecovery(true)}>
+                        <Button disabled={!hydrated || recoveryScanning} icon={<RefreshCw className={`size-4 ${recoveryScanning ? "animate-spin" : ""}`} />} onClick={() => void scanRecovery()}>
                             恢复画布
                         </Button>
                         <Button disabled={!hydrated} type="primary" icon={<Plus className="size-4" />} onClick={createAndEnter}>
@@ -240,13 +243,19 @@ export default function CanvasPage() {
                 centered
                 width={720}
                 destroyOnHidden
-                okText={selectedRecoveryIds.length ? `恢复 ${selectedRecoveryIds.length} 个画布` : "请选择画布"}
+                okText={recoveryScanning ? "正在扫描备份..." : selectedRecoveryIds.length ? `恢复 ${selectedRecoveryIds.length} 个画布` : "请选择画布"}
                 cancelText="暂不恢复"
-                okButtonProps={{ disabled: !selectedRecoveryIds.length, loading: recoveryApplying }}
+                okButtonProps={{ disabled: recoveryScanning || !selectedRecoveryIds.length, loading: recoveryApplying }}
                 onOk={() => void applyRecovery()}
                 onCancel={() => { if (!recoveryApplying) setRecoveryOpen(false); }}
             >
-                {recoveryScan?.projects.length ? (
+                {recoveryScanning || !recoveryScan ? (
+                    <div className="flex flex-col items-center gap-3 py-8 text-sm text-stone-600 dark:text-stone-300">
+                        <Spin />
+                        <p>{recoveryProgress?.total ? `正在检查本机备份（${recoveryProgress.checked} / ${recoveryProgress.total}）...` : "正在检查本机备份..."}</p>
+                        <p className="text-xs text-stone-500">只读取备份，不修改任何画布数据；期间可正常使用其他功能。</p>
+                    </div>
+                ) : recoveryScan.projects.length ? (
                     <div className="space-y-4">
                         <p className="text-sm text-stone-600 dark:text-stone-300">已检查 {recoveryScan.sources.length} 个可读备份来源。恢复会保留当前较新的版本，并在写入前创建可回退副本。</p>
                         {recoveryScan.unreadableSources ? <Alert showIcon type="warning" message={`${recoveryScan.unreadableSources} 个备份来源无法读取，已继续检查其余来源`} /> : null}

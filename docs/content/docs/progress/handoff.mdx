@@ -9,9 +9,9 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；当前发布版本 `v0.6.6`）。
-- **最新发布状态**：`v0.6.6` 已于 `2026-08-28T02:31:36Z` 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `33136032105` 为 `completed/success`，完成构建、草稿 Release、三项资产上传、资产/更新清单校验和正式发布。Release 的 exe、blockmap、`latest.yml` 均为 `uploaded`；GitHub API 给出的安装包 SHA-256 为 `0ccb5562e33df488c4a0fb8d8c6213b5ec144df4d1a7f1de6a0b781568eef55e`，大小 `92,574,556` 字节，公开安装包链接返回 HTTP 200。Windows 安装包按维护者明确授权维持无签名发布。
-- **v0.6.6 发布内容与现场状态**：画布恢复会逐一读取升级前 AppData、安装前缓存、迁移前缓存副本和安全快照，不再被最新的配置型或损坏备份截断；画布库提供“恢复画布”入口和逐项预览，AI/WebDAV 配置恢复默认为关闭。未找到项目或有损坏来源时可导出不含路径、项目内容和配置的诊断 JSON。出问题电脑目前只显示 8 月 15 日以前的项目；该电脑安装 v0.6.6 后的实际扫描与恢复结果仍待确认，不能提前承诺已找到 8 月 15 日后的项目。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；待发布版本 `v0.6.7`）。
+- **当前发布基线**：`v0.6.6` 已于 `2026-08-28T02:31:36Z` 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `33136032105` 为 `completed/success`，完成构建、草稿 Release、三项资产上传、资产/更新清单校验和正式发布。Release 的 exe、blockmap、`latest.yml` 均为 `uploaded`；GitHub API 给出的安装包 SHA-256 为 `0ccb5562e33df488c4a0fb8d8c6213b5ec144df4d1a7f1de6a0b781568eef55e`，大小 `92,574,556` 字节，公开安装包链接返回 HTTP 200。Windows 安装包按维护者明确授权维持无签名发布。
+- **v0.6.7 待发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断将记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
 - **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`
@@ -27,7 +27,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.6.6 已发布（GitHub Release、三项桌面资产和更新清单均已核验）。
+- **当前版本**：v0.6.7 待发布；v0.6.6 的 GitHub Release、三项桌面资产和更新清单均已核验。
 
 ## 2. 数据存储
 
@@ -312,6 +312,12 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **根因与修复**（`components/canvas/contenteditable-reference-utils.ts`）：已有引用 chip 在序列化提示词时可能代表完整节点标记或标签，但 DOM 光标偏移只按一个节点位置计算；连续插入时删除 `@` 查询词的范围因此错位。光标前逻辑文本现在统一将每个 chip 记为一个占位字符，与 Range 偏移保持一致。
 - **范围与兼容**：生成配置「组装提示词」、节点提示词和展开编辑器共用该工具，选择引用后会完整替换 `@` 或 `@查询词`，不留下 `@`。生成配置仍序列化为 `@[node:id]`，普通节点仍保留图片/文本标签；文本节点受控 textarea 的既有字符串替换和 IME 同步逻辑不变。
 - **验证边界**：新增 jsdom 回归覆盖连续三次引用、查询词替换、普通文本保留和两种序列化格式；渲染层 Vitest 69 项和类型检查通过。真实 Windows 桌面端的鼠标/Enter 选择及微软拼音、搜狗、微信输入法仍按 `pending-test.mdx` 人工验收。
+
+### 3.37 v0.6.7 手动画布恢复、非阻塞扫描与诊断详情
+
+- **交互边界**（`pages/canvas/index.tsx`）：移除进入画布库后的自动扫描；“恢复画布”是唯一入口，点击立即打开对话框并显示真实的 `checked / total` 进度。扫描期间可关闭对话框，后台任务继续完成但不得重新打开；扫描只读备份，不写入当前画布。
+- **性能与校验**（`canvas-recovery.cjs`、`main.cjs`）：安全快照、目录清单、复制和临时目录清理均使用异步文件 API。复制前后只比对 `path / length / mtimeMs` 轻量清单，确认副本完整且来源未变化；不再用备份 manifest 的全量 SHA-256 阻断可读来源。隐藏 BrowserWindow 仍负责必要的 IndexedDB/LevelDB 解析。
+- **诊断与坑**：每个升级备份检查完成都会向渲染层发进度事件；不可读来源继续扫描其他来源，运行日志保留原始错误用于本机排查，导出 JSON 仅保留 `sourceType` 与将盘符/UNC 路径替换为 `<路径>` 的错误文本。自动化检查不等同于问题电脑的真实 LevelDB 可读性；8 个来源的最终结论必须查看该机日志和导出的 `failedSources`。
 
 ### 3.23 v0.4.7 变更要点
 

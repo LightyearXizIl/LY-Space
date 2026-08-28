@@ -9,7 +9,7 @@ const { copyDirectoryExact, directoryManifest, restoreBridgeBackup, sameManifest
 const { assertWritableDirectory, ensureStorageDirectories: ensureConfiguredStorageDirectories, readStorageSettingsFile, writeStorageSettingsFile } = require("./storage-settings.cjs");
 const { buildInstallerArgs, buildInstallerLaunchOptions, createPersistenceFlushCoordinator } = require("./update-install-coordinator.cjs");
 const { createFeaturePluginManager } = require("./feature-plugin-manager.cjs");
-const { applyRecoverySelection, createRecoveryCatalog, ensureCurrentSnapshot, listSafetyRecoverySources, listUpgradeRecoverySources, normalizeProjects, projectDigest, saveCurrentSnapshot, saveRecoveryBundle } = require("./canvas-recovery.cjs");
+const { applyRecoverySelection, createRecoveryCatalog, directoryLightManifest, ensureCurrentSnapshot, listSafetyRecoverySources, listUpgradeRecoverySources, normalizeProjects, projectDigest, redactPathText, sameLightManifest, saveCurrentSnapshot, saveRecoveryBundle } = require("./canvas-recovery.cjs");
 const { normalizeRetentionDays, pruneLogFile, readLogSettings, writeLogSettings } = require("./app-logs.cjs");
 
 protocol.registerSchemesAsPrivileged([
@@ -157,21 +157,19 @@ async function clearAppLogs() {
 async function extractCanvasProjects(source) {
     const cacheRoot = source.cache;
     const tempRoot = path.join(appLogDirectory(), "canvas-recovery-temp", `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-    const verifyRoot = source.verifyRoot || cacheRoot;
-    const expected = source.expected || directoryManifest(verifyRoot);
-    const cacheManifest = directoryManifest(cacheRoot);
-    if (!sameManifest(directoryManifest(verifyRoot), expected)) throw new Error("恢复来源校验失败");
-    const copy = (from, destination) => { if (fs.existsSync(from)) fs.cpSync(from, destination, { recursive: true, errorOnExist: false }); };
+    // 扫描只做只读预览：用轻量清单（大小+修改时间）检测来源与副本一致性，
+    // 不再对整个备份目录做同步 SHA-256 全量哈希（会冻结主进程，且严格校验会误伤可读来源）。
+    const cacheManifest = await directoryLightManifest(cacheRoot);
+    const copy = async (from, destination) => { if (fs.existsSync(from)) await fs.promises.cp(from, destination, { recursive: true, errorOnExist: false }); };
     try {
-        copy(path.join(cacheRoot, "IndexedDB"), path.join(tempRoot, "IndexedDB"));
-        copy(path.join(cacheRoot, "Local Storage"), path.join(tempRoot, "Local Storage"));
-        if (!sameManifest(directoryManifest(cacheRoot), cacheManifest) || !sameManifest(directoryManifest(verifyRoot), expected)) throw new Error("恢复来源在读取期间发生变化");
-        const copiedManifest = directoryManifest(tempRoot);
+        await copy(path.join(cacheRoot, "IndexedDB"), path.join(tempRoot, "IndexedDB"));
+        await copy(path.join(cacheRoot, "Local Storage"), path.join(tempRoot, "Local Storage"));
+        if (!sameLightManifest(await directoryLightManifest(cacheRoot), cacheManifest)) throw new Error("恢复来源在读取期间发生变化");
         const copiedExpected = [];
         for (const item of cacheManifest) {
             if (item.path.startsWith("IndexedDB/") || item.path.startsWith("Local Storage/")) copiedExpected.push(item);
         }
-        if (!sameManifest(copiedManifest, copiedExpected)) throw new Error("恢复副本校验失败");
+        if (!sameLightManifest(await directoryLightManifest(tempRoot), copiedExpected)) throw new Error("恢复副本校验失败");
         const recoverySession = session.fromPath(tempRoot);
         await recoverySession.protocol.handle("lyspace", () => new Response("<!doctype html><title>LY Space recovery</title>", { headers: { "content-type": "text/html" } }));
         const window = new BrowserWindow({ show: false, webPreferences: { session: recoverySession, sandbox: true, contextIsolation: true, nodeIntegration: false } });
@@ -187,7 +185,7 @@ async function extractCanvasProjects(source) {
             await recoverySession.clearStorageData().catch(() => {});
         }
     } finally {
-        fs.rmSync(tempRoot, { recursive: true, force: true });
+        await fs.promises.rm(tempRoot, { recursive: true, force: true });
     }
 }
 
@@ -806,18 +804,27 @@ app.whenReady().then(async () => {
     });
     ipcMain.handle("lyspace:canvas-snapshot", (_event, projects) => saveCurrentSnapshot(appLogDirectory(), normalizeProjects(projects)));
     ipcMain.handle("lyspace:ensure-canvas-snapshot", (_event, projects) => ensureCurrentSnapshot(appLogDirectory(), normalizeProjects(projects)));
-    ipcMain.handle("lyspace:canvas-recovery-scan", async (_event, current) => {
+    ipcMain.handle("lyspace:canvas-recovery-scan", async (event, current) => {
         const projects = normalizeProjects(current);
-        const sources = listSafetyRecoverySources(appLogDirectory());
+        const sources = await listSafetyRecoverySources(appLogDirectory());
         let unreadableSources = 0;
-        for (const source of listUpgradeRecoverySources(process.env.LOCALAPPDATA || path.dirname(app.getPath("appData")))) {
+        const failedSources = [];
+        const upgradeSources = listUpgradeRecoverySources(process.env.LOCALAPPDATA || path.dirname(app.getPath("appData")));
+        // 每检查完一个来源回报进度，渲染层据此显示「正在检查备份（n/总）」。
+        const reportProgress = (checked) => {
+            try { event.sender.send("lyspace:canvas-recovery-progress", { checked, total: upgradeSources.length, unreadable: unreadableSources }); } catch { /* 渲染层窗口可能已关闭。 */ }
+        };
+        reportProgress(0);
+        for (const [index, source] of upgradeSources.entries()) {
             try {
                 const extracted = await extractCanvasProjects(source);
                 if (extracted) sources.push({ ...source, ...extracted });
             } catch (error) {
                 unreadableSources += 1;
+                failedSources.push({ sourceType: source.sourceType, error: redactPathText(error instanceof Error ? error.message : String(error)) });
                 writeAppLog({ category: "error", level: "warn", message: "画布恢复来源无法读取", details: { sourceType: source.sourceType, error: error instanceof Error ? error.message : String(error) } });
             }
+            reportProgress(index + 1);
         }
         const scan = registerCanvasRecoveryScan(projects, sources);
         return {
@@ -826,7 +833,7 @@ app.whenReady().then(async () => {
             projects: scan.catalog.projects.map(({ project, order, ...item }) => item),
             configuration: scan.catalog.configuration ? { source: scan.catalog.configuration.source, createdAt: scan.catalog.configuration.createdAt } : null,
             unreadableSources,
-            diagnostics: { createdAt: new Date().toISOString(), sources: scan.catalog.sources.map(({ id, ...source }) => source), unreadableSources },
+            diagnostics: { createdAt: new Date().toISOString(), sources: scan.catalog.sources.map(({ id, ...source }) => source), unreadableSources, failedSources },
         };
     });
     ipcMain.handle("lyspace:canvas-recovery-apply", (_event, current, request) => {

@@ -118,6 +118,13 @@ function readProjectSnapshot(file) {
     return { projects: normalizeProjects(value.projects), createdAt: String(value.savedAt || value.createdAt || fs.statSync(file).mtime.toISOString()) };
 }
 
+// 扫描用异步版本：I/O 不阻塞主进程事件循环（JSON.parse 仍在主线程，量级可接受）。
+async function readProjectSnapshotAsync(file) {
+    const value = JSON.parse(await fs.promises.readFile(file, "utf8"));
+    const createdAt = String(value.savedAt || value.createdAt || (await fs.promises.stat(file)).mtime.toISOString());
+    return { projects: normalizeProjects(value.projects), createdAt };
+}
+
 function readCurrentSnapshot(appData) {
     try { return readProjectSnapshot(currentSnapshotFile(appData)).projects; } catch (error) { if (error?.code === "ENOENT") return null; throw error; }
 }
@@ -155,6 +162,42 @@ function childPath(root, relative) {
     return target;
 }
 
+// 扫描阶段只做只读预览，用「大小 + 修改时间」轻量清单检测来源是否在复制期间变化，
+// 避免对整个备份目录（可能数百 MB）做同步 SHA-256 全量哈希冻结主进程。
+async function directoryLightManifest(directory) {
+    if (!fs.existsSync(directory)) return [];
+    const root = path.resolve(directory);
+    const files = [];
+    const visit = async (current) => {
+        for (const entry of await fs.promises.readdir(current, { withFileTypes: true })) {
+            const target = path.join(current, entry.name);
+            if (entry.isSymbolicLink()) throw new Error(`数据目录包含不支持的链接：${target}`);
+            if (entry.isDirectory()) await visit(target);
+            else if (entry.isFile()) {
+                const stat = await fs.promises.stat(target);
+                files.push({ path: path.relative(root, target).replace(/\\/g, "/"), length: stat.size, mtimeMs: stat.mtimeMs });
+            }
+        }
+    };
+    await visit(root);
+    return files.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function sameLightManifest(left, right) {
+    const normalize = (items) => (items || [])
+        .map((item) => ({ path: String(item.path), length: Number(item.length), mtimeMs: Number(item.mtimeMs) }))
+        .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+}
+
+// 诊断导出不得包含本机路径：把错误文本中的盘符路径与 UNC 路径替换为占位符。
+// 路径内的空格（如 "LY Space"）仅在其后紧跟分隔符时视为路径延续，避免吞掉错误正文。
+function redactPathText(text) {
+    return String(text)
+        .replace(/[A-Za-z]:[\\/](?:[^\s\\/]+(?: [^\s\\/]+)*[\\/])*[^\s\\/]+/g, "<路径>")
+        .replace(/\\\\(?:[^\s\\/]+(?: [^\s\\/]+)*[\\/])*[^\s\\/]+/g, "<路径>");
+}
+
 function readManifest(root) {
     const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
     if (!manifest || manifest.status !== "ready") throw new Error("升级备份未完成");
@@ -174,12 +217,12 @@ function listUpgradeRecoverySources(localAppData) {
             if (legacy?.directory && Array.isArray(legacy.files)) {
                 const legacyRoot = childPath(root, legacy.directory);
                 const cache = childPath(legacyRoot, "Data cache");
-                if (fs.existsSync(cache)) sources.push({ id: `${entry.name}:legacy`, root, cache, verifyRoot: legacyRoot, expected: legacy.files, source: "升级前 AppData 备份", sourceType: "legacy", createdAt });
+                if (fs.existsSync(cache)) sources.push({ id: `${entry.name}:legacy`, root, cache, source: "升级前 AppData 备份", sourceType: "legacy", createdAt });
             }
             const current = manifest.snapshots?.currentInstall?.dataCache;
             if (current?.directory && Array.isArray(current.files)) {
                 const cache = childPath(root, current.directory);
-                if (fs.existsSync(cache)) sources.push({ id: `${entry.name}:install`, root, cache, verifyRoot: cache, expected: current.files, source: "安装前缓存备份", sourceType: "current-install", createdAt });
+                if (fs.existsSync(cache)) sources.push({ id: `${entry.name}:install`, root, cache, source: "安装前缓存备份", sourceType: "current-install", createdAt });
             }
             const replacedRoot = childPath(root, "replaced-destinations");
             if (fs.existsSync(replacedRoot)) {
@@ -195,28 +238,35 @@ function listUpgradeRecoverySources(localAppData) {
     return sources.sort((left, right) => compareSourceTimes(right, left));
 }
 
-function listSafetyRecoverySources(appData) {
+async function listSafetyRecoverySources(appData) {
     const root = snapshotDirectory(appData);
     if (!fs.existsSync(root)) return [];
     const sources = [];
-    const add = (id, source, sourceType, file) => {
+    const add = async (id, source, sourceType, file) => {
         try {
-            const snapshot = readProjectSnapshot(file);
+            const snapshot = await readProjectSnapshotAsync(file);
             sources.push({ id, source, sourceType, createdAt: snapshot.createdAt, projects: snapshot.projects });
         } catch {
             // 安全快照本身损坏时继续查找其他历史副本。
         }
     };
     const current = currentSnapshotFile(appData);
-    if (fs.existsSync(current)) add("safety:current", "当前安全快照", "safety", current);
+    if (fs.existsSync(current)) await add("safety:current", "当前安全快照", "safety", current);
     const history = path.join(root, "history");
-    if (fs.existsSync(history)) for (const entry of fs.readdirSync(history, { withFileTypes: true }).filter((item) => item.isFile() && item.name.endsWith(".json"))) add(`safety:history:${entry.name}`, "历史安全快照", "history", childPath(history, entry.name));
+    if (fs.existsSync(history)) {
+        for (const entry of await fs.promises.readdir(history, { withFileTypes: true })) {
+            if (entry.isFile() && entry.name.endsWith(".json")) await add(`safety:history:${entry.name}`, "历史安全快照", "history", childPath(history, entry.name));
+        }
+    }
     const recoveries = path.join(root, "recoveries");
-    if (fs.existsSync(recoveries)) for (const entry of fs.readdirSync(recoveries, { withFileTypes: true }).filter((item) => item.isDirectory())) {
-        const recoveryRoot = childPath(recoveries, entry.name);
-        for (const name of ["recovered.json", "merged.json"]) {
-            const file = childPath(recoveryRoot, name);
-            if (fs.existsSync(file)) add(`safety:recovery:${entry.name}:${name}`, "过往恢复副本", "recovery", file);
+    if (fs.existsSync(recoveries)) {
+        for (const entry of await fs.promises.readdir(recoveries, { withFileTypes: true })) {
+            if (!entry.isDirectory()) continue;
+            const recoveryRoot = childPath(recoveries, entry.name);
+            for (const name of ["recovered.json", "merged.json"]) {
+                const file = childPath(recoveryRoot, name);
+                if (fs.existsSync(file)) await add(`safety:recovery:${entry.name}:${name}`, "过往恢复副本", "recovery", file);
+            }
         }
     }
     return sources.sort((left, right) => compareSourceTimes(right, left));
@@ -228,4 +278,4 @@ function listUpgradeBackups(localAppData) {
     return [...byRoot.values()].sort((left, right) => compareSourceTimes(right, left));
 }
 
-module.exports = { SNAPSHOT_LIMIT, applyRecoverySelection, compareProjectVersions, createRecoveryCatalog, ensureCurrentSnapshot, isNewerProject, listSafetyRecoverySources, listUpgradeBackups, listUpgradeRecoverySources, mergeProjects, missingProjects, normalizeProjects, projectDigest, readCurrentSnapshot, saveCurrentSnapshot, saveRecoveryBundle, writeJsonAtomic };
+module.exports = { SNAPSHOT_LIMIT, applyRecoverySelection, compareProjectVersions, createRecoveryCatalog, directoryLightManifest, ensureCurrentSnapshot, isNewerProject, listSafetyRecoverySources, listUpgradeBackups, listUpgradeRecoverySources, mergeProjects, missingProjects, normalizeProjects, projectDigest, readCurrentSnapshot, redactPathText, sameLightManifest, saveCurrentSnapshot, saveRecoveryBundle, writeJsonAtomic };

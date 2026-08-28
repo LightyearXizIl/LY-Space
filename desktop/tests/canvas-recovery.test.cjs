@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { applyRecoverySelection, createRecoveryCatalog, listUpgradeRecoverySources, mergeProjects, missingProjects, projectDigest } = require("../canvas-recovery.cjs");
+const { applyRecoverySelection, createRecoveryCatalog, directoryLightManifest, listSafetyRecoverySources, listUpgradeRecoverySources, mergeProjects, missingProjects, projectDigest, redactPathText, sameLightManifest } = require("../canvas-recovery.cjs");
 
 const project = (id, updatedAt, title = id) => ({ id, title, updatedAt, nodes: [], connections: [] });
 
@@ -84,4 +84,53 @@ test("损坏升级备份不会阻断其他有效恢复来源", () => {
     } finally {
         fs.rmSync(temp, { recursive: true, force: true });
     }
+});
+
+test("轻量清单用大小与修改时间检测目录一致性", async () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ly-space-light-"));
+    try {
+        fs.mkdirSync(path.join(temp, "IndexedDB"), { recursive: true });
+        fs.writeFileSync(path.join(temp, "IndexedDB", "data.ldb"), "hello");
+        const before = await directoryLightManifest(temp);
+        assert.equal(before.length, 1);
+        assert.equal(before[0].path, "IndexedDB/data.ldb");
+        assert.equal(before[0].length, 5);
+        assert.ok(sameLightManifest(before, await directoryLightManifest(temp)));
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        fs.writeFileSync(path.join(temp, "IndexedDB", "data.ldb"), "hello world");
+        assert.ok(!sameLightManifest(before, await directoryLightManifest(temp)));
+    } finally {
+        fs.rmSync(temp, { recursive: true, force: true });
+    }
+});
+
+test("安全快照来源列表异步读取当前与历史副本", async () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "ly-space-safety-"));
+    try {
+        const root = path.join(temp, "canvas-recovery");
+        fs.mkdirSync(path.join(root, "history"), { recursive: true });
+        const projects = [project("p1", "2026-08-20")];
+        fs.writeFileSync(path.join(root, "current.json"), JSON.stringify({ projects, savedAt: "2026-08-28T01:00:00Z" }));
+        fs.writeFileSync(path.join(root, "history", "snap.json"), JSON.stringify({ projects: [project("p0", "2026-08-10")], savedAt: "2026-08-10T01:00:00Z" }));
+        fs.writeFileSync(path.join(root, "history", "broken.json"), "{");
+        const sources = await listSafetyRecoverySources(temp);
+        assert.deepEqual(sources.map((item) => item.id).sort(), ["safety:current", "safety:history:snap.json"]);
+        assert.deepEqual(sources.find((item) => item.id === "safety:current").projects, projects);
+    } finally {
+        fs.rmSync(temp, { recursive: true, force: true });
+    }
+});
+
+test("诊断导出的 failedSources 会保留来源类型并脱敏错误路径", () => {
+    const failedSources = [
+        { sourceType: "legacy", error: redactPathText("恢复来源校验失败：C:\\Users\\EDY\\AppData\\Local\\LY Space\\Backups\\v0.4.7-x") },
+        { sourceType: "replaced", error: redactPathText("读取 D:/Software/cache 失败") },
+        { sourceType: "current-install", error: redactPathText("不支持 UNC \\\\server\\share 目录") },
+    ];
+    assert.deepEqual(failedSources, [
+        { sourceType: "legacy", error: "恢复来源校验失败：<路径>" },
+        { sourceType: "replaced", error: "读取 <路径> 失败" },
+        { sourceType: "current-install", error: "不支持 UNC <路径> 目录" },
+    ]);
+    assert.equal(redactPathText("无路径错误"), "无路径错误");
 });

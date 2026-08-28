@@ -30,6 +30,11 @@ contextBridge.exposeInMainWorld("lySpaceDesktop", {
     ensureCanvasSnapshot: (projects) => ipcRenderer.invoke("lyspace:ensure-canvas-snapshot", projects),
     scanCanvasRecovery: (projects) => ipcRenderer.invoke("lyspace:canvas-recovery-scan", projects),
     applyCanvasRecovery: (current, request) => ipcRenderer.invoke("lyspace:canvas-recovery-apply", current, request),
+    onCanvasRecoveryProgress: (listener) => {
+        const handler = (_event, progress) => listener(progress);
+        ipcRenderer.on("lyspace:canvas-recovery-progress", handler);
+        return () => ipcRenderer.removeListener("lyspace:canvas-recovery-progress", handler);
+    },
     saveFileDialog: (payload) => ipcRenderer.invoke("lyspace:save-file-dialog", payload),
     saveFilesDialog: (payload) => ipcRenderer.invoke("lyspace:save-files-dialog", payload),
     writeGeneratedOutput: (payload) => ipcRenderer.invoke("lyspace:write-generated-output", payload),

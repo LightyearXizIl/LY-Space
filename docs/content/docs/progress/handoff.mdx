@@ -9,9 +9,9 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；待发布版本 `v0.6.7`）。
-- **当前发布基线**：`v0.6.6` 已于 `2026-08-28T02:31:36Z` 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `33136032105` 为 `completed/success`，完成构建、草稿 Release、三项资产上传、资产/更新清单校验和正式发布。Release 的 exe、blockmap、`latest.yml` 均为 `uploaded`；GitHub API 给出的安装包 SHA-256 为 `0ccb5562e33df488c4a0fb8d8c6213b5ec144df4d1a7f1de6a0b781568eef55e`，大小 `92,574,556` 字节，公开安装包链接返回 HTTP 200。Windows 安装包按维护者明确授权维持无签名发布。
-- **v0.6.7 待发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断将记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；当前发布版本 `v0.6.7`）。
+- **最新发布状态**：`v0.6.7` 已于 `2026-08-28T07:52:18Z` 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `33152913258` 为 `completed/success`。Release 的 exe、blockmap、`latest.yml` 均为 `uploaded`；远端 EXE 为 `92,576,174` 字节、SHA-256 `3b7da337b189b60f3e0763be1ae6cb9a4740c4e237229713b85d95678e9cd287`，公开安装包链接返回 HTTP 200。`latest.yml` 的 version/path/size/sha512 均已与远端 EXE 核对。Windows 安装包按维护者明确授权维持无签名发布。
+- **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
 - **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`
@@ -27,7 +27,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.6.7 待发布；v0.6.6 的 GitHub Release、三项桌面资产和更新清单均已核验。
+- **当前版本**：v0.6.7 已发布（GitHub Release、三项桌面资产和更新清单均已核验）。
 
 ## 2. 数据存储
 
@@ -318,6 +318,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **交互边界**（`pages/canvas/index.tsx`）：移除进入画布库后的自动扫描；“恢复画布”是唯一入口，点击立即打开对话框并显示真实的 `checked / total` 进度。扫描期间可关闭对话框，后台任务继续完成但不得重新打开；扫描只读备份，不写入当前画布。
 - **性能与校验**（`canvas-recovery.cjs`、`main.cjs`）：安全快照、目录清单、复制和临时目录清理均使用异步文件 API。复制前后只比对 `path / length / mtimeMs` 轻量清单，确认副本完整且来源未变化；不再用备份 manifest 的全量 SHA-256 阻断可读来源。隐藏 BrowserWindow 仍负责必要的 IndexedDB/LevelDB 解析。
 - **诊断与坑**：每个升级备份检查完成都会向渲染层发进度事件；不可读来源继续扫描其他来源，运行日志保留原始错误用于本机排查，导出 JSON 仅保留 `sourceType` 与将盘符/UNC 路径替换为 `<路径>` 的错误文本。自动化检查不等同于问题电脑的真实 LevelDB 可读性；8 个来源的最终结论必须查看该机日志和导出的 `failedSources`。
+- **验证与发布核验**：`canvas-recovery` Node 测试 9/9、渲染层类型检查、主进程语法检查、版本校验和本地 `pack:win`/包校验均通过。提交/tag 为 `febe9e0` / `v0.6.7`；Release `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.6.7` 为正式版，Actions `33152913258` 成功。远端 `LY-Space-Setup-0.6.7.exe`（92,576,174 字节）、blockmap（98,046 字节）与 `latest.yml`（344 字节）均为 `uploaded`；`latest.yml` 的 version `0.6.7`、path/文件名、size 与远端 EXE 一致，SHA-512 为 `elXwR77CreRRqTqZQAGv5XZSSusCqe6oAxxmkuA+8xuu3KcFWLSdiHgDlzQAuRcZ4e0HEiICpKux6oUVOIR58A==`。本地留存安装包为 `release\\LY Space Setup 0.6.7.exe`，92,576,165 字节、SHA-256 `DA045056949A9A76B28AC33019114FCCA3F1081A84E0BF99E99D7292990F5FD1`；本地与 CI 构建时间不同，字节与哈希差异属预期。
 
 ### 3.23 v0.4.7 变更要点
 

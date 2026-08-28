@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Alert, App, Button } from "antd";
-import { Download, FileUp, Plus } from "lucide-react";
+import { Alert, App, Button, Checkbox, Modal } from "antd";
+import { Download, FileUp, Plus, RefreshCw } from "lucide-react";
 
 import { readZip } from "@/lib/zip";
 import { getMediaBlob, setMediaBlob } from "@/services/file-storage";
@@ -15,9 +15,10 @@ import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { shouldInsertProjectBefore } from "@/lib/canvas/canvas-project-order";
 import { logAppEvent } from "@/services/app-logger";
+import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 
 export default function CanvasPage() {
-    const { message, modal } = App.useApp();
+    const { message } = App.useApp();
     const navigate = useNavigate();
     const inputRef = useRef<HTMLInputElement>(null);
     const hydrated = useCanvasStore((state) => state.hydrated);
@@ -25,7 +26,6 @@ export default function CanvasPage() {
     const projects = useCanvasStore((state) => state.projects);
     const createProject = useCanvasStore((state) => state.createProject);
     const importProject = useCanvasStore((state) => state.importProject);
-    const replaceProjects = useCanvasStore((state) => state.replaceProjects);
     const recoverProjects = useCanvasStore((state) => state.recoverProjects);
     const selectedIds = useCanvasUiStore((state) => state.selectedProjectIds);
     const setDeleteIds = useCanvasUiStore((state) => state.setDeleteProjectIds);
@@ -34,29 +34,55 @@ export default function CanvasPage() {
     const [dragProjectId, setDragProjectId] = useState<string | null>(null);
     const [dropTarget, setDropTarget] = useState<{ id: string; before: boolean } | null>(null);
     const recoveryChecked = useRef(false);
+    const [recoveryScan, setRecoveryScan] = useState<CanvasRecoveryScan | null>(null);
+    const [recoveryOpen, setRecoveryOpen] = useState(false);
+    const [recoveryScanning, setRecoveryScanning] = useState(false);
+    const [recoveryApplying, setRecoveryApplying] = useState(false);
+    const [selectedRecoveryIds, setSelectedRecoveryIds] = useState<string[]>([]);
+    const [restoreConfiguration, setRestoreConfiguration] = useState(false);
+
+    const scanRecovery = useCallback(async (openWhenEmpty = false) => {
+        const desktop = window.lySpaceDesktop;
+        if (!desktop) return;
+        setRecoveryScanning(true);
+        try {
+            const scan = await desktop.scanCanvasRecovery(projects);
+            setRecoveryScan(scan);
+            setSelectedRecoveryIds(scan.projects.map((project) => project.id));
+            setRestoreConfiguration(false);
+            if (scan.projects.length || openWhenEmpty) setRecoveryOpen(true);
+            if (!scan.projects.length && !openWhenEmpty) return;
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "无法扫描本机画布备份");
+        } finally {
+            setRecoveryScanning(false);
+        }
+    }, [message, projects]);
 
     useEffect(() => {
         if (!hydrated || recoveryChecked.current || !window.lySpaceDesktop) return;
-        const desktop = window.lySpaceDesktop;
         recoveryChecked.current = true;
-        void desktop.getCanvasRecoveryCandidates(projects).then((candidates) => {
-            const candidate = candidates[0];
-            if (!candidate) return;
-            const when = candidate.createdAt ? `（${new Date(candidate.createdAt).toLocaleString()}）` : "";
-            void (async () => {
-                const confirmed = await new Promise<boolean>((resolve) => {
-                    modal.confirm({ title: "检测到可恢复画布", content: `${candidate.source}${when}中有 ${candidate.missing} 个当前未显示的画布。恢复会保留当前画布，并只补回缺失项目。`, okText: "恢复缺失画布", cancelText: "暂不恢复", onOk: () => resolve(true), onCancel: () => resolve(false) });
-                });
-                if (!confirmed) return;
-                const merged = await desktop.recoverCanvasProjects(projects, candidate.projects) as typeof projects;
-                if (hydrationError) recoverProjects(merged); else replaceProjects(merged);
-                if (candidate.config?.config || candidate.config?.webdav) {
-                    useConfigStore.setState((state) => ({ config: { ...state.config, ...(candidate.config?.config as object) }, webdav: { ...state.webdav, ...(candidate.config?.webdav as object) } }));
-                }
-                message.success(`已恢复 ${candidate.missing} 个画布`);
-            })().catch((error) => message.error(error instanceof Error ? error.message : "恢复画布失败，原数据未修改"));
-        }).catch(() => {});
-    }, [hydrated, hydrationError, message, projects, recoverProjects, replaceProjects]);
+        void scanRecovery(false);
+    }, [hydrated, scanRecovery]);
+
+    const applyRecovery = async () => {
+        if (!recoveryScan || !selectedRecoveryIds.length || !window.lySpaceDesktop) return;
+        setRecoveryApplying(true);
+        try {
+            const result = await window.lySpaceDesktop.applyCanvasRecovery(projects, { scanId: recoveryScan.scanId, projectIds: selectedRecoveryIds, restoreConfiguration });
+            await recoverProjects(result.projects as CanvasProject[]);
+            if (result.configuration?.config || result.configuration?.webdav) {
+                useConfigStore.setState((state) => ({ config: { ...state.config, ...(result.configuration?.config as object) }, webdav: { ...state.webdav, ...(result.configuration?.webdav as object) } }));
+            }
+            setRecoveryOpen(false);
+            setRecoveryScan(null);
+            message.success(`已恢复 ${result.recovered} 个画布`);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "恢复画布失败，当前数据未被覆盖");
+        } finally {
+            setRecoveryApplying(false);
+        }
+    };
 
     const clearDragState = () => {
         setDragProjectId(null);
@@ -150,6 +176,9 @@ export default function CanvasPage() {
                         <Button disabled={!hydrated} icon={<FileUp className="size-4" />} onClick={() => inputRef.current?.click()}>
                             导入画布
                         </Button>
+                        <Button disabled={!hydrated || recoveryScanning} icon={<RefreshCw className={`size-4 ${recoveryScanning ? "animate-spin" : ""}`} />} onClick={() => void scanRecovery(true)}>
+                            恢复画布
+                        </Button>
                         <Button disabled={!hydrated} type="primary" icon={<Plus className="size-4" />} onClick={createAndEnter}>
                             新建画布
                         </Button>
@@ -194,6 +223,44 @@ export default function CanvasPage() {
 
             <input ref={inputRef} type="file" accept="application/zip,.zip" className="hidden" onChange={(event) => void importCanvas(event.target.files?.[0])} />
             <CanvasDeleteProjectsDialog />
+            <Modal
+                title="恢复画布"
+                open={recoveryOpen}
+                centered
+                width={720}
+                destroyOnHidden
+                okText={selectedRecoveryIds.length ? `恢复 ${selectedRecoveryIds.length} 个画布` : "请选择画布"}
+                cancelText="暂不恢复"
+                okButtonProps={{ disabled: !selectedRecoveryIds.length, loading: recoveryApplying }}
+                onOk={() => void applyRecovery()}
+                onCancel={() => { if (!recoveryApplying) setRecoveryOpen(false); }}
+            >
+                {recoveryScan?.projects.length ? (
+                    <div className="space-y-4">
+                        <p className="text-sm text-stone-600 dark:text-stone-300">已检查 {recoveryScan.sources.length} 个可读备份来源。恢复会保留当前较新的版本，并在写入前创建可回退副本。</p>
+                        {recoveryScan.unreadableSources ? <Alert showIcon type="warning" message={`${recoveryScan.unreadableSources} 个备份来源无法读取，已继续检查其余来源`} /> : null}
+                        <Checkbox checked={selectedRecoveryIds.length === recoveryScan.projects.length} indeterminate={selectedRecoveryIds.length > 0 && selectedRecoveryIds.length < recoveryScan.projects.length} onChange={(event) => setSelectedRecoveryIds(event.target.checked ? recoveryScan.projects.map((project) => project.id) : [])}>
+                            选择全部可恢复画布
+                        </Checkbox>
+                        <Checkbox.Group value={selectedRecoveryIds} className="flex max-h-80 w-full flex-col gap-2 overflow-y-auto pr-1" onChange={(values) => setSelectedRecoveryIds(values.map(String))}>
+                            {recoveryScan.projects.map((project) => (
+                                <Checkbox key={project.id} value={project.id} className="m-0 rounded border border-stone-200 px-3 py-2 dark:border-stone-700">
+                                    <span className="flex min-w-0 flex-col gap-1">
+                                        <span className="truncate font-medium">{project.title}</span>
+                                        <span className="text-xs text-stone-500">{project.status === "missing" ? "缺失项目" : "可恢复的新版本"} · {project.source} · {project.updatedAt ? new Date(project.updatedAt).toLocaleString() : "更新时间未知"}</span>
+                                    </span>
+                                </Checkbox>
+                            ))}
+                        </Checkbox.Group>
+                        {recoveryScan.configuration ? <Checkbox checked={restoreConfiguration} onChange={(event) => setRestoreConfiguration(event.target.checked)}>同时恢复 AI/WebDAV 配置（来自 {recoveryScan.configuration.source}）</Checkbox> : null}
+                    </div>
+                ) : (
+                    <div className="space-y-3 text-sm text-stone-600 dark:text-stone-300">
+                        <p>未检测到可恢复的缺失画布或较新版本。</p>
+                        {recoveryScan?.unreadableSources ? <Alert showIcon type="warning" message={`${recoveryScan.unreadableSources} 个备份来源无法读取，请保留备份目录后联系支持`} /> : <p>扫描只读取本机备份，未修改任何画布或升级备份。</p>}
+                    </div>
+                )}
+            </Modal>
         </main>
     );
 }

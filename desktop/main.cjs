@@ -9,7 +9,7 @@ const { copyDirectoryExact, directoryManifest, restoreBridgeBackup, sameManifest
 const { assertWritableDirectory, ensureStorageDirectories: ensureConfiguredStorageDirectories, readStorageSettingsFile, writeStorageSettingsFile } = require("./storage-settings.cjs");
 const { buildInstallerArgs, buildInstallerLaunchOptions, createPersistenceFlushCoordinator } = require("./update-install-coordinator.cjs");
 const { createFeaturePluginManager } = require("./feature-plugin-manager.cjs");
-const { ensureCurrentSnapshot, listUpgradeBackups, mergeProjects, missingProjects, normalizeProjects, readCurrentSnapshot, saveCurrentSnapshot, saveRecoveryBundle } = require("./canvas-recovery.cjs");
+const { applyRecoverySelection, createRecoveryCatalog, ensureCurrentSnapshot, listSafetyRecoverySources, listUpgradeRecoverySources, normalizeProjects, projectDigest, saveCurrentSnapshot, saveRecoveryBundle } = require("./canvas-recovery.cjs");
 const { normalizeRetentionDays, pruneLogFile, readLogSettings, writeLogSettings } = require("./app-logs.cjs");
 
 protocol.registerSchemesAsPrivileged([
@@ -39,6 +39,8 @@ const APP_LOG_MAX_BYTES = 4 * 1024 * 1024;
 const APP_LOG_KEEP_BYTES = 2 * 1024 * 1024;
 let logSettings = { retentionDays: 7 };
 let lastLogPruneAt = 0;
+const CANVAS_RECOVERY_SCAN_TTL_MS = 20 * 60 * 1000;
+const canvasRecoveryScans = new Map();
 
 function displayVersion(version) {
     const value = String(version || "").trim().replace(/^v/i, "");
@@ -152,20 +154,34 @@ async function clearAppLogs() {
     await fs.promises.writeFile(appLogFile(), "", "utf8");
 }
 
-async function extractCanvasProjects(cacheRoot) {
+async function extractCanvasProjects(source) {
+    const cacheRoot = source.cache;
     const tempRoot = path.join(appLogDirectory(), "canvas-recovery-temp", `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-    const copy = (source, destination) => { if (fs.existsSync(source)) fs.cpSync(source, destination, { recursive: true, errorOnExist: false }); };
+    const verifyRoot = source.verifyRoot || cacheRoot;
+    const expected = source.expected || directoryManifest(verifyRoot);
+    const cacheManifest = directoryManifest(cacheRoot);
+    if (!sameManifest(directoryManifest(verifyRoot), expected)) throw new Error("恢复来源校验失败");
+    const copy = (from, destination) => { if (fs.existsSync(from)) fs.cpSync(from, destination, { recursive: true, errorOnExist: false }); };
     try {
         copy(path.join(cacheRoot, "IndexedDB"), path.join(tempRoot, "IndexedDB"));
         copy(path.join(cacheRoot, "Local Storage"), path.join(tempRoot, "Local Storage"));
+        if (!sameManifest(directoryManifest(cacheRoot), cacheManifest) || !sameManifest(directoryManifest(verifyRoot), expected)) throw new Error("恢复来源在读取期间发生变化");
+        const copiedManifest = directoryManifest(tempRoot);
+        const copiedExpected = [];
+        for (const item of cacheManifest) {
+            if (item.path.startsWith("IndexedDB/") || item.path.startsWith("Local Storage/")) copiedExpected.push(item);
+        }
+        if (!sameManifest(copiedManifest, copiedExpected)) throw new Error("恢复副本校验失败");
         const recoverySession = session.fromPath(tempRoot);
         await recoverySession.protocol.handle("lyspace", () => new Response("<!doctype html><title>LY Space recovery</title>", { headers: { "content-type": "text/html" } }));
         const window = new BrowserWindow({ show: false, webPreferences: { session: recoverySession, sandbox: true, contextIsolation: true, nodeIntegration: false } });
         try {
             await window.loadURL("lyspace://app/recovery");
             const value = await window.webContents.executeJavaScript(`new Promise((resolve) => { const config = localStorage.getItem("infinite-canvas:ai_config_store"); const request = indexedDB.open("infinite-canvas"); request.onerror = () => resolve({ canvas: null, config }); request.onsuccess = () => { const db = request.result; if (!db.objectStoreNames.contains("app_state")) return resolve({ canvas: null, config }); const get = db.transaction("app_state", "readonly").objectStore("app_state").get("infinite-canvas:canvas_store"); get.onerror = () => resolve({ canvas: null, config }); get.onsuccess = () => resolve({ canvas: typeof get.result === "string" ? get.result : null, config }); }; })`, true);
-            if (!value?.canvas) return null;
-            return { projects: normalizeProjects(JSON.parse(value.canvas).state?.projects), config: value.config ? JSON.parse(value.config).state || null : null };
+            let config = null;
+            try { config = value?.config ? JSON.parse(value.config).state || null : null; } catch { /* 配置损坏不影响画布恢复。 */ }
+            if (!value?.canvas) return config ? { projects: [], config } : null;
+            return { projects: normalizeProjects(JSON.parse(value.canvas).state?.projects), config };
         } finally {
             window.destroy();
             await recoverySession.clearStorageData().catch(() => {});
@@ -173,6 +189,14 @@ async function extractCanvasProjects(cacheRoot) {
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
+}
+
+function registerCanvasRecoveryScan(current, sources) {
+    for (const [id, scan] of canvasRecoveryScans) if (Date.now() - scan.createdAt > CANVAS_RECOVERY_SCAN_TTL_MS) canvasRecoveryScans.delete(id);
+    const id = crypto.randomUUID();
+    const catalog = createRecoveryCatalog(current, sources);
+    canvasRecoveryScans.set(id, { createdAt: Date.now(), catalog });
+    return { id, catalog };
 }
 
 const UPDATE_OWNER = "LightyearXizIl";
@@ -782,24 +806,44 @@ app.whenReady().then(async () => {
     });
     ipcMain.handle("lyspace:canvas-snapshot", (_event, projects) => saveCurrentSnapshot(appLogDirectory(), normalizeProjects(projects)));
     ipcMain.handle("lyspace:ensure-canvas-snapshot", (_event, projects) => ensureCurrentSnapshot(appLogDirectory(), normalizeProjects(projects)));
-    ipcMain.handle("lyspace:canvas-recovery-candidates", async (_event, current) => {
+    ipcMain.handle("lyspace:canvas-recovery-scan", async (_event, current) => {
         const projects = normalizeProjects(current);
-        const candidates = [];
-        const safety = readCurrentSnapshot(appLogDirectory());
-        if (safety && missingProjects(projects, safety).length) candidates.push({ id: "safety", source: "安全快照", createdAt: "", missing: missingProjects(projects, safety).length, projects: safety });
-        for (const backup of listUpgradeBackups(process.env.LOCALAPPDATA || path.dirname(app.getPath("appData")))) {
-            const recovered = await extractCanvasProjects(backup.cache).catch(() => null);
-            if (!recovered) continue;
-            const missing = missingProjects(projects, recovered.projects);
-            if (missing.length || recovered.config) { candidates.push({ id: backup.id, source: "升级前备份", createdAt: backup.createdAt, missing: missing.length, projects: recovered.projects, config: recovered.config }); break; }
+        const sources = listSafetyRecoverySources(appLogDirectory());
+        let unreadableSources = 0;
+        for (const source of listUpgradeRecoverySources(process.env.LOCALAPPDATA || path.dirname(app.getPath("appData")))) {
+            try {
+                const extracted = await extractCanvasProjects(source);
+                if (extracted) sources.push({ ...source, ...extracted });
+            } catch (error) {
+                unreadableSources += 1;
+                writeAppLog({ category: "error", level: "warn", message: "画布恢复来源无法读取", details: { sourceType: source.sourceType, error: error instanceof Error ? error.message : String(error) } });
+            }
         }
-        return candidates;
+        const scan = registerCanvasRecoveryScan(projects, sources);
+        return {
+            scanId: scan.id,
+            sources: scan.catalog.sources,
+            projects: scan.catalog.projects.map(({ project, order, ...item }) => item),
+            configuration: scan.catalog.configuration ? { source: scan.catalog.configuration.source, createdAt: scan.catalog.configuration.createdAt } : null,
+            unreadableSources,
+        };
     });
-    ipcMain.handle("lyspace:canvas-recover", (_event, current, recovered) => {
-        const merged = mergeProjects(current, recovered);
-        saveRecoveryBundle(appLogDirectory(), current, recovered, merged);
-        saveCurrentSnapshot(appLogDirectory(), merged);
-        return merged;
+    ipcMain.handle("lyspace:canvas-recovery-apply", (_event, current, request) => {
+        const projects = normalizeProjects(current);
+        const scanId = String(request?.scanId || "");
+        const scan = canvasRecoveryScans.get(scanId);
+        if (!scan || Date.now() - scan.createdAt > CANVAS_RECOVERY_SCAN_TTL_MS) {
+            canvasRecoveryScans.delete(scanId);
+            throw new Error("恢复预览已失效，请重新扫描备份");
+        }
+        if (projectDigest(projects) !== scan.catalog.currentDigest) throw new Error("画布在扫描后已变化，请重新扫描备份后再恢复");
+        const result = applyRecoverySelection(projects, scan.catalog, request?.projectIds);
+        if (!result.selected.length) throw new Error("请至少选择一个可恢复画布");
+        saveRecoveryBundle(appLogDirectory(), projects, result.selected, result.merged);
+        saveCurrentSnapshot(appLogDirectory(), result.merged);
+        canvasRecoveryScans.delete(scanId);
+        const config = request?.restoreConfiguration ? scan.catalog.configuration?.config || null : null;
+        return { projects: result.merged, recovered: result.selected.length, configuration: config };
     });
     ipcMain.handle("lyspace:open-app-log-directory", () => {
         fs.mkdirSync(appLogDirectory(), { recursive: true });

@@ -33,7 +33,7 @@ type CanvasStore = {
     reorderProjects: (id: string, targetId: string, before: boolean) => void;
     deleteProjects: (ids: string[]) => void;
     replaceProjects: (projects: CanvasProject[]) => void;
-    recoverProjects: (projects: CanvasProject[]) => void;
+    recoverProjects: (projects: CanvasProject[]) => Promise<void>;
     updateProject: (id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport">>) => void;
 };
 
@@ -126,7 +126,11 @@ export const useCanvasStore = create<CanvasStore>()(
                     return { projects };
                 }),
             replaceProjects: (projects) => { if (!get().hydrationError) set({ projects }); },
-            recoverProjects: (projects) => set({ projects, hydrationError: "" }),
+            recoverProjects: async (projects) => {
+                const next = { state: { projects } } as StorageValue<CanvasStore>;
+                await canvasStorage.setItem(CANVAS_STORE_KEY, next);
+                set({ projects, hydrationError: "" });
+            },
             updateProject: (id, patch) =>
                 get().hydrationError ? undefined :
                 set((state) => ({

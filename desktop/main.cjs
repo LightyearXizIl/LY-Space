@@ -826,6 +826,7 @@ app.whenReady().then(async () => {
             projects: scan.catalog.projects.map(({ project, order, ...item }) => item),
             configuration: scan.catalog.configuration ? { source: scan.catalog.configuration.source, createdAt: scan.catalog.configuration.createdAt } : null,
             unreadableSources,
+            diagnostics: { createdAt: new Date().toISOString(), sources: scan.catalog.sources.map(({ id, ...source }) => source), unreadableSources },
         };
     });
     ipcMain.handle("lyspace:canvas-recovery-apply", (_event, current, request) => {

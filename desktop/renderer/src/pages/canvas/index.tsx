@@ -84,6 +84,17 @@ export default function CanvasPage() {
         }
     };
 
+    const exportRecoveryDiagnostics = async () => {
+        if (!recoveryScan || !window.lySpaceDesktop) return;
+        try {
+            const bytes = new TextEncoder().encode(JSON.stringify(recoveryScan.diagnostics, null, 2)).buffer as ArrayBuffer;
+            const result = await window.lySpaceDesktop.saveFileDialog({ title: "导出画布恢复诊断", defaultPath: "ly-space-canvas-recovery-diagnostic.json", bytes, filters: [{ name: "JSON", extensions: ["json"] }] });
+            if (!result.canceled) message.success("已导出不含本机路径和项目内容的恢复诊断");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "导出恢复诊断失败");
+        }
+    };
+
     const clearDragState = () => {
         setDragProjectId(null);
         setDropTarget(null);
@@ -253,11 +264,13 @@ export default function CanvasPage() {
                             ))}
                         </Checkbox.Group>
                         {recoveryScan.configuration ? <Checkbox checked={restoreConfiguration} onChange={(event) => setRestoreConfiguration(event.target.checked)}>同时恢复 AI/WebDAV 配置（来自 {recoveryScan.configuration.source}）</Checkbox> : null}
+                        <Button size="small" onClick={() => void exportRecoveryDiagnostics()}>导出恢复诊断</Button>
                     </div>
                 ) : (
                     <div className="space-y-3 text-sm text-stone-600 dark:text-stone-300">
                         <p>未检测到可恢复的缺失画布或较新版本。</p>
                         {recoveryScan?.unreadableSources ? <Alert showIcon type="warning" message={`${recoveryScan.unreadableSources} 个备份来源无法读取，请保留备份目录后联系支持`} /> : <p>扫描只读取本机备份，未修改任何画布或升级备份。</p>}
+                        <Button size="small" onClick={() => void exportRecoveryDiagnostics()}>导出恢复诊断</Button>
                     </div>
                 )}
             </Modal>

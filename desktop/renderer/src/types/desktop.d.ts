@@ -21,7 +21,7 @@ declare global {
     type AppLogSettings = { retentionDays: 7 | 14 | 30 };
     type CanvasRecoverySource = { id: string; source: string; sourceType: "legacy" | "current-install" | "replaced" | "safety" | "history" | "recovery" | "manual"; createdAt: string; projects: number };
     type CanvasRecoveryProject = { id: string; title: string; updatedAt: string; status: "missing" | "newer"; sourceId: string; source: string; sourceType: CanvasRecoverySource["sourceType"]; createdAt: string };
-    type CanvasRecoveryScan = { scanId: string; sources: CanvasRecoverySource[]; projects: CanvasRecoveryProject[]; configuration: { source: string; createdAt: string } | null; unreadableSources: number };
+    type CanvasRecoveryScan = { scanId: string; sources: CanvasRecoverySource[]; projects: CanvasRecoveryProject[]; configuration: { source: string; createdAt: string } | null; unreadableSources: number; diagnostics: { createdAt: string; sources: Array<Omit<CanvasRecoverySource, "id">>; unreadableSources: number } };
     type CanvasRecoveryApplyResult = { projects: unknown[]; recovered: number; configuration: { config?: unknown; webdav?: unknown } | null };
     type FeaturePluginStatus = "ready" | "disabled" | "update-available" | "incompatible" | "repair";
     type FeaturePluginAsset = { path: string; url: string; size: number; sha256: string };

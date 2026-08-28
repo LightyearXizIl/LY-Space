@@ -10,11 +10,16 @@ const blockmap = `${installer}.blockmap`;
 const updateMetadata = path.join(releaseDir, "latest.yml");
 const unpackedDir = path.join(releaseDir, "win-unpacked");
 const appExe = path.join(unpackedDir, "LY Space.exe");
+const appResources = path.join(unpackedDir, "resources", "app");
 // v0.5.6 本地基线 88.26 MiB；功能插件仅允许引入轻量宿主，重型 Agent/Codex 必须按需下载。
 const maxInstallerBytes = 92_545_455 + 3 * 1024 * 1024;
 
 for (const target of [installer, blockmap, updateMetadata, appExe]) {
     if (!fs.existsSync(target)) throw new Error(`Missing packaged artifact: ${target}`);
+}
+for (const moduleName of ["main.cjs", "app-logs.cjs", "canvas-recovery.cjs"]) {
+    const target = path.join(appResources, moduleName);
+    if (!fs.existsSync(target)) throw new Error(`Missing packaged main-process module: ${target}`);
 }
 const installerSize = fs.statSync(installer).size;
 if (installerSize > maxInstallerBytes) throw new Error(`Installer is ${(installerSize / 1024 / 1024).toFixed(2)} MiB; maximum is ${(maxInstallerBytes / 1024 / 1024).toFixed(0)} MiB`);

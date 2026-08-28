@@ -1,6 +1,6 @@
 {
   "name": "ly-space-desktop",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "LY Space desktop creative workspace",
   "author": "LY Space",
   "private": true,
@@ -26,6 +26,8 @@
     "executableName": "LY Space",
     "files": [
       "main.cjs",
+      "app-logs.cjs",
+      "canvas-recovery.cjs",
       "storage-migration.cjs",
       "storage-settings.cjs",
       "update-install-coordinator.cjs",

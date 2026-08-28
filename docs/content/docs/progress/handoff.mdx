@@ -11,7 +11,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 - **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；当前发布版本 `v0.6.6`）。
 - **最新发布状态**：`v0.6.6` 已于 `2026-08-28T02:31:36Z` 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `33136032105` 为 `completed/success`，完成构建、草稿 Release、三项资产上传、资产/更新清单校验和正式发布。Release 的 exe、blockmap、`latest.yml` 均为 `uploaded`；GitHub API 给出的安装包 SHA-256 为 `0ccb5562e33df488c4a0fb8d8c6213b5ec144df4d1a7f1de6a0b781568eef55e`，大小 `92,574,556` 字节，公开安装包链接返回 HTTP 200。Windows 安装包按维护者明确授权维持无签名发布。
-- **v0.6.6 发布内容**：画布恢复会逐一读取升级前 AppData、安装前缓存、迁移前缓存副本和安全快照，不再被最新的配置型或损坏备份截断；画布库提供“恢复画布”入口和逐项预览，AI/WebDAV 配置恢复默认为关闭。未找到项目或有损坏来源时可导出不含路径、项目内容和配置的诊断 JSON。恢复在出问题电脑上的实际扫描结果仍待确认，不能提前承诺已找到 8 月 15 日后的项目。
+- **v0.6.6 发布内容与现场状态**：画布恢复会逐一读取升级前 AppData、安装前缓存、迁移前缓存副本和安全快照，不再被最新的配置型或损坏备份截断；画布库提供“恢复画布”入口和逐项预览，AI/WebDAV 配置恢复默认为关闭。未找到项目或有损坏来源时可导出不含路径、项目内容和配置的诊断 JSON。出问题电脑目前只显示 8 月 15 日以前的项目；该电脑安装 v0.6.6 后的实际扫描与恢复结果仍待确认，不能提前承诺已找到 8 月 15 日后的项目。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
 - **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`

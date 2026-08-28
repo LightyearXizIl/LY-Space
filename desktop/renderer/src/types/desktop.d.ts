@@ -18,6 +18,8 @@ declare global {
     type AppLogLevel = "info" | "warn" | "error";
     type AppLogCategory = "system" | "network" | "operation" | "error";
     type AppLogEntry = { id: string; time: string; level: AppLogLevel; category: AppLogCategory; message: string; details?: unknown };
+    type AppLogSettings = { retentionDays: 7 | 14 | 30 };
+    type CanvasRecoveryCandidate = { id: string; source: string; createdAt: string; missing: number; projects: unknown[]; config?: { config?: unknown; webdav?: unknown } | null };
     type FeaturePluginStatus = "ready" | "disabled" | "update-available" | "incompatible" | "repair";
     type FeaturePluginAsset = { path: string; url: string; size: number; sha256: string };
     type FeaturePluginManifest = { schemaVersion: 1; id: "agent-core" | "skill-manager"; name: string; description: string; version: string; minAppVersion: string; protocolVersion: string; hostApiVersion?: string; permissions: string[]; dependencies: Array<{ id: "agent-core" | "skill-manager"; range: string }>; rendererEntry: string; serviceEntry?: string; assets: FeaturePluginAsset[]; runtime?: { versionRange: string; version: string; entry: string; asset: FeaturePluginAsset; format: "file" | "tar" } | null; serviceArchive?: { schemaVersion: number; format: "tar.gz"; platform: "win32"; arch: "x64"; root: string; asset: FeaturePluginAsset; tree: { path: string; sha256: string; fileCount: number; totalBytes: number } } | null };
@@ -43,7 +45,13 @@ declare global {
             appendAppLog: (entry: Omit<AppLogEntry, "id">) => Promise<void>;
             readAppLogs: (limit?: number) => Promise<AppLogEntry[]>;
             clearAppLogs: () => Promise<void>;
+            getAppLogSettings: () => Promise<AppLogSettings>;
+            setAppLogRetention: (days: 7 | 14 | 30) => Promise<AppLogSettings>;
             openAppLogDirectory: () => Promise<string>;
+            saveCanvasSnapshot: (projects: unknown[]) => Promise<string>;
+            ensureCanvasSnapshot: (projects: unknown[]) => Promise<string | null>;
+            getCanvasRecoveryCandidates: (projects: unknown[]) => Promise<CanvasRecoveryCandidate[]>;
+            recoverCanvasProjects: (current: unknown[], recovered: unknown[]) => Promise<unknown[]>;
             saveFileDialog: (payload: { title?: string; defaultPath?: string; bytes: ArrayBuffer; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; path: string }>;
             saveFilesDialog: (payload: { title?: string; files: Array<{ name: string; bytes: ArrayBuffer }>; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; paths: string[] }>;
             writeGeneratedOutput: (payload: { kind: StorageKind; extension?: string; bytes?: ArrayBuffer; text?: string }) => Promise<{ path: string; name: string }>;

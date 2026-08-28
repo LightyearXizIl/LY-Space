@@ -1,6 +1,6 @@
-import { useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { App, Button } from "antd";
+import { Alert, App, Button } from "antd";
 import { Download, FileUp, Plus } from "lucide-react";
 
 import { readZip } from "@/lib/zip";
@@ -10,25 +10,53 @@ import { CanvasDeleteProjectsDialog } from "@/components/canvas/canvas-delete-pr
 import { CanvasProjectCard } from "@/components/canvas/canvas-project-card";
 import type { CanvasExportFile } from "@/types/canvas-export";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { useConfigStore } from "@/stores/use-config-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { shouldInsertProjectBefore } from "@/lib/canvas/canvas-project-order";
 import { logAppEvent } from "@/services/app-logger";
 
 export default function CanvasPage() {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const navigate = useNavigate();
     const inputRef = useRef<HTMLInputElement>(null);
     const hydrated = useCanvasStore((state) => state.hydrated);
+    const hydrationError = useCanvasStore((state) => state.hydrationError);
     const projects = useCanvasStore((state) => state.projects);
     const createProject = useCanvasStore((state) => state.createProject);
     const importProject = useCanvasStore((state) => state.importProject);
+    const replaceProjects = useCanvasStore((state) => state.replaceProjects);
+    const recoverProjects = useCanvasStore((state) => state.recoverProjects);
     const selectedIds = useCanvasUiStore((state) => state.selectedProjectIds);
     const setDeleteIds = useCanvasUiStore((state) => state.setDeleteProjectIds);
     const reorderProjects = useCanvasStore((state) => state.reorderProjects);
     // 拖动排序状态:正在拖的项目 id + 目标卡片的插入位置
     const [dragProjectId, setDragProjectId] = useState<string | null>(null);
     const [dropTarget, setDropTarget] = useState<{ id: string; before: boolean } | null>(null);
+    const recoveryChecked = useRef(false);
+
+    useEffect(() => {
+        if (!hydrated || recoveryChecked.current || !window.lySpaceDesktop) return;
+        const desktop = window.lySpaceDesktop;
+        recoveryChecked.current = true;
+        void desktop.getCanvasRecoveryCandidates(projects).then((candidates) => {
+            const candidate = candidates[0];
+            if (!candidate) return;
+            const when = candidate.createdAt ? `（${new Date(candidate.createdAt).toLocaleString()}）` : "";
+            void (async () => {
+                const confirmed = await new Promise<boolean>((resolve) => {
+                    modal.confirm({ title: "检测到可恢复画布", content: `${candidate.source}${when}中有 ${candidate.missing} 个当前未显示的画布。恢复会保留当前画布，并只补回缺失项目。`, okText: "恢复缺失画布", cancelText: "暂不恢复", onOk: () => resolve(true), onCancel: () => resolve(false) });
+                });
+                if (!confirmed) return;
+                const merged = await desktop.recoverCanvasProjects(projects, candidate.projects) as typeof projects;
+                if (hydrationError) recoverProjects(merged); else replaceProjects(merged);
+                if (candidate.config?.config || candidate.config?.webdav) {
+                    useConfigStore.setState((state) => ({ config: { ...state.config, ...(candidate.config?.config as object) }, webdav: { ...state.webdav, ...(candidate.config?.webdav as object) } }));
+                }
+                message.success(`已恢复 ${candidate.missing} 个画布`);
+            })().catch((error) => message.error(error instanceof Error ? error.message : "恢复画布失败，原数据未修改"));
+        }).catch(() => {});
+    }, [hydrated, hydrationError, message, projects, recoverProjects, replaceProjects]);
 
     const clearDragState = () => {
         setDragProjectId(null);
@@ -127,6 +155,7 @@ export default function CanvasPage() {
                         </Button>
                     </div>
                 </header>
+                {hydrationError ? <Alert type="error" showIcon message="画布数据暂时无法读取" description="为防止空数据覆盖原项目，已停止新建、删除和编辑。请使用检测到的恢复备份，或联系支持并保留本机数据目录。" /> : null}
 
                 {!hydrated ? (
                     <section className="flex min-h-[360px] items-center justify-center border-y border-stone-200 text-sm text-stone-500 dark:border-stone-800">正在加载画布...</section>

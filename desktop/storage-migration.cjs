@@ -189,7 +189,8 @@ function restoreBridgeBackup({ userData, localAppData, documents, storageConfigF
     const stateFile = path.join(userData, "app-data", "migration-v0.4.7.json");
     if (fs.existsSync(stateFile)) {
         const state = readJson(stateFile);
-        if (state.status === "completed" && path.resolve(state.backupRoot) === path.resolve(bridge.backupRoot)) {
+        // v0.4.7 的目录迁移只应执行一次。每次覆盖安装都会产生新的升级备份，不能因为 latest.json 改变再次用旧安装目录替换已分离的用户缓存。
+        if (state.status === "completed") {
             return { migrated: false, installDir: bridge.manifest.installDir, backupRoot: bridge.backupRoot };
         }
     }

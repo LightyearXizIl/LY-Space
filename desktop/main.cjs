@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, net: electronNet, protocol, safeStorage, shell, Tray } = require("electron");
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, net: electronNet, protocol, safeStorage, session, shell, Tray } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -9,6 +9,8 @@ const { copyDirectoryExact, directoryManifest, restoreBridgeBackup, sameManifest
 const { assertWritableDirectory, ensureStorageDirectories: ensureConfiguredStorageDirectories, readStorageSettingsFile, writeStorageSettingsFile } = require("./storage-settings.cjs");
 const { buildInstallerArgs, buildInstallerLaunchOptions, createPersistenceFlushCoordinator } = require("./update-install-coordinator.cjs");
 const { createFeaturePluginManager } = require("./feature-plugin-manager.cjs");
+const { ensureCurrentSnapshot, listUpgradeBackups, mergeProjects, missingProjects, normalizeProjects, readCurrentSnapshot, saveCurrentSnapshot, saveRecoveryBundle } = require("./canvas-recovery.cjs");
+const { normalizeRetentionDays, pruneLogFile, readLogSettings, writeLogSettings } = require("./app-logs.cjs");
 
 protocol.registerSchemesAsPrivileged([
     { scheme: "lyspace", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
@@ -35,6 +37,8 @@ const persistenceFlushCoordinator = createPersistenceFlushCoordinator({
 const RESULT_FOLDERS = { image: "Picture", video: "Video", audio: "Audio", text: "text" };
 const APP_LOG_MAX_BYTES = 4 * 1024 * 1024;
 const APP_LOG_KEEP_BYTES = 2 * 1024 * 1024;
+let logSettings = { retentionDays: 7 };
+let lastLogPruneAt = 0;
 
 function displayVersion(version) {
     const value = String(version || "").trim().replace(/^v/i, "");
@@ -68,6 +72,16 @@ function appLogDirectory() {
 
 function appLogFile() {
     return path.join(appLogDirectory(), "app.log");
+}
+
+function appLogSettingsFile() {
+    return path.join(appLogDirectory(), "app-log-settings.json");
+}
+
+function pruneExpiredLogs(force = false) {
+    if (!force && Date.now() - lastLogPruneAt < 24 * 60 * 60 * 1000) return false;
+    lastLogPruneAt = Date.now();
+    return pruneLogFile(appLogFile(), logSettings.retentionDays);
 }
 
 function redactLogValue(value, depth = 0) {
@@ -104,6 +118,7 @@ function writeAppLog(entry) {
             const firstLine = tail.indexOf(0x0a);
             fs.writeFileSync(file, firstLine >= 0 ? tail.subarray(firstLine + 1) : tail);
         }
+        pruneExpiredLogs();
     } catch {
         // 日志失败不能影响主流程。
     }
@@ -135,6 +150,29 @@ async function readAppLogs(limit = 500) {
 async function clearAppLogs() {
     await fs.promises.mkdir(appLogDirectory(), { recursive: true });
     await fs.promises.writeFile(appLogFile(), "", "utf8");
+}
+
+async function extractCanvasProjects(cacheRoot) {
+    const tempRoot = path.join(appLogDirectory(), "canvas-recovery-temp", `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    const copy = (source, destination) => { if (fs.existsSync(source)) fs.cpSync(source, destination, { recursive: true, errorOnExist: false }); };
+    try {
+        copy(path.join(cacheRoot, "IndexedDB"), path.join(tempRoot, "IndexedDB"));
+        copy(path.join(cacheRoot, "Local Storage"), path.join(tempRoot, "Local Storage"));
+        const recoverySession = session.fromPath(tempRoot);
+        await recoverySession.protocol.handle("lyspace", () => new Response("<!doctype html><title>LY Space recovery</title>", { headers: { "content-type": "text/html" } }));
+        const window = new BrowserWindow({ show: false, webPreferences: { session: recoverySession, sandbox: true, contextIsolation: true, nodeIntegration: false } });
+        try {
+            await window.loadURL("lyspace://app/recovery");
+            const value = await window.webContents.executeJavaScript(`new Promise((resolve) => { const config = localStorage.getItem("infinite-canvas:ai_config_store"); const request = indexedDB.open("infinite-canvas"); request.onerror = () => resolve({ canvas: null, config }); request.onsuccess = () => { const db = request.result; if (!db.objectStoreNames.contains("app_state")) return resolve({ canvas: null, config }); const get = db.transaction("app_state", "readonly").objectStore("app_state").get("infinite-canvas:canvas_store"); get.onerror = () => resolve({ canvas: null, config }); get.onsuccess = () => resolve({ canvas: typeof get.result === "string" ? get.result : null, config }); }; })`, true);
+            if (!value?.canvas) return null;
+            return { projects: normalizeProjects(JSON.parse(value.canvas).state?.projects), config: value.config ? JSON.parse(value.config).state || null : null };
+        } finally {
+            window.destroy();
+            await recoverySession.clearStorageData().catch(() => {});
+        }
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
 }
 
 const UPDATE_OWNER = "LightyearXizIl";
@@ -556,6 +594,8 @@ function configureStorageBeforeReady() {
         throw new Error(`无法访问用户配置的存储目录，程序未修改路径也不会使用空白数据启动。${error instanceof Error ? error.message : error}`);
     }
     writeStorageSettings();
+    logSettings = readLogSettings(appLogSettingsFile());
+    pruneExpiredLogs(true);
     // sessionData 包含 IndexedDB、Local Storage、Cookie 与 Chromium 会话数据，必须在 ready 前固定到用户目录。
     app.setPath("sessionData", storageSettings.cacheRoot);
 }
@@ -734,6 +774,33 @@ app.whenReady().then(async () => {
     ipcMain.handle("lyspace:append-app-log", (_event, entry) => writeAppLog(entry));
     ipcMain.handle("lyspace:read-app-logs", (_event, limit) => readAppLogs(limit));
     ipcMain.handle("lyspace:clear-app-logs", () => clearAppLogs());
+    ipcMain.handle("lyspace:app-log-settings", () => logSettings);
+    ipcMain.handle("lyspace:set-app-log-retention", (_event, days) => {
+        logSettings = writeLogSettings(appLogSettingsFile(), { retentionDays: normalizeRetentionDays(days) });
+        pruneExpiredLogs(true);
+        return logSettings;
+    });
+    ipcMain.handle("lyspace:canvas-snapshot", (_event, projects) => saveCurrentSnapshot(appLogDirectory(), normalizeProjects(projects)));
+    ipcMain.handle("lyspace:ensure-canvas-snapshot", (_event, projects) => ensureCurrentSnapshot(appLogDirectory(), normalizeProjects(projects)));
+    ipcMain.handle("lyspace:canvas-recovery-candidates", async (_event, current) => {
+        const projects = normalizeProjects(current);
+        const candidates = [];
+        const safety = readCurrentSnapshot(appLogDirectory());
+        if (safety && missingProjects(projects, safety).length) candidates.push({ id: "safety", source: "安全快照", createdAt: "", missing: missingProjects(projects, safety).length, projects: safety });
+        for (const backup of listUpgradeBackups(process.env.LOCALAPPDATA || path.dirname(app.getPath("appData")))) {
+            const recovered = await extractCanvasProjects(backup.cache).catch(() => null);
+            if (!recovered) continue;
+            const missing = missingProjects(projects, recovered.projects);
+            if (missing.length || recovered.config) { candidates.push({ id: backup.id, source: "升级前备份", createdAt: backup.createdAt, missing: missing.length, projects: recovered.projects, config: recovered.config }); break; }
+        }
+        return candidates;
+    });
+    ipcMain.handle("lyspace:canvas-recover", (_event, current, recovered) => {
+        const merged = mergeProjects(current, recovered);
+        saveRecoveryBundle(appLogDirectory(), current, recovered, merged);
+        saveCurrentSnapshot(appLogDirectory(), merged);
+        return merged;
+    });
     ipcMain.handle("lyspace:open-app-log-directory", () => {
         fs.mkdirSync(appLogDirectory(), { recursive: true });
         return shell.openPath(appLogDirectory());

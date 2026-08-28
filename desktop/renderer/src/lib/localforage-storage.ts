@@ -11,11 +11,12 @@ export const localForageStorage: StateStorage = {
     getItem: async (name) => {
         if (typeof window === "undefined") return null;
         const fallback = window.localStorage.getItem(`${name}:fallback`);
-        if (fallback !== null) return fallback;
         try {
-            return (await localforage.getItem<string>(name)) || null;
-        } catch {
-            return null;
+            const primary = await localforage.getItem<string>(name);
+            return primary || fallback;
+        } catch (error) {
+            if (fallback !== null) return fallback;
+            throw error;
         }
     },
     setItem: async (name, value) => {
@@ -23,8 +24,9 @@ export const localForageStorage: StateStorage = {
         try {
             await trackWrite(localforage.setItem(name, value));
             window.localStorage.removeItem(`${name}:fallback`);
-        } catch {
+        } catch (error) {
             window.localStorage.setItem(`${name}:fallback`, value);
+            if (!window.localStorage.getItem(`${name}:fallback`)) throw error;
         }
     },
     removeItem: async (name) => {

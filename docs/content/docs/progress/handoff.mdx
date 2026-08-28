@@ -9,9 +9,10 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；当前发布版本 `v0.6.2`，发布流水线会构建桌面安装包与官方插件）
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；当前待发布版本 `v0.6.3`，发布流水线会构建桌面安装包与官方插件）
 - **最新发布状态**：`v0.6.2` 已于 `2026-08-27T18:06:26Z` 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `33101559168` 为 `completed/success`，完成构建、草稿 Release、三项资产上传、资产/更新清单校验和正式发布。Release 的 exe、blockmap、`latest.yml` 均为 `uploaded`；GitHub API 给出的安装包 SHA-256 为 `bda5d9001aa500c49aa5760771efc0243ea390046ec8755bad91c13db2519a20`，大小 `92,566,357` 字节；`latest.yml` 指向同名安装包，SHA-512 为 `Qq9OK5VjCzsAdUMB5j0ZAAmtf9Hk/5lv8vmpUdNg00LFB8jd5o3LFLHpw/rX1cjxBLm1Yo3xwgvSgtkF3ePL8g==`，三个公开资产链接均返回 HTTP 200。Windows 安装包按维护者明确授权维持无签名发布。
 - **v0.6.2 发布内容**：生图和视频工作台支持将 PNG/JPG/JPEG/WEBP 参考图自动上传到用户配置的 Cloudflare R2 Worker，支持拖拽、多选、Ctrl+V、失败重试、最近上传和手动 HTTPS URL；Worker 兼容 multipart 上传并代理私有 Bucket 的 GET/HEAD 读取。画布所有共享 contentEditable 引用输入在连续选择 `@` 资源时不再残留 `@` 符号。真实 OSS/R2、Agnes 和桌面输入法验收仍按待测文档执行。
+- **v0.6.3 待发布内容**：v0.4.7 数据迁移完成后不再因每次安装的新备份重复恢复缓存，避免画布和配置回退为空；画布 IndexedDB 读取失败不再以空列表继续写入，成功持久化会生成主进程安全快照，画布库可提示并合并升级前备份的缺失项目及 AI/WebDAV 配置。运行日志可设置保留 7/14/30 天（默认 7 天），切换即清理过期记录，完整人工恢复验收仍待执行。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；AI API 由渲染进程直连 OpenAI 兼容接口，**无后端**；文档站是独立 Next.js 项目（`docs/`，bun）
 - **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`
@@ -27,7 +28,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.6.2（发布后以 GitHub Release、三项桌面资产和更新清单核验记录为准）。
+- **当前版本**：v0.6.3 待发布（发布后以 GitHub Release、三项桌面资产和更新清单核验记录为准）。
 
 ## 2. 数据存储
 

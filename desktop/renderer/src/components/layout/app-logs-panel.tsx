@@ -34,6 +34,7 @@ export function AppLogsPanel() {
     const [level, setLevel] = useState<AppLogLevel | "all">("all");
     const [category, setCategory] = useState<AppLogCategory | "all">("all");
     const [keyword, setKeyword] = useState("");
+    const [retentionDays, setRetentionDays] = useState<7 | 14 | 30>(7);
 
     const refresh = async () => {
         if (!window.lySpaceDesktop) return;
@@ -49,6 +50,7 @@ export function AppLogsPanel() {
 
     useEffect(() => {
         void refresh();
+        void window.lySpaceDesktop?.getAppLogSettings().then((settings) => setRetentionDays(settings.retentionDays)).catch(() => {});
     }, []);
 
     const visibleLogs = useMemo(() => {
@@ -67,6 +69,18 @@ export function AppLogsPanel() {
             message.success("已复制当前日志");
         } catch {
             message.error("复制日志失败");
+        }
+    };
+
+    const changeRetention = async (days: 7 | 14 | 30) => {
+        if (!window.lySpaceDesktop) return;
+        try {
+            const settings = await window.lySpaceDesktop.setAppLogRetention(days);
+            setRetentionDays(settings.retentionDays);
+            await refresh();
+            message.success(`运行日志将保留最近 ${settings.retentionDays} 天`);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "更新日志保留设置失败");
         }
     };
 
@@ -106,6 +120,7 @@ export function AppLogsPanel() {
             <div className="flex flex-wrap items-center gap-2">
                 <Select value={category} className="w-28" onChange={(value) => setCategory(value as AppLogCategory | "all")} options={[{ value: "all", label: "全部分类" }, ...Object.entries(categoryLabels).map(([value, label]) => ({ value, label }))]} />
                 <Select value={level} className="w-24" onChange={(value) => setLevel(value as AppLogLevel | "all")} options={[{ value: "all", label: "全部级别" }, ...Object.entries(levelLabels).map(([value, label]) => ({ value, label }))]} />
+                <Select value={retentionDays} className="w-32" aria-label="日志保留" onChange={(value) => void changeRetention(value as 7 | 14 | 30)} options={[7, 14, 30].map((value) => ({ value, label: `保留 ${value} 天` }))} />
                 <Input value={keyword} className="min-w-52 flex-1" allowClear placeholder="筛选日志内容" onChange={(event) => setKeyword(event.target.value)} />
                 <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void refresh()}>刷新</Button>
                 <Button icon={<Copy className="size-4" />} disabled={!visibleLogs.length} onClick={() => void copyLogs()}>复制</Button>
@@ -115,7 +130,7 @@ export function AppLogsPanel() {
                     <Button danger icon={<Trash2 className="size-4" />}>清空</Button>
                 </Popconfirm>
             </div>
-            <div className="text-xs text-stone-500">显示 {visibleLogs.length} / {logs.length} 条，最近记录在前。</div>
+            <div className="text-xs text-stone-500">日志保留最近 {retentionDays} 天；显示 {visibleLogs.length} / {logs.length} 条，最近记录在前。</div>
             <div className="max-h-[420px] space-y-2 overflow-y-auto rounded-lg border border-stone-200 p-2 dark:border-stone-800">
                 {!visibleLogs.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={logs.length ? "没有符合筛选条件的日志" : "暂无日志"} /> : visibleLogs.map((entry) => (
                     <div key={entry.id} className="rounded-md bg-stone-50 px-3 py-2 dark:bg-stone-900/60">

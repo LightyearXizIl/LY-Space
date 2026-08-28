@@ -23,6 +23,7 @@ export type CanvasProject = {
 
 type CanvasStore = {
     hydrated: boolean;
+    hydrationError: string;
     projects: CanvasProject[];
     createProject: (title?: string) => string;
     importProject: (project: Partial<CanvasProject>) => string;
@@ -32,6 +33,7 @@ type CanvasStore = {
     reorderProjects: (id: string, targetId: string, before: boolean) => void;
     deleteProjects: (ids: string[]) => void;
     replaceProjects: (projects: CanvasProject[]) => void;
+    recoverProjects: (projects: CanvasProject[]) => void;
     updateProject: (id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport">>) => void;
 };
 
@@ -48,11 +50,12 @@ const canvasStorage: PersistStorage<CanvasStore> = {
         queuedPersistState = parsed.state as PersistedCanvasState;
         return parsed;
     },
-    setItem: (name, value) => {
+    setItem: async (name, value) => {
         const nextState = value.state as PersistedCanvasState;
         if (queuedPersistState && queuedPersistState.projects === nextState.projects) return;
+        await localForageStorage.setItem(name, JSON.stringify(value));
         queuedPersistState = nextState;
-        return localForageStorage.setItem(name, JSON.stringify(value));
+        await window.lySpaceDesktop?.saveCanvasSnapshot(nextState.projects);
     },
     removeItem: (name) => localForageStorage.removeItem(name),
 };
@@ -61,8 +64,10 @@ export const useCanvasStore = create<CanvasStore>()(
     persist(
         (set, get) => ({
             hydrated: false,
+            hydrationError: "",
             projects: [],
             createProject: (title = "未命名画布") => {
+                if (get().hydrationError) return "";
                 const now = new Date().toISOString();
                 const id = nanoid();
                 const project: CanvasProject = {
@@ -82,6 +87,7 @@ export const useCanvasStore = create<CanvasStore>()(
                 return id;
             },
             importProject: (source) => {
+                if (get().hydrationError) return "";
                 const now = new Date().toISOString();
                 const project: CanvasProject = {
                     id: nanoid(),
@@ -103,21 +109,26 @@ export const useCanvasStore = create<CanvasStore>()(
                 return get().projects.find((item) => item.id === id) || null;
             },
             renameProject: (id, title) =>
+                get().hydrationError ? undefined :
                 set((state) => ({
                     projects: state.projects.map((project) => (project.id === id ? { ...project, title: title.trim() || project.title, updatedAt: new Date().toISOString() } : project)),
                 })),
             reorderProjects: (id, targetId, before) =>
+                get().hydrationError ? undefined :
                 set((state) => {
                     const projects = reorderCanvasProjects(state.projects, id, targetId, before);
                     return projects === state.projects ? {} : { projects };
                 }),
             deleteProjects: (ids) =>
+                get().hydrationError ? undefined :
                 set((state) => {
                     const projects = state.projects.filter((project) => !ids.includes(project.id));
                     return { projects };
                 }),
-            replaceProjects: (projects) => set({ projects }),
+            replaceProjects: (projects) => { if (!get().hydrationError) set({ projects }); },
+            recoverProjects: (projects) => set({ projects, hydrationError: "" }),
             updateProject: (id, patch) =>
+                get().hydrationError ? undefined :
                 set((state) => ({
                     projects: state.projects.map((project) => (project.id === id ? { ...project, ...patch, updatedAt: new Date().toISOString() } : project)),
                 })),
@@ -129,8 +140,9 @@ export const useCanvasStore = create<CanvasStore>()(
                 ({
                     projects: state.projects,
                 }) as StorageValue<CanvasStore>["state"],
-            onRehydrateStorage: () => () => {
-                useCanvasStore.setState({ hydrated: true });
+            onRehydrateStorage: () => (_state, error) => {
+                useCanvasStore.setState({ hydrated: true, hydrationError: error ? "画布数据无法读取，已停止写入以保护现有数据。" : "" });
+                if (!error) void window.lySpaceDesktop?.ensureCanvasSnapshot(useCanvasStore.getState().projects);
             },
         },
     ),

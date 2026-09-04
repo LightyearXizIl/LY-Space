@@ -99,6 +99,16 @@ function redactLogValue(value, depth = 0) {
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, /api.?key|authorization|password|secret|token/i.test(key) ? "[已脱敏]" : redactLogValue(item, depth + 1)]));
 }
 
+function redactUrlForLog(value) {
+    try {
+        const url = new URL(String(value));
+        // URL 查询参数可能携带签名或临时令牌，日志中只保留脱敏后的请求路径。
+        return `${url.protocol}//${url.host}${url.pathname}`;
+    } catch {
+        return "[无效 URL]";
+    }
+}
+
 function writeAppLog(entry) {
     try {
         const level = ["info", "warn", "error"].includes(entry?.level) ? entry.level : "info";
@@ -1038,23 +1048,147 @@ app.whenReady().then(async () => {
         }
         return { deleted, missing, failed, skipped };
     });
-    // 通用请求代理：主进程 fetch 无浏览器网络限制（CORS 等），供渲染层网络层失败时回退
-    ipcMain.handle("lyspace:proxy-request", async (_event, payload) => {
+    const proxyResponseHeaders = (response) => Object.fromEntries(
+        ["content-type", "x-request-id", "x-tt-logid", "x-volc-request-id"]
+            .map((name) => [name, response.headers.get(name)])
+            .filter(([, value]) => typeof value === "string" && value),
+    );
+    const arkProxyRequests = new Map();
+    const ARK_PROXY_MAX_CONCURRENCY = 6;
+    const ARK_PROXY_MAX_BODY_BYTES = 64 * 1024 * 1024;
+    const ARK_PROXY_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
+    const ARK_PROXY_TIMEOUT_MS = 120000;
+    const proxyRequestId = (sender, requestId) => `${sender.id}:${String(requestId || "")}`;
+    const proxyRequestOptions = (payload) => {
         const url = String(payload?.url || "");
         if (!/^https:\/\//i.test(url)) throw new Error("仅支持 HTTPS 请求");
         const method = String(payload?.method || "GET").toUpperCase();
         const headers = payload?.headers && typeof payload.headers === "object" ? payload.headers : {};
         const body = typeof payload?.body === "string" ? payload.body : undefined;
-        if (body && Buffer.byteLength(body, "utf8") > 4 * 1024 * 1024) throw new Error("请求体超过 4 MiB 限制");
+        const ark = payload?.kind === "ark";
+        const maximumBodyBytes = ark ? ARK_PROXY_MAX_BODY_BYTES : 4 * 1024 * 1024;
+        if (body && Buffer.byteLength(body, "utf8") > maximumBodyBytes) throw new Error(`请求体超过 ${Math.floor(maximumBodyBytes / 1024 / 1024)} MiB 限制`);
+        return { url, method, headers, body, ark };
+    };
+    const logProxyRequest = ({ method, url, status, startedAt, headers, error }) => writeAppLog({
+        category: "network",
+        level: error ? "warn" : "info",
+        message: "主进程网络代理",
+        details: {
+            method,
+            url: redactUrlForLog(url),
+            status: status || 0,
+            durationMs: Date.now() - startedAt,
+            requestId: headers?.["x-request-id"] || headers?.["x-tt-logid"] || headers?.["x-volc-request-id"] || "",
+            ...(error ? { error: error instanceof Error ? error.message : String(error) } : {}),
+        },
+    });
+    // 通用请求代理：主进程 fetch 无浏览器网络限制（CORS 等）。方舟可使用更大的素材上限和流式通道。
+    ipcMain.handle("lyspace:proxy-request", async (_event, payload) => {
+        const request = proxyRequestOptions(payload);
+        const requestId = request.ark ? String(payload?.requestId || "") : "";
+        const key = requestId ? proxyRequestId(_event.sender, requestId) : "";
+        if (key && arkProxyRequests.size >= ARK_PROXY_MAX_CONCURRENCY) throw new Error("方舟并发请求过多，请等待现有请求完成后再试");
+        if (key && arkProxyRequests.has(key)) throw new Error("方舟请求 ID 重复");
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 30000);
+        if (key) arkProxyRequests.set(key, controller);
+        const timer = setTimeout(() => controller.abort(), request.ark ? ARK_PROXY_TIMEOUT_MS : 30000);
+        const startedAt = Date.now();
+        let responseHeaders;
+        let status;
+        let failed = false;
         try {
-            const response = await fetch(url, { method, headers, body, signal: controller.signal });
-            const bytes = await readResponseBytes(response, 8 * 1024 * 1024);
-            return { status: response.status, data: bytes.toString("utf8") };
+            const response = await fetch(request.url, { method: request.method, headers: request.headers, body: request.body, signal: controller.signal });
+            status = response.status;
+            responseHeaders = proxyResponseHeaders(response);
+            const bytes = await readResponseBytes(response, request.ark ? ARK_PROXY_MAX_RESPONSE_BYTES : 8 * 1024 * 1024);
+            return { status, headers: responseHeaders, data: bytes.toString("utf8") };
+        } catch (error) {
+            failed = true;
+            logProxyRequest({ ...request, status, startedAt, headers: responseHeaders, error });
+            throw error;
         } finally {
             clearTimeout(timer);
+            if (key) arkProxyRequests.delete(key);
+            if (status && !failed) logProxyRequest({ ...request, status, startedAt, headers: responseHeaders });
         }
+    });
+    ipcMain.handle("lyspace:proxy-stream-request", async (event, payload) => {
+        const request = proxyRequestOptions(payload);
+        if (!request.ark) throw new Error("流式代理仅供方舟请求使用");
+        const requestId = String(payload?.requestId || "");
+        if (!requestId || requestId.length > 128) throw new Error("流式请求缺少有效请求 ID");
+        const key = proxyRequestId(event.sender, requestId);
+        if (arkProxyRequests.size >= ARK_PROXY_MAX_CONCURRENCY) throw new Error("方舟并发请求过多，请等待现有请求完成后再试");
+        if (arkProxyRequests.has(key)) throw new Error("方舟流式请求 ID 重复");
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), ARK_PROXY_TIMEOUT_MS);
+        const startedAt = Date.now();
+        let status;
+        let responseHeaders;
+        let failed = false;
+        arkProxyRequests.set(key, controller);
+        try {
+            const response = await fetch(request.url, { method: request.method, headers: request.headers, body: request.body, signal: controller.signal });
+            status = response.status;
+            responseHeaders = proxyResponseHeaders(response);
+            event.sender.send("lyspace:proxy-stream-event", { requestId, type: "headers", status, headers: responseHeaders });
+            const declaredLength = Number(response.headers.get("content-length")) || 0;
+            if (declaredLength > ARK_PROXY_MAX_RESPONSE_BYTES) throw new Error("响应内容超过 32 MiB 限制");
+            const reader = response.body?.getReader();
+            const decoder = new TextDecoder();
+            const chunks = [];
+            let length = 0;
+            if (reader) {
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        length += value.byteLength;
+                        if (length > ARK_PROXY_MAX_RESPONSE_BYTES) {
+                            await reader.cancel();
+                            throw new Error("响应内容超过 32 MiB 限制");
+                        }
+                        const chunk = decoder.decode(value, { stream: true });
+                        if (chunk) event.sender.send("lyspace:proxy-stream-event", { requestId, type: "chunk", data: chunk });
+                        chunks.push(Buffer.from(value));
+                    }
+                } finally {
+                    reader.releaseLock();
+                }
+            } else {
+                const bytes = Buffer.from(await response.arrayBuffer());
+                length = bytes.byteLength;
+                if (length > ARK_PROXY_MAX_RESPONSE_BYTES) throw new Error("响应内容超过 32 MiB 限制");
+                const chunk = bytes.toString("utf8");
+                if (chunk) event.sender.send("lyspace:proxy-stream-event", { requestId, type: "chunk", data: chunk });
+                chunks.push(bytes);
+            }
+            const tail = decoder.decode();
+            if (tail) event.sender.send("lyspace:proxy-stream-event", { requestId, type: "chunk", data: tail });
+            const data = Buffer.concat(chunks, length).toString("utf8");
+            event.sender.send("lyspace:proxy-stream-event", { requestId, type: "complete" });
+            return { status, headers: responseHeaders, data };
+        } catch (error) {
+            failed = true;
+            event.sender.send("lyspace:proxy-stream-event", { requestId, type: "error", error: error instanceof Error ? error.message : String(error) });
+            logProxyRequest({ ...request, status, startedAt, headers: responseHeaders, error });
+            throw error;
+        } finally {
+            clearTimeout(timer);
+            arkProxyRequests.delete(key);
+            if (status && !failed) logProxyRequest({ ...request, status, startedAt, headers: responseHeaders });
+        }
+    });
+    ipcMain.handle("lyspace:proxy-stream-cancel", (event, requestId) => {
+        const controller = arkProxyRequests.get(proxyRequestId(event.sender, requestId));
+        if (controller) controller.abort();
+        return { cancelled: Boolean(controller) };
+    });
+    ipcMain.handle("lyspace:proxy-request-cancel", (event, requestId) => {
+        const controller = arkProxyRequests.get(proxyRequestId(event.sender, requestId));
+        if (controller) controller.abort();
+        return { cancelled: Boolean(controller) };
     });
     ipcMain.handle("lyspace:persistence-flushed", async (_event, requestId) => {
         const pending = persistenceFlushCoordinator.acknowledge(String(requestId || ""));

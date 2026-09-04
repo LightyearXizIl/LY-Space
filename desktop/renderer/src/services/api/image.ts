@@ -9,7 +9,7 @@ import { fetchImageBlob, imageToDataUrl, imageToFile } from "@/services/image-st
 import { notifyStorageError, saveGeneratedBlob, saveGeneratedText } from "@/services/desktop-storage";
 import type { ReferenceImage } from "@/types/image";
 import { readRequestError, readUpstreamError } from "./error-message";
-import { arkApiUrl, arkHeaders, buildArkImageRequest, buildArkResponsesRequest } from "./ark";
+import { arkRequestJson, arkStreamText, buildArkImageRequest, buildArkResponsesRequest } from "./ark";
 
 export type AiTextMessage = {
     role: "system" | "user" | "assistant";
@@ -552,6 +552,36 @@ function consumeResponseStreamText(state: ResponseStreamState, text: string, onD
 }
 
 async function requestStreamingResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+    if (config.apiFormat === "ark") {
+        const state: ResponseStreamState = { buffer: "", text: "" };
+        let rawText = "";
+        let receivedChunks = false;
+        const complete = await arkStreamText(config, "/responses", { ...body, stream: true }, (chunk) => {
+            receivedChunks = true;
+            rawText += chunk;
+            consumeResponseStreamText(state, chunk, onDelta);
+        }, options);
+        if (!receivedChunks) {
+            rawText = complete;
+            consumeResponseStreamText(state, complete, onDelta, true);
+        } else {
+            consumeResponseStreamText(state, "", onDelta, true);
+        }
+        if (state.error) throw new Error(state.error);
+        if (!state.payload && !state.text && rawText.trim()) {
+            try {
+                const payload = JSON.parse(rawText) as ResponseApiPayload;
+                validateResponsePayload(payload);
+                return parseToolResponse(payload);
+            } catch {
+                // 非 SSE/JSON 时与其他渠道保持相同的空响应回退。
+            }
+        }
+        if (!state.payload) return { content: state.text, toolCalls: [] };
+        validateResponsePayload(state.payload);
+        const result = parseToolResponse(state.payload);
+        return { ...result, content: state.text || result.content };
+    }
     const response = await fetch(aiApiUrl(config, "/responses"), {
         method: "POST",
         headers: { ...aiHeaders(config, "application/json"), Accept: "text/event-stream" },
@@ -923,12 +953,11 @@ async function requestArkImages(config: AiConfig, prompt: string, references: Re
     const images = await Promise.all(references.map((image) => imageToDataUrl(image)));
     const size = resolveRequestSize(config.imageResolution, config.size);
     try {
-        const response = await axios.post<ImageApiResponse>(
-            arkApiUrl(config, "/images/generations"),
-            buildArkImageRequest(config, withSystemPrompt(config, prompt), count, size, images),
-            { headers: arkHeaders(config, "application/json"), signal: options?.signal },
-        );
-        return persistGeneratedImages(parseImagePayload(response.data));
+        const payload = await arkRequestJson<ImageApiResponse>(config, "/images/generations", {
+            method: "POST",
+            body: buildArkImageRequest(config, withSystemPrompt(config, prompt), count, size, images),
+        }, options);
+        return persistGeneratedImages(parseImagePayload(payload));
     } catch (error) {
         throw new Error(readAxiosError(error, "方舟图片生成失败"));
     }
@@ -1149,6 +1178,14 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
         }
         if (config.apiFormat === "ark" && /\/api\/plan\/v3(?:\/|$)/i.test(config.baseUrl)) {
             throw new Error("Agent Plan 不提供模型列表接口，请按套餐可用模型手动增加模型 ID");
+        }
+        if (config.apiFormat === "ark") {
+            const payload = await arkRequestJson<{ data?: Array<{ id?: string }>; error?: { message?: string } }>(config, "/models");
+            const models = (payload.data || [])
+                .map((model) => model.id)
+                .filter((id): id is string => Boolean(id))
+                .sort((a, b) => a.localeCompare(b));
+            return models;
         }
         const response = await axios.get<{ data?: Array<{ id?: string }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
             headers: {

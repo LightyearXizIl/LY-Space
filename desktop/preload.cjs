@@ -39,6 +39,14 @@ contextBridge.exposeInMainWorld("lySpaceDesktop", {
     saveFilesDialog: (payload) => ipcRenderer.invoke("lyspace:save-files-dialog", payload),
     writeGeneratedOutput: (payload) => ipcRenderer.invoke("lyspace:write-generated-output", payload),
     proxyRequest: (payload) => ipcRenderer.invoke("lyspace:proxy-request", payload),
+    cancelProxyRequest: (requestId) => ipcRenderer.invoke("lyspace:proxy-request-cancel", requestId),
+    proxyStreamRequest: (payload) => ipcRenderer.invoke("lyspace:proxy-stream-request", payload),
+    cancelProxyStream: (requestId) => ipcRenderer.invoke("lyspace:proxy-stream-cancel", requestId),
+    onProxyStreamEvent: (listener) => {
+        const handler = (_event, payload) => listener(payload);
+        ipcRenderer.on("lyspace:proxy-stream-event", handler);
+        return () => ipcRenderer.removeListener("lyspace:proxy-stream-event", handler);
+    },
     deleteGeneratedFiles: (paths) => ipcRenderer.invoke("lyspace:delete-generated-files", paths),
     persistenceFlushed: (requestId) => ipcRenderer.invoke("lyspace:persistence-flushed", requestId),
     relaunchAfterFlush: () => ipcRenderer.invoke("lyspace:relaunch-after-flush"),

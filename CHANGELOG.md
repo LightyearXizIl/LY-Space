@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.6.9 - 2026-09-04
+
++ [修复] 桌面端方舟模型列表、Responses 文本、Seedream 图片和 Seedance 视频请求统一经 Electron 主进程 HTTPS 代理发送，避免浏览器 CORS 阻断标准方舟与 Agent Plan。
++ [新增] 方舟 Responses 通过 IPC 持续转发 SSE 增量，支持中止主进程请求；上游忽略流式参数时仍可解析完整 JSON。
++ [新增] 代理仅转发白名单响应头（内容类型和请求 ID），为方舟请求设置受控的超时、64 MiB 请求体、32 MiB 响应体和 6 项并发限制；日志不记录 API Key 或请求正文。
+
 ## v0.6.8 - 2026-09-04
 
 + [新增] 火山方舟完整适配：标准方舟 `/api/v3` 与 Agent Plan `/api/plan/v3` 共用 Bearer API Key、地址归一化和模型手填回退；标准方舟可拉取 `/models`，Agent Plan 明确要求按套餐手动添加模型 ID。

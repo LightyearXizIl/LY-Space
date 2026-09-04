@@ -9,7 +9,7 @@ import { isAgnesVideo25Family, isAgnesVideo25FlashModel, normalizeAgnesVideo25As
 import { boolConfig, buildSeedancePromptText, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceAudioReferenceError, seedanceReferenceCountError, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
 import { logAppEvent } from "@/services/app-logger";
-import { arkApiUrl, arkHeaders, buildArkSeedanceTaskRequest } from "./ark";
+import { arkRequestJson, arkRequestText, buildArkSeedanceTaskRequest } from "./ark";
 import { runModelPlugin } from "./model-plugin";
 import { readRequestError, readUpstreamError } from "./error-message";
 import type { ReferenceImage } from "@/types/image";
@@ -418,7 +418,7 @@ async function createSeedanceTask(config: AiConfig, model: string, prompt: strin
     const payload = buildArkSeedanceTaskRequest({ ...config, model: modelOptionName(model) }, content, normalizeSeedanceRatio(config.size), resolution, normalizeSeedanceDuration(config.videoSeconds));
 
     try {
-        const created = unwrapSeedanceTask((await axios.post<ApiEnvelope<SeedanceTask>>(seedanceApiUrl(config), payload, { headers: arkHeaders(config, "application/json"), signal: options?.signal })).data);
+        const created = unwrapSeedanceTask(await arkRequestJson<ApiEnvelope<SeedanceTask>>(config, "/contents/generations/tasks", { method: "POST", body: payload }, options));
         if (!created.id) throw new Error("Seedance 接口没有返回任务 ID");
         return { id: created.id, provider: "seedance", model };
     } catch (error) {
@@ -428,7 +428,7 @@ async function createSeedanceTask(config: AiConfig, model: string, prompt: strin
 
 async function pollSeedanceTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     try {
-        const state = unwrapSeedanceTask((await axios.get<ApiEnvelope<SeedanceTask>>(seedanceApiUrl(config, task.id), { headers: aiHeaders(config), signal: options?.signal })).data);
+        const state = unwrapSeedanceTask(await arkRequestJson<ApiEnvelope<SeedanceTask>>(config, `/contents/generations/tasks/${encodeURIComponent(task.id)}`, {}, options));
         const url = videoResultUrl(state);
         if (url) return { status: "completed", result: await videoResultFromUrl(url, options) };
         if (state.status === "succeeded" || state.status === "completed") return { status: "failed", error: "Seedance 任务成功但没有返回视频 URL" };
@@ -470,14 +470,10 @@ function assertSeedanceAudioReferences(audioReferences: ReferenceAudio[]) {
     if (total > 15000) throw new Error("Seedance 参考音频总时长不能超过 15 秒");
 }
 
-function seedanceApiUrl(config: AiConfig, taskId?: string) {
-    return arkApiUrl(config, `/contents/generations/tasks${taskId ? `/${encodeURIComponent(taskId)}` : ""}`);
-}
-
 export async function cancelSeedanceTask(config: AiConfig, task: Pick<VideoGenerationTask, "id" | "model">) {
     const requestConfig = resolveModelRequestConfig(config, task.model);
     try {
-        await axios.delete(seedanceApiUrl(requestConfig, task.id), { headers: arkHeaders(requestConfig) });
+        await arkRequestText(requestConfig, `/contents/generations/tasks/${encodeURIComponent(task.id)}`, { method: "DELETE" });
     } catch (error) {
         // 本地停止优先；取消失败不会恢复轮询，也不写入密钥或请求正文。
         logAppEvent({ category: "network", level: "warn", message: "方舟 Seedance 远端取消失败", details: { provider: "seedance", taskId: task.id, error: readAxiosError(error, "取消失败") } });

@@ -60,7 +60,11 @@ declare global {
             saveFileDialog: (payload: { title?: string; defaultPath?: string; bytes: ArrayBuffer; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; path: string }>;
             saveFilesDialog: (payload: { title?: string; files: Array<{ name: string; bytes: ArrayBuffer }>; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; paths: string[] }>;
             writeGeneratedOutput: (payload: { kind: StorageKind; extension?: string; bytes?: ArrayBuffer; text?: string }) => Promise<{ path: string; name: string }>;
-            proxyRequest: (payload: { method?: string; url: string; headers?: Record<string, string>; body?: string }) => Promise<{ status: number; data: string }>;
+            proxyRequest: (payload: { kind?: "ark"; requestId?: string; method?: string; url: string; headers?: Record<string, string>; body?: string }) => Promise<{ status: number; headers: Record<string, string>; data: string }>;
+            cancelProxyRequest: (requestId: string) => Promise<{ cancelled: boolean }>;
+            proxyStreamRequest: (payload: { kind: "ark"; requestId: string; method?: string; url: string; headers?: Record<string, string>; body?: string }) => Promise<{ status: number; headers: Record<string, string>; data: string }>;
+            cancelProxyStream: (requestId: string) => Promise<{ cancelled: boolean }>;
+            onProxyStreamEvent: (listener: (payload: { requestId: string; type: "headers" | "chunk" | "complete" | "error"; status?: number; headers?: Record<string, string>; data?: string; error?: string }) => void) => () => void;
             deleteGeneratedFiles: (paths: string[]) => Promise<{ deleted: number; missing: number; failed: number; skipped: number }>;
             persistenceFlushed: (requestId: string) => Promise<{ accepted: boolean }>;
             relaunchAfterFlush: () => Promise<void>;

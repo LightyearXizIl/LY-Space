@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { buildArkImageRequest, buildArkResponsesRequest, buildArkSeedanceTaskRequest, normalizeArkSeed } from "@/services/api/ark";
+import { arkRequestJson, arkStreamText, buildArkImageRequest, buildArkResponsesRequest, buildArkSeedanceTaskRequest, normalizeArkSeed } from "@/services/api/ark";
 import { requestImageQuestion } from "@/services/api/image";
 import { sanitizeConfig } from "@/services/config-file";
 import { isSeedanceFastModel, seedanceAudioReferenceError, seedanceReferenceCountError } from "@/lib/seedance-video";
@@ -69,6 +69,36 @@ describe("方舟 Responses 请求", () => {
         expect(sent).toMatchObject({ stream: true, thinking: { type: "auto" } });
         expect(deltas).toEqual(["你"]);
         Object.defineProperty(globalThis, "window", { value: originalWindow, configurable: true });
+    });
+
+    it("桌面端文本流经 IPC 增量传输，不发起浏览器 fetch", async () => {
+        const events: Array<(event: { requestId: string; type: "chunk"; data: string }) => void> = [];
+        const proxyStreamRequest = vi.fn(async (request: { requestId: string }) => {
+            events.forEach((listener) => listener({ requestId: request.requestId, type: "chunk", data: "data: {\"type\":\"response.output_text.delta\",\"delta\":\"你\"}\n\n" }));
+            return { status: 200, headers: { "x-request-id": "req-text" }, data: "data: {\"type\":\"response.output_text.delta\",\"delta\":\"你\"}\n\n" };
+        });
+        vi.stubGlobal("window", { lySpaceDesktop: {
+            proxyStreamRequest,
+            cancelProxyStream: vi.fn(),
+            onProxyStreamEvent: (listener: (event: { requestId: string; type: "chunk"; data: string }) => void) => { events.push(listener); return () => events.splice(events.indexOf(listener), 1); },
+        } });
+        const fetchMock = vi.fn(() => { throw new Error("desktop Ark must not use fetch"); });
+        vi.stubGlobal("fetch", fetchMock);
+        const chunks: string[] = [];
+        await arkStreamText(arkConfig(), "/responses", { stream: true }, (chunk) => chunks.push(chunk));
+        expect(chunks.join("")).toContain("response.output_text.delta");
+        expect(proxyStreamRequest.mock.calls[0][0]).toMatchObject({ kind: "ark", url: `${ARK_STANDARD_BASE_URL}/responses` });
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("桌面端模型、图片和视频共用普通 IPC 请求，不发起浏览器 fetch", async () => {
+        const proxyRequest = vi.fn().mockResolvedValue({ status: 200, headers: { "x-request-id": "req-json" }, data: JSON.stringify({ data: [{ id: "ep-test" }] }) });
+        vi.stubGlobal("window", { lySpaceDesktop: { proxyRequest, cancelProxyRequest: vi.fn() } });
+        const fetchMock = vi.fn(() => { throw new Error("desktop Ark must not use fetch"); });
+        vi.stubGlobal("fetch", fetchMock);
+        await expect(arkRequestJson<{ data: Array<{ id: string }> }>(arkConfig(), "/models")).resolves.toEqual({ data: [{ id: "ep-test" }] });
+        expect(proxyRequest.mock.calls[0][0]).toMatchObject({ kind: "ark", url: `${ARK_STANDARD_BASE_URL}/models`, headers: { Authorization: "Bearer test-key" } });
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 });
 

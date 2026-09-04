@@ -5,6 +5,7 @@ import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
+import { catalogModelFromPreset, catalogModelsFromRecords, type FetchedChannelModel } from "@/lib/model-catalog";
 import { fetchImageBlob, imageToDataUrl, imageToFile } from "@/services/image-storage";
 import { notifyStorageError, saveGeneratedBlob, saveGeneratedText } from "@/services/desktop-storage";
 import type { ReferenceImage } from "@/types/image";
@@ -100,7 +101,7 @@ type GeminiPart = {
 type GeminiContent = { role?: "user" | "model"; parts: GeminiPart[] };
 type GeminiPayload = {
     candidates?: Array<{ content?: { parts?: GeminiPart[] }; finishReason?: string }>;
-    models?: Array<{ name?: string }>;
+    models?: Array<Record<string, unknown> & { name?: string; displayName?: string; description?: string; supportedGenerationMethods?: string[] }>;
     error?: { message?: string };
     promptFeedback?: { blockReason?: string };
 };
@@ -1165,40 +1166,30 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
     }
 }
 
-export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
+export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">): Promise<FetchedChannelModel[]> {
     try {
-        if (config.apiFormat === "grsai") return GRSAI_DEFAULT_MODELS.map((model) => model.name);
+        if (config.apiFormat === "grsai") return GRSAI_DEFAULT_MODELS.map(catalogModelFromPreset);
         if (config.apiFormat === "gemini") {
             const response = await axios.get<GeminiPayload>(geminiApiUrl({ ...defaultGeminiConfig, ...config }), { headers: geminiHeaders({ ...defaultGeminiConfig, ...config }) });
             validateGeminiPayload(response.data);
-            return (response.data.models || [])
-                .map((model) => model.name?.replace(/^models\//, ""))
-                .filter((id): id is string => Boolean(id))
-                .sort((a, b) => a.localeCompare(b));
+            return catalogModelsFromRecords(response.data.models || []);
         }
         if (config.apiFormat === "ark" && /\/api\/plan\/v3(?:\/|$)/i.test(config.baseUrl)) {
             throw new Error("Agent Plan 不提供模型列表接口，请按套餐可用模型手动增加模型 ID");
         }
         if (config.apiFormat === "ark") {
-            const payload = await arkRequestJson<{ data?: Array<{ id?: string }>; error?: { message?: string } }>(config, "/models");
-            const models = (payload.data || [])
-                .map((model) => model.id)
-                .filter((id): id is string => Boolean(id))
-                .sort((a, b) => a.localeCompare(b));
-            return models;
+            const payload = await arkRequestJson<{ data?: Array<Record<string, unknown>>; error?: { message?: string } }>(config, "/models");
+            return catalogModelsFromRecords(payload.data || []);
         }
-        const response = await axios.get<{ data?: Array<{ id?: string }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
+        const response = await axios.get<{ data?: Array<Record<string, unknown>>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
             headers: {
                 Authorization: `Bearer ${config.apiKey}`,
             },
         });
-        const models = (response.data.data || [])
-            .map((model) => model.id)
-            .filter((id): id is string => Boolean(id))
-            .sort((a, b) => a.localeCompare(b));
-        return models.length || config.apiFormat !== "agnes" ? models : AGNES_DEFAULT_MODELS.map((model) => model.name);
+        const models = catalogModelsFromRecords(response.data.data || []);
+        return models.length || config.apiFormat !== "agnes" ? models : AGNES_DEFAULT_MODELS.map(catalogModelFromPreset);
     } catch (error) {
-        if (config.apiFormat === "agnes") return AGNES_DEFAULT_MODELS.map((model) => model.name);
+        if (config.apiFormat === "agnes") return AGNES_DEFAULT_MODELS.map(catalogModelFromPreset);
         throw new Error(readAxiosError(error, "读取模型失败"));
     }
 }

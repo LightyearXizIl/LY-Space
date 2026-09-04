@@ -1,6 +1,6 @@
 import { saveAs } from "file-saver";
 
-import { useConfigStore, defaultConfig, defaultWebdavSyncConfig, type AiConfig, type ApiCallFormat, type ArkThinkingMode, type ChannelModel, type ModelCapability, type ModelChannel, type WebdavSyncConfig } from "@/stores/use-config-store";
+import { useConfigStore, defaultConfig, defaultWebdavSyncConfig, normalizeChannelModels, type AiConfig, type ApiCallFormat, type ArkThinkingMode, type ChannelModel, type ChannelModelCapability, type ModelCatalogCategory, type ModelClassificationSource, type ModelChannel, type WebdavSyncConfig } from "@/stores/use-config-store";
 import { usePromptSourceStore, type PromptSourceSchedule } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 
@@ -14,7 +14,9 @@ type AppConfigFile = {
 };
 
 const apiFormats = new Set<ApiCallFormat>(["openai", "gemini", "ark", "grsai", "agnes"]);
-const capabilities = new Set<ModelCapability>(["image", "video", "text", "audio"]);
+const capabilities = new Set<ChannelModelCapability>(["image", "video", "text", "audio", "unknown"]);
+const catalogCategories = new Set<ModelCatalogCategory>(["text", "vision", "image", "video", "audio", "unknown", "unsupported"]);
+const classificationSources = new Set<ModelClassificationSource>(["upstream", "preset", "inferred", "manual"]);
 const imageResolutions = new Set<AiConfig["imageResolution"]>(["1k", "2k", "4k", "8k"]);
 const reasoningEfforts = new Set<AiConfig["reasoningEffort"]>(["auto", "low", "medium", "high", "xhigh"]);
 const arkThinkingModes = new Set<ArkThinkingMode>(["auto", "enabled", "disabled"]);
@@ -29,9 +31,26 @@ function text(value: unknown, fallback = "") {
 
 function sanitizeModel(value: unknown): { model: ChannelModel; skippedScript: boolean } | null {
     const source = record(value);
-    if (!source || !text(source.name).trim() || !capabilities.has(source.capability as ModelCapability)) return null;
+    if (!source || !text(source.name).trim() || !capabilities.has(source.capability as ChannelModelCapability)) return null;
     const imageFeatures = Array.isArray(source.imageFeatures) ? source.imageFeatures.filter((item): item is NonNullable<ChannelModel["imageFeatures"]>[number] => item === "image-edit" || item === "mask-edit" || item === "generative-upscale" || item === "dedicated-super-resolution") : undefined;
-    return { model: { name: text(source.name).trim(), capability: source.capability as ModelCapability, ...(imageFeatures?.length ? { imageFeatures } : {}) }, skippedScript: Boolean(text(source.script).trim()) };
+    const displayName = text(source.displayName).trim().slice(0, 160);
+    const description = text(source.description).trim().slice(0, 600);
+    const family = text(source.family).trim().slice(0, 80);
+    const category = catalogCategories.has(source.category as ModelCatalogCategory) ? (source.category as ModelCatalogCategory) : undefined;
+    const classificationSource = classificationSources.has(source.classificationSource as ModelClassificationSource) ? (source.classificationSource as ModelClassificationSource) : undefined;
+    return {
+        model: {
+            name: text(source.name).trim(),
+            capability: source.capability as ChannelModelCapability,
+            ...(displayName ? { displayName } : {}),
+            ...(description ? { description } : {}),
+            ...(family ? { family } : {}),
+            ...(category ? { category } : {}),
+            ...(classificationSource ? { classificationSource } : {}),
+            ...(imageFeatures?.length ? { imageFeatures } : {}),
+        },
+        skippedScript: Boolean(text(source.script).trim()),
+    };
 }
 
 function sanitizeChannel(value: unknown): { channel: ModelChannel; skippedScripts: number } | null {
@@ -40,7 +59,7 @@ function sanitizeChannel(value: unknown): { channel: ModelChannel; skippedScript
     const models = source.models.map(sanitizeModel).filter((item): item is NonNullable<ReturnType<typeof sanitizeModel>> => Boolean(item));
     if (!models.length) return null;
     return {
-        channel: { id: text(source.id).trim() || crypto.randomUUID(), name: text(source.name).trim() || "导入渠道", baseUrl: text(source.baseUrl).trim(), apiKey: text(source.apiKey), apiFormat: source.apiFormat as ApiCallFormat, models: models.map((item) => item.model), enabled: source.enabled !== false },
+        channel: { id: text(source.id).trim() || crypto.randomUUID(), name: text(source.name).trim() || "导入渠道", baseUrl: text(source.baseUrl).trim(), apiKey: text(source.apiKey), apiFormat: source.apiFormat as ApiCallFormat, models: normalizeChannelModels(models.map((item) => item.model)), enabled: source.enabled !== false },
         skippedScripts: models.filter((item) => item.skippedScript).length,
     };
 }

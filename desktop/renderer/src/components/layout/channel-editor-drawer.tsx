@@ -2,7 +2,7 @@ import { Button, Drawer, Input, Segmented, Select, Space } from "antd";
 import { ExternalLink, ListPlus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { AGNES_BASE_URL, ARK_AGENT_PLAN_BASE_URL, ARK_STANDARD_BASE_URL, defaultBaseUrlForApiFormat, GRSAI_DOMESTIC_BASE_URL, GRSAI_GLOBAL_BASE_URL, guessCapability, isArkAgentPlanBaseUrl, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ImageModelFeature, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { AGNES_BASE_URL, ARK_AGENT_PLAN_BASE_URL, ARK_STANDARD_BASE_URL, defaultBaseUrlForApiFormat, GRSAI_DOMESTIC_BASE_URL, GRSAI_GLOBAL_BASE_URL, isArkAgentPlanBaseUrl, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ChannelModelCapability, type ImageModelFeature, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
 
@@ -14,11 +14,12 @@ const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
     { label: "火山方舟", value: "ark" },
 ];
 
-const capabilityOptions: Array<{ label: string; value: ModelCapability }> = [
+const capabilityOptions: Array<{ label: string; value: ChannelModelCapability }> = [
     { label: "生图", value: "image" },
     { label: "视频", value: "video" },
     { label: "文本", value: "text" },
     { label: "音频", value: "audio" },
+    { label: "待分类", value: "unknown" },
 ];
 const imageFeatureOptions: Array<{ label: string; value: ImageModelFeature }> = [
     { label: "全图编辑", value: "image-edit" }, { label: "蒙版修复", value: "mask-edit" },
@@ -46,12 +47,21 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
         patch({ apiFormat, baseUrl });
     };
 
-    const applySelection = (names: string[]) => {
-        const map = new Map(draft.models.map((model) => [model.name, model]));
-        setModels(names.map((name) => map.get(name) || { name, capability: guessCapability(name) }));
-    };
+    const applySelection = (models: ChannelModel[]) => setModels(models);
 
-    const setCapability = (name: string, capability: ModelCapability) => setModels(draft.models.map((model) => (model.name === name ? { ...model, capability } : model)));
+    const setCapability = (name: string, capability: ChannelModelCapability) =>
+        setModels(
+            draft.models.map((model) =>
+                model.name === name
+                    ? {
+                          ...model,
+                          capability,
+                          category: capability === "unknown" ? "unknown" : capability,
+                          classificationSource: "manual",
+                      }
+                    : model,
+            ),
+        );
     const setScript = (name: string, script: string) => setModels(draft.models.map((model) => (model.name === name ? { ...model, script: script || undefined } : model)));
     const setImageFeatures = (name: string, imageFeatures: ImageModelFeature[]) => setModels(draft.models.map((model) => (model.name === name ? { ...model, imageFeatures: imageFeatures.length ? imageFeatures : undefined } : model)));
     const removeModel = (name: string) => setModels(draft.models.filter((model) => model.name !== name));
@@ -137,8 +147,15 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                                 {model.name}
                             </span>
                             <div className="flex shrink-0 items-center gap-2">
-                                <Segmented size="small" value={model.capability} options={capabilityOptions} onChange={(value) => setCapability(model.name, value as ModelCapability)} />
-                                <Button size="small" type={model.script ? "primary" : "default"} ghost={Boolean(model.script)} onClick={() => setScriptTarget({ name: model.name, capability: model.capability, value: model.script || "" })}>
+                                <Segmented size="small" value={model.capability} options={capabilityOptions} onChange={(value) => setCapability(model.name, value as ChannelModelCapability)} />
+                                <Button
+                                    size="small"
+                                    disabled={model.capability === "unknown"}
+                                    title={model.capability === "unknown" ? "请先指定模型能力" : undefined}
+                                    type={model.script ? "primary" : "default"}
+                                    ghost={Boolean(model.script)}
+                                    onClick={() => model.capability !== "unknown" && setScriptTarget({ name: model.name, capability: model.capability as ModelCapability, value: model.script || "" })}
+                                >
                                     {model.script ? "脚本已设" : "调用脚本"}
                                 </Button>
                                 <Button size="small" danger type="text" icon={<Trash2 className="size-3.5" />} onClick={() => removeModel(model.name)} />
@@ -151,7 +168,7 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                 )}
             </div>
 
-            <ModelSelectModal open={selectOpen} channel={draft} selectedNames={draft.models.map((model) => model.name)} onConfirm={applySelection} onClose={() => setSelectOpen(false)} />
+            <ModelSelectModal open={selectOpen} channel={draft} onConfirm={applySelection} onClose={() => setSelectOpen(false)} />
 
             <ModelScriptEditor
                 open={Boolean(scriptTarget)}

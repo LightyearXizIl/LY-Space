@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；当前发布版本 `v0.6.9`）。
-- **最新发布状态**：`v0.6.9` 已于 `2026-09-04` 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `33870358330` 成功。EXE、blockmap、`latest.yml` 均为 uploaded；本地留存 EXE 与远端 digest、更新清单已核验，具体值见 3.39。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；当前待发布版本 `v0.7.0`）。
+- **最新发布状态**：`v0.6.9` 已于 `2026-09-04` 正式发布并完成资产核验；`v0.7.0` 已完成全渠道模型分类实现，待推送 tag 触发桌面 CI。发布完成后必须核验正式 Release、三项资产、更新清单和本地安装包哈希。
 - **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；通用 AI 接口仍可由渲染进程直连，方舟请求在桌面端通过受限主进程 HTTPS 代理；文档站是独立 Next.js 项目（`docs/`，bun）
@@ -27,7 +27,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.6.9 待发布；v0.6.8 已发布（GitHub Release、三项桌面资产和更新清单已核验）。
+- **当前版本**：v0.7.0 待发布；v0.6.9 已发布（GitHub Release、三项桌面资产和更新清单已核验）。
 
 ## 2. 数据存储
 
@@ -332,6 +332,13 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **根因与范围**：v0.6.8 的方舟标准 `/models`、Responses、Seedream 与 Seedance 仍有渲染进程网络路径，浏览器会因上游没有 CORS 响应头而在请求到达方舟前拦截。v0.6.9 将这些方舟路径统一改为 Electron 主进程 HTTPS 代理；标准方舟与 Agent Plan 都覆盖，Agent Plan 仍不伪造模型列表。
 - **IPC 与安全边界**（`main.cjs`、`preload.cjs`、`services/api/ark.ts`）：普通请求回传 HTTP 状态、正文和白名单 `content-type` / 方舟请求 ID；方舟专用限制为 64 MiB 请求体、32 MiB 响应体、120 秒超时、6 项并发。Responses 的 SSE 分片经 IPC 即时转发；AbortSignal 同时请求本地停止与主进程取消。运行日志只写方法、脱敏 URL、状态、耗时和请求 ID，绝不写 Bearer Key 或正文。
 - **调用与验证**（`image.ts`、`video.ts`、`ark-adapter.test.ts`）：模型列表、Seedream、Seedance 创建/轮询/取消及 Responses 已改用共享适配层；非桌面开发环境保留浏览器直连，并在 CORS 网络失败时说明限制。已执行 Node 测试 34/34、渲染 Vitest 81/81、TypeScript 检查、主进程语法检查与 `git diff --check`；没有使用真实 API Key 或产生收费调用。发布提交/tag 为 `fda0feb` / `v0.6.9`，桌面 CI `33870358330` 成功。正式 Release 为 `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.6.9`，非 draft、非 prerelease；远端 `LY-Space-Setup-0.6.9.exe`（92,580,310 字节，SHA-256 `fb04dfb2c0df4d3177b7313817e313cabf70f55e6f462acf255bd90f5ec4d36e`）、blockmap（97,924 字节）和 `latest.yml`（344 字节）均为 uploaded。`latest.yml` 的 version `0.6.9`、path、size 与 EXE 一致，SHA-512 为 `jBrRCpOMX75ThycxZoi6mCwW6GB7t/lKjFxZ4WeQwQrdcFoOQunus6eXV9x/C5lGtS1Uey+rbbbc/18+f1wPUg==`。本地安装包为 `release\\LY-Space-Setup-0.6.9.exe`，其 SHA-256 与远端 asset digest 一致；`.mimosa/` 与 `desktop/.mimosa/` 保持未改动。真实账号权限、套餐模型、CORS、素材上传、结果质量和远端取消结果仍按 `pending-test.mdx` 人工验收。
+
+### 3.40 v0.7.0 全渠道模型分类与识别（待发布）
+
+- **结构化目录**（`lib/model-catalog.ts`、`services/api/image.ts`）：OpenAI 兼容、Gemini 与标准方舟的模型列表不再压成名称数组，而是保留上游已有的显示名、说明、归属、分类、能力、输入/输出模态和支持方法；GRS AI、Agnes AI 复用可靠内置清单。分类优先级为上游字段 → 内置清单 → 名称规则 → 未识别，不会为模型详情产生逐项额外请求。
+- **能力与安全边界**：展示顺序固定为文本生成、视觉理解、图片生成、视频生成、音频生成、未识别、暂不支持；视觉理解在底层映射为文本能力。Embedding、Rerank、Moderation、Guard、ASR、声音复刻、3D 等未接入类型优先归入“暂不支持”且禁止新增选择；未知模型保存为 `unknown`，用户在渠道编辑器明确指定能力前不进入生成模型选择器。
+- **弹窗与兼容**（`model-select-modal.tsx`、`channel-editor-drawer.tsx`）：保留新获取/已有页签、搜索、手动增加和勾选流程，新增带数量的能力筛选、按“能力 · 系列”折叠分组、分组选择、全部展开/收起及来源标签。搜索期间自动展开命中组，清空搜索恢复原展开状态；全选只影响当前可见可用范围。重复拉取只刷新上游展示信息，原能力、调用脚本和图片特性优先保留；旧配置会补推导展示字段，导入导出保留新增字段且继续拒绝导入脚本。
+- **验证与发布边界**：新增 `model-catalog.test.ts` 13 项，覆盖 OpenAI/方舟基础对象、兼容平台非标准字段、Gemini 元数据、内置清单、上游优先、视觉映射、未知/禁选、筛选分组、搜索展开、手动增加、重复合并和旧配置。渲染层完整 Vitest 94/94 与 TypeScript 检查已通过；未使用真实 API Key。发布提交、CI、远端资产、更新清单和本地安装包哈希待本次发布完成后补记；各平台实际返回字段、账号模型权限和桌面人工交互仍按 `pending-test.mdx` 核实。
 
 ### 3.23 v0.4.7 变更要点
 

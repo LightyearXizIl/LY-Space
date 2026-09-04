@@ -3,9 +3,13 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 import { logAppEvent } from "@/services/app-logger";
+import { classifyModel } from "@/lib/model-catalog";
 
 export type ApiCallFormat = "openai" | "gemini" | "ark" | "grsai" | "agnes";
 export type ModelCapability = "image" | "video" | "text" | "audio";
+export type ChannelModelCapability = ModelCapability | "unknown";
+export type ModelCatalogCategory = "text" | "vision" | "image" | "video" | "audio" | "unknown" | "unsupported";
+export type ModelClassificationSource = "upstream" | "preset" | "inferred" | "manual";
 export type ImageModelFeature = "image-edit" | "mask-edit" | "generative-upscale" | "dedicated-super-resolution";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 /** 火山方舟 Responses API 的思考开关；与 OpenAI reasoning.effort 不可混用。 */
@@ -13,10 +17,19 @@ export type ArkThinkingMode = "auto" | "enabled" | "disabled";
 
 export type ChannelModel = {
     name: string;
-    capability: ModelCapability;
+    capability: ChannelModelCapability;
+    displayName?: string;
+    description?: string;
+    family?: string;
+    category?: ModelCatalogCategory;
+    classificationSource?: ModelClassificationSource;
     script?: string;
     imageFeatures?: ImageModelFeature[];
 };
+
+const MODEL_CATALOG_CATEGORIES: ModelCatalogCategory[] = ["text", "vision", "image", "video", "audio", "unknown", "unsupported"];
+const MODEL_CLASSIFICATION_SOURCES: ModelClassificationSource[] = ["upstream", "preset", "inferred", "manual"];
+const CHANNEL_MODEL_CAPABILITIES: ChannelModelCapability[] = ["image", "video", "text", "audio", "unknown"];
 
 export type ModelChannel = {
     id: string;
@@ -183,17 +196,9 @@ type ConfigStore = {
     clearPromptContinue: () => void;
 };
 
-const VIDEO_KEYWORDS = ["seedance", "video", "sora", "veo", "kling", "wan", "hailuo"];
-const AUDIO_KEYWORDS = ["audio", "tts", "speech", "voice", "music", "sound"];
-const IMAGE_KEYWORDS = ["seedream", "gpt-image", "image", "dall-e", "dalle", "imagen", "flux", "sdxl", "stable-diffusion", "midjourney"];
-
 /** Best-effort default capability for a freshly fetched model name; user can override in the channel editor. */
-export function guessCapability(name: string): ModelCapability {
-    const value = name.toLowerCase();
-    if (VIDEO_KEYWORDS.some((keyword) => value.includes(keyword))) return "video";
-    if (AUDIO_KEYWORDS.some((keyword) => value.includes(keyword))) return "audio";
-    if (IMAGE_KEYWORDS.some((keyword) => value.includes(keyword))) return "image";
-    return "text";
+export function guessCapability(name: string): ChannelModelCapability {
+    return classifyModel({ name }).capability;
 }
 
 function findChannelModel(config: AiConfig, value: string): { channel: ModelChannel; model: ChannelModel } | null {
@@ -204,7 +209,7 @@ function findChannelModel(config: AiConfig, value: string): { channel: ModelChan
     return channel && model ? { channel, model } : null;
 }
 
-export function modelCapabilityOf(config: AiConfig, value: string): ModelCapability | undefined {
+export function modelCapabilityOf(config: AiConfig, value: string): ChannelModelCapability | undefined {
     return findChannelModel(config, value)?.model.capability;
 }
 
@@ -225,6 +230,7 @@ export function selectableModelsByCapability(config: AiConfig, capability?: Mode
     if (!capability) {
         return config.models.filter((model) => {
             const decoded = decodeChannelModel(model);
+            if (modelCapabilityOf(config, model) === "unknown") return false;
             if (!decoded) return true;
             const channel = config.channels.find((item) => item.id === decoded.channelId);
             return !channel || channel.enabled !== false;
@@ -363,10 +369,33 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
         const name = (typeof item === "string" ? item : item?.name || "").trim();
         if (!name || seen.has(name)) continue;
         seen.add(name);
-        const capability = typeof item === "string" ? guessCapability(name) : item.capability || guessCapability(name);
+        const inferred = classifyModel({ name });
+        const capability = typeof item === "string" || !CHANNEL_MODEL_CAPABILITIES.includes(item.capability as ChannelModelCapability) ? guessCapability(name) : item.capability;
         const script = typeof item === "string" ? undefined : item.script?.trim() || undefined;
         const imageFeatures = typeof item === "string" ? undefined : item.imageFeatures?.filter((feature): feature is ImageModelFeature => ["image-edit", "mask-edit", "generative-upscale", "dedicated-super-resolution"].includes(feature));
-        result.push({ name, capability, script, ...(imageFeatures?.length ? { imageFeatures } : {}) });
+        const displayName = typeof item === "string" ? undefined : item.displayName?.trim().slice(0, 160) || undefined;
+        const description = typeof item === "string" ? undefined : item.description?.trim().slice(0, 600) || undefined;
+        const family = (typeof item === "string" ? undefined : item.family?.trim().slice(0, 80)) || inferred.family;
+        const category =
+            typeof item !== "string" && MODEL_CATALOG_CATEGORIES.includes(item.category as ModelCatalogCategory)
+                ? item.category
+                : capability === "unknown"
+                  ? inferred.category
+                  : capability === "text" && inferred.category === "vision"
+                    ? "vision"
+                    : capability;
+        const classificationSource = typeof item !== "string" && MODEL_CLASSIFICATION_SOURCES.includes(item.classificationSource as ModelClassificationSource) ? item.classificationSource : inferred.classificationSource;
+        result.push({
+            name,
+            capability,
+            script,
+            ...(displayName ? { displayName } : {}),
+            ...(description ? { description } : {}),
+            ...(family ? { family } : {}),
+            ...(category ? { category } : {}),
+            ...(classificationSource ? { classificationSource } : {}),
+            ...(imageFeatures?.length ? { imageFeatures } : {}),
+        });
     }
     return result;
 }

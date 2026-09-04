@@ -9,6 +9,7 @@ import { fetchImageBlob, imageToDataUrl, imageToFile } from "@/services/image-st
 import { notifyStorageError, saveGeneratedBlob, saveGeneratedText } from "@/services/desktop-storage";
 import type { ReferenceImage } from "@/types/image";
 import { readRequestError, readUpstreamError } from "./error-message";
+import { arkApiUrl, arkHeaders, buildArkImageRequest, buildArkResponsesRequest } from "./ark";
 
 export type AiTextMessage = {
     role: "system" | "user" | "assistant";
@@ -496,8 +497,9 @@ function validateGeminiPayload(payload: GeminiPayload) {
 
 async function readFetchError(response: Response, fallback: string) {
     const text = await response.text();
-    if (!text) return readStatusError(response.status, fallback);
-    return readUpstreamError(text) || readStatusError(response.status, fallback);
+    const message = text ? readUpstreamError(text) || readStatusError(response.status, fallback) : readStatusError(response.status, fallback);
+    const requestId = response.headers.get("x-request-id") || response.headers.get("x-tt-logid") || response.headers.get("x-volc-request-id");
+    return requestId ? `${message}（请求 ID ${requestId}）` : message;
 }
 
 function consumeResponseStreamBlock(block: string, state: ResponseStreamState, onDelta?: (text: string) => void) {
@@ -916,6 +918,22 @@ async function requestAgnesImages(config: AiConfig, prompt: string, references: 
     return persistGeneratedImages((await Promise.all(Array.from({ length: count }, makeRequest))).flat());
 }
 
+/** Seedream uses the Ark image endpoint for both text-to-image and reference-image editing. */
+async function requestArkImages(config: AiConfig, prompt: string, references: ReferenceImage[], count: number, options?: RequestOptions) {
+    const images = await Promise.all(references.map((image) => imageToDataUrl(image)));
+    const size = resolveRequestSize(config.imageResolution, config.size);
+    try {
+        const response = await axios.post<ImageApiResponse>(
+            arkApiUrl(config, "/images/generations"),
+            buildArkImageRequest(config, withSystemPrompt(config, prompt), count, size, images),
+            { headers: arkHeaders(config, "application/json"), signal: options?.signal },
+        );
+        return persistGeneratedImages(parseImagePayload(response.data));
+    } catch (error) {
+        throw new Error(readAxiosError(error, "方舟图片生成失败"));
+    }
+}
+
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
@@ -949,6 +967,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             throw new Error(readAxiosError(error, "请求失败"));
         }
     }
+    if (requestConfig.apiFormat === "ark") return requestArkImages(requestConfig, prompt, [], n, options);
     if (isAgnesTarget(requestConfig)) return requestAgnesImages(requestConfig, prompt, [], n, options);
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(config.imageResolution, config.size);
@@ -1022,34 +1041,8 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
 
     if (requestConfig.apiFormat === "ark") {
-        if (mask) throw new Error("蒙版编辑暂不支持该模型，请使用其他渠道");
-        const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(config.imageResolution, config.size);
-        const background = normalizeBackground(config.background);
-        const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
-        try {
-            const response = await axios.post<ImageApiResponse>(
-                aiApiUrl(requestConfig, "/images/generations"),
-                {
-                    model: requestConfig.model,
-                    prompt: withSystemPrompt(requestConfig, requestPrompt),
-                    n,
-                    response_format: "b64_json",
-                    output_format: IMAGE_OUTPUT_FORMAT,
-                    image: refs,
-                    ...(quality ? { quality } : {}),
-                    ...(requestSize ? { size: requestSize } : {}),
-                    ...(background ? { background } : {}),
-                },
-                {
-                    headers: aiHeaders(requestConfig, "application/json"),
-                    signal: options?.signal,
-                },
-            );
-            return persistGeneratedImages(parseImagePayload(response.data));
-        } catch (error) {
-            throw new Error(readAxiosError(error, "请求失败"));
-        }
+        if (mask) throw new Error("火山方舟 Seedream 暂未提供蒙版接口；请移除蒙版后使用参考图编辑，或切换支持蒙版的渠道");
+        return requestArkImages(requestConfig, requestPrompt, references, n, options);
     }
 
     const quality = normalizeQuality(config.quality);
@@ -1123,6 +1116,14 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
             onDelta(answer);
             return persistGeneratedText(answer);
         }
+        if (requestConfig.apiFormat === "ark") {
+            const answer = (await requestStreamingResponse(requestConfig, buildArkResponsesRequest(
+                requestConfig,
+                toResponseInput(withSystemMessage(requestConfig, messages)),
+            ), onDelta, options)).content || "没有返回内容";
+            if (answer === "没有返回内容") onDelta(answer);
+            return persistGeneratedText(answer);
+        }
         const answer = (await requestStreamingResponse(requestConfig, {
             model: requestConfig.model,
             input: toResponseInput(withSystemMessage(requestConfig, messages)),
@@ -1145,6 +1146,9 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
                 .map((model) => model.name?.replace(/^models\//, ""))
                 .filter((id): id is string => Boolean(id))
                 .sort((a, b) => a.localeCompare(b));
+        }
+        if (config.apiFormat === "ark" && /\/api\/plan\/v3(?:\/|$)/i.test(config.baseUrl)) {
+            throw new Error("Agent Plan 不提供模型列表接口，请按套餐可用模型手动增加模型 ID");
         }
         const response = await axios.get<{ data?: Array<{ id?: string }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
             headers: {

@@ -41,6 +41,7 @@ export type CanvasNodeMetadata = {
     model?: string;
     textModel?: string; // 提示词优化使用的文本模型（画布面板/生成配置节点）
     reasoningEffort?: "auto" | "low" | "medium" | "high" | "xhigh";
+    arkThinkingMode?: "auto" | "enabled" | "disabled";
     size?: string;
     quality?: string;
     imageResolution?: "1k" | "2k" | "4k" | "8k";

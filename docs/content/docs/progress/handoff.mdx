@@ -320,6 +320,13 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **诊断与坑**：每个升级备份检查完成都会向渲染层发进度事件；不可读来源继续扫描其他来源，运行日志保留原始错误用于本机排查，导出 JSON 仅保留 `sourceType` 与将盘符/UNC 路径替换为 `<路径>` 的错误文本。自动化检查不等同于问题电脑的真实 LevelDB 可读性；8 个来源的最终结论必须查看该机日志和导出的 `failedSources`。
 - **验证与发布核验**：`canvas-recovery` Node 测试 9/9、渲染层类型检查、主进程语法检查、版本校验和本地 `pack:win`/包校验均通过。提交/tag 为 `febe9e0` / `v0.6.7`；Release `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.6.7` 为正式版，Actions `33152913258` 成功。远端 `LY-Space-Setup-0.6.7.exe`（92,576,174 字节）、blockmap（98,046 字节）与 `latest.yml`（344 字节）均为 `uploaded`；`latest.yml` 的 version `0.6.7`、path/文件名、size 与远端 EXE 一致，SHA-512 为 `elXwR77CreRRqTqZQAGv5XZSSusCqe6oAxxmkuA+8xuu3KcFWLSdiHgDlzQAuRcZ4e0HEiICpKux6oUVOIR58A==`。本地留存安装包为 `release\\LY Space Setup 0.6.7.exe`，92,576,165 字节、SHA-256 `DA045056949A9A76B28AC33019114FCCA3F1081A84E0BF99E99D7292990F5FD1`；本地与 CI 构建时间不同，字节与哈希差异属预期。
 
+### 3.38 v0.6.8 火山方舟 API 完整适配（源码与标签待推送）
+
+- **范围**：渲染层为 `ApiCallFormat: "ark"` 补齐现有文本、图片、视频工作流；只使用 Bearer API Key，不实现 AK/SK。标准方舟根地址为 `/api/v3`，Agent Plan 根地址为 `/api/plan/v3`；地址构造会处理尾部斜杠及误粘贴的完整接口路径，避免重复追加 `/responses`、`/images/generations` 或视频任务路径。
+- **配置与界面**（`use-config-store.ts`、渠道编辑器）：旧配置自动补 `arkThinkingMode: auto` 和默认开启的 `imageWatermark`，不覆盖既有渠道、模型或密钥。标准方舟可尝试 `/models` 并按模型名推断图片/视频能力；Agent Plan 不伪造列表，模型选择器会说明需按账号套餐手动添加模型 ID。文本设置显示“自动/开启/关闭思考”；Seedream 隐藏不支持的质量/透明背景，改为水印；Seedance 显示比例、清晰度、时长、声音、水印和种子，Fast 的 1080p 保留原选择但禁止提交。
+- **协议与错误边界**（`services/api/ark.ts`、`image.ts`、`video.ts`）：Responses 使用 `thinking.type`，保留 SSE、非流式 JSON 回退、系统提示词、图片输入及函数调用解析，不发送 OpenAI `reasoning.effort`。Seedream 统一使用 `/images/generations`：无参考图不发 `image`，单图发字符串、多图发数组；单张为 `sequential_image_generation: disabled`，多张为 `auto + max_images`，并只发送 `size`、`response_format`、`stream: false`、`watermark`。蒙版请求明确阻止。Seedance 发送三类参考资产、比例/分辨率/时长/声音/水印和合法 seed；服务层再次校验 9/3/3 数量、格式和总时长，停止生成后尽力 DELETE 远端任务，失败仅记录已脱敏诊断。
+- **验证边界**：新增方舟协议回归覆盖地址、三种思考模式、SSE 增量、函数工具字段、Seedream 文生图/单图/多图参数、Seedance seed/Fast/素材限制。Node 测试 34/34、渲染层 Vitest 79/79、TypeScript 检查和 `git diff --check` 已通过。未使用真实 API Key，未进行可能收费调用；真实账号权限、套餐模型、CORS、素材上传、结果质量和远端取消结果仍待按 `pending-test.mdx` 人工验收。本次未打包安装器或发布远端资产，也未修改 `.mimosa/`。
+
 ### 3.23 v0.4.7 变更要点
 
 - **升级数据保护重做**（`desktop/build/nsis-custom.nsh` + `backup-user-data.ps1` + `storage-migration.cjs`）：安装前等待旧进程退出，对安装目录 `Data cache` / `Result` 和旧 AppData 分别做递归 SHA-256 快照；复制或校验失败时安装器立即中止。新版首次启动使用临时目录校验并原子替换，只恢复当前安装数据，旧 AppData 单独留档且不混合 LevelDB。

@@ -2,7 +2,7 @@ import { Button, Drawer, Input, Segmented, Select, Space } from "antd";
 import { ExternalLink, ListPlus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { AGNES_BASE_URL, defaultBaseUrlForApiFormat, GRSAI_DOMESTIC_BASE_URL, GRSAI_GLOBAL_BASE_URL, guessCapability, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ImageModelFeature, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { AGNES_BASE_URL, ARK_AGENT_PLAN_BASE_URL, ARK_STANDARD_BASE_URL, defaultBaseUrlForApiFormat, GRSAI_DOMESTIC_BASE_URL, GRSAI_GLOBAL_BASE_URL, guessCapability, isArkAgentPlanBaseUrl, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ImageModelFeature, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
 
@@ -103,6 +103,13 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                             <a href="https://www.agnes-ai.com/" target="_blank" rel="noreferrer">国际站 <ExternalLink className="inline size-3" /></a>
                             <a href="https://agnes-ai.cn/" target="_blank" rel="noreferrer">中国站 <ExternalLink className="inline size-3" /></a>
                             <a href="https://agnes-ai.com/en/docs/quickstart" target="_blank" rel="noreferrer">开发文档 <ExternalLink className="inline size-3" /></a>
+                        </div>
+                    ) : null}
+                    {draft.apiFormat === "ark" ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-500">
+                            <Button size="small" type={!isArkAgentPlanBaseUrl(draft.baseUrl) && draft.baseUrl.replace(/\/+$/, "") === ARK_STANDARD_BASE_URL ? "primary" : "default"} onClick={() => patch({ baseUrl: ARK_STANDARD_BASE_URL })}>标准方舟</Button>
+                            <Button size="small" type={isArkAgentPlanBaseUrl(draft.baseUrl) ? "primary" : "default"} onClick={() => patch({ baseUrl: ARK_AGENT_PLAN_BASE_URL })}>Agent Plan</Button>
+                            <span>可粘贴完整接口地址；标准方舟可拉取模型，Agent Plan 请按套餐手动增加模型 ID。</span>
                         </div>
                     ) : null}
                 </label>

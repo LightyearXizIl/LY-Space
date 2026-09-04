@@ -6,8 +6,10 @@ import { saveGeneratedBlob } from "@/services/desktop-storage";
 import { hostReferenceAudio, hostReferenceImage, hostReferenceVideo } from "@/services/image-hosting";
 import { imageToDataUrl, imageToFile } from "@/services/image-storage";
 import { isAgnesVideo25Family, isAgnesVideo25FlashModel, normalizeAgnesVideo25AspectRatio, normalizeAgnesVideo25Resolution, normalizeAgnesVideo25Seconds } from "@/lib/agnes-video";
-import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
+import { boolConfig, buildSeedancePromptText, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceAudioReferenceError, seedanceReferenceCountError, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
+import { logAppEvent } from "@/services/app-logger";
+import { arkApiUrl, arkHeaders, buildArkSeedanceTaskRequest } from "./ark";
 import { runModelPlugin } from "./model-plugin";
 import { readRequestError, readUpstreamError } from "./error-message";
 import type { ReferenceImage } from "@/types/image";
@@ -47,16 +49,23 @@ function aiHeaders(config: AiConfig, contentType?: string) {
 
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationResult> {
     const task = await createVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
-    const delayMs = task.provider === "seedance" ? 5000 : task.provider === "agnes" ? 10000 : 2500;
-    for (let attempt = 0; attempt < 120; attempt += 1) {
-        if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-        const state = await pollVideoGenerationTask(config, task, options);
-        if (state.status === "completed") return state.result;
-        if (state.status === "failed") throw new Error(state.error);
-        if (attempt === 119) throw new Error(`${task.provider === "seedance" ? "Seedance " : task.provider === "agnes" ? "Agnes " : ""}视频生成超时，请稍后重试`);
-        await delay(delayMs, options?.signal);
+    try {
+        const delayMs = task.provider === "seedance" ? 5000 : task.provider === "agnes" ? 10000 : 2500;
+        for (let attempt = 0; attempt < 120; attempt += 1) {
+            if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+            const state = await pollVideoGenerationTask(config, task, options);
+            if (state.status === "completed") return state.result;
+            if (state.status === "failed") throw new Error(state.error);
+            if (attempt === 119) throw new Error(`${task.provider === "seedance" ? "Seedance " : task.provider === "agnes" ? "Agnes " : ""}视频生成超时，请稍后重试`);
+            await delay(delayMs, options?.signal);
+        }
+        throw new Error("视频生成超时，请稍后重试");
+    } catch (error) {
+        if (task.provider === "seedance" && (options?.signal?.aborted || (error instanceof DOMException && error.name === "AbortError"))) {
+            await cancelSeedanceTask(config, task);
+        }
+        throw error;
     }
-    throw new Error("视频生成超时，请稍后重试");
 }
 
 // Agnes 参考素材需使用公网 HTTPS 地址；本地素材仅托管到用户已配置的签名 OSS。
@@ -399,22 +408,17 @@ async function createSeedanceTask(config: AiConfig, model: string, prompt: strin
     if (audioReferences.length && !references.length && !videoReferences.length) {
         throw new Error("Seedance 参考音频不能单独使用，请同时添加参考图或参考视频");
     }
-    assertSeedanceVideoReferences(videoReferences);
-    assertSeedanceAudioReferences(audioReferences);
+    assertSeedanceReferences(references, videoReferences, audioReferences);
+    const resolution = normalizeSeedanceResolution(config.vquality);
+    if (isSeedanceFastModel(modelOptionName(model)) && resolution === "1080p") {
+        throw new Error("Seedance 2.0 Fast 不支持 1080p；请保留当前选择并改用 480p 或 720p 后再提交");
+    }
     const content = await buildSeedanceContent(config, prompt, references, videoReferences, audioReferences);
     if (!content.length) throw new Error("请输入视频提示词，或连接参考图片/视频/音频");
-    const payload = {
-        model: modelOptionName(model),
-        content,
-        ratio: normalizeSeedanceRatio(config.size),
-        resolution: normalizeSeedanceResolution(config.vquality),
-        duration: normalizeSeedanceDuration(config.videoSeconds),
-        generate_audio: boolConfig(config.videoGenerateAudio, true),
-        watermark: boolConfig(config.videoWatermark, false),
-    };
+    const payload = buildArkSeedanceTaskRequest({ ...config, model: modelOptionName(model) }, content, normalizeSeedanceRatio(config.size), resolution, normalizeSeedanceDuration(config.videoSeconds));
 
     try {
-        const created = unwrapSeedanceTask((await axios.post<ApiEnvelope<SeedanceTask>>(seedanceApiUrl(config), payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
+        const created = unwrapSeedanceTask((await axios.post<ApiEnvelope<SeedanceTask>>(seedanceApiUrl(config), payload, { headers: arkHeaders(config, "application/json"), signal: options?.signal })).data);
         if (!created.id) throw new Error("Seedance 接口没有返回任务 ID");
         return { id: created.id, provider: "seedance", model };
     } catch (error) {
@@ -435,6 +439,13 @@ async function pollSeedanceTask(config: AiConfig, task: VideoGenerationTask, opt
     }
 }
 
+function assertSeedanceReferences(references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[]) {
+    const countError = seedanceReferenceCountError(references, videoReferences, audioReferences);
+    if (countError) throw new Error(countError);
+    assertSeedanceVideoReferences(videoReferences);
+    assertSeedanceAudioReferences(audioReferences);
+}
+
 function assertSeedanceVideoReferences(videoReferences: ReferenceVideo[]) {
     const error = seedanceVideoReferenceError(videoReferences);
     if (error) throw new Error(error);
@@ -448,6 +459,8 @@ function assertSeedanceVideoReferences(videoReferences: ReferenceVideo[]) {
 }
 
 function assertSeedanceAudioReferences(audioReferences: ReferenceAudio[]) {
+    const formatError = seedanceAudioReferenceError(audioReferences);
+    if (formatError) throw new Error(formatError);
     let total = 0;
     for (const audio of audioReferences) {
         if (!audio.durationMs) continue;
@@ -458,7 +471,17 @@ function assertSeedanceAudioReferences(audioReferences: ReferenceAudio[]) {
 }
 
 function seedanceApiUrl(config: AiConfig, taskId?: string) {
-    return buildApiUrl(config.baseUrl, `/contents/generations/tasks${taskId ? `/${encodeURIComponent(taskId)}` : ""}`);
+    return arkApiUrl(config, `/contents/generations/tasks${taskId ? `/${encodeURIComponent(taskId)}` : ""}`);
+}
+
+export async function cancelSeedanceTask(config: AiConfig, task: Pick<VideoGenerationTask, "id" | "model">) {
+    const requestConfig = resolveModelRequestConfig(config, task.model);
+    try {
+        await axios.delete(seedanceApiUrl(requestConfig, task.id), { headers: arkHeaders(requestConfig) });
+    } catch (error) {
+        // 本地停止优先；取消失败不会恢复轮询，也不写入密钥或请求正文。
+        logAppEvent({ category: "network", level: "warn", message: "方舟 Seedance 远端取消失败", details: { provider: "seedance", taskId: task.id, error: readAxiosError(error, "取消失败") } });
+    }
 }
 
 async function buildSeedanceContent(config: AiConfig, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[]) {

@@ -1,6 +1,6 @@
 import { saveAs } from "file-saver";
 
-import { useConfigStore, defaultConfig, defaultWebdavSyncConfig, type AiConfig, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel, type WebdavSyncConfig } from "@/stores/use-config-store";
+import { useConfigStore, defaultConfig, defaultWebdavSyncConfig, type AiConfig, type ApiCallFormat, type ArkThinkingMode, type ChannelModel, type ModelCapability, type ModelChannel, type WebdavSyncConfig } from "@/stores/use-config-store";
 import { usePromptSourceStore, type PromptSourceSchedule } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 
@@ -17,6 +17,7 @@ const apiFormats = new Set<ApiCallFormat>(["openai", "gemini", "ark", "grsai", "
 const capabilities = new Set<ModelCapability>(["image", "video", "text", "audio"]);
 const imageResolutions = new Set<AiConfig["imageResolution"]>(["1k", "2k", "4k", "8k"]);
 const reasoningEfforts = new Set<AiConfig["reasoningEffort"]>(["auto", "low", "medium", "high", "xhigh"]);
+const arkThinkingModes = new Set<ArkThinkingMode>(["auto", "enabled", "disabled"]);
 
 function record(value: unknown): Record<string, unknown> | null {
     return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -44,7 +45,7 @@ function sanitizeChannel(value: unknown): { channel: ModelChannel; skippedScript
     };
 }
 
-function sanitizeConfig(value: unknown) {
+export function sanitizeConfig(value: unknown) {
     const source = record(value);
     if (!source || !Array.isArray(source.channels)) throw new Error("配置缺少有效渠道");
     const channels = source.channels.map(sanitizeChannel).filter((item): item is NonNullable<ReturnType<typeof sanitizeChannel>> => Boolean(item));
@@ -55,6 +56,8 @@ function sanitizeConfig(value: unknown) {
     merged.models = Array.isArray(source.models) ? source.models.filter((item): item is string => typeof item === "string") : [];
     merged.imageResolution = imageResolutions.has(source.imageResolution as AiConfig["imageResolution"]) ? source.imageResolution as AiConfig["imageResolution"] : defaultConfig.imageResolution;
     merged.reasoningEffort = reasoningEfforts.has(source.reasoningEffort as AiConfig["reasoningEffort"]) ? source.reasoningEffort as AiConfig["reasoningEffort"] : defaultConfig.reasoningEffort;
+    merged.arkThinkingMode = arkThinkingModes.has(source.arkThinkingMode as ArkThinkingMode) ? source.arkThinkingMode as ArkThinkingMode : defaultConfig.arkThinkingMode;
+    merged.imageWatermark = source.imageWatermark === "false" ? "false" : defaultConfig.imageWatermark;
     return { config: merged, skippedScripts: channels.reduce((sum, item) => sum + item.skippedScripts, 0) };
 }
 

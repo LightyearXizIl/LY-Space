@@ -100,6 +100,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         ...config,
         model: resolveModelForCapability(config, node?.metadata?.model, mode),
         reasoningEffort: node?.metadata?.reasoningEffort || config.reasoningEffort || defaultConfig.reasoningEffort,
+        arkThinkingMode: node?.metadata?.arkThinkingMode || config.arkThinkingMode || defaultConfig.arkThinkingMode,
         quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
         imageResolution: node?.metadata?.imageResolution || config.imageResolution || defaultConfig.imageResolution,
         size: node?.metadata?.size || config.size || defaultConfig.size,

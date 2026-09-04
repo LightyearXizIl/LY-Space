@@ -8,6 +8,7 @@ export const SEEDANCE_REFERENCE_LIMITS = {
     audios: 3,
 };
 export const SEEDANCE_VIDEO_MIME_TYPES = ["video/mp4", "video/quicktime"];
+export const SEEDANCE_AUDIO_MIME_TYPES = ["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav"];
 
 export const seedanceResolutionOptions = [
     { value: "480p", label: "480p" },
@@ -57,6 +58,17 @@ const seedancePixels = {
 export function isSeedanceVideoConfig(config: AiConfig | Pick<AiConfig, "model" | "videoModel" | "apiFormat">) {
     const requestConfig = "channels" in config ? resolveModelRequestConfig(config, config.model || config.videoModel) : config;
     return requestConfig.apiFormat === "ark";
+}
+
+export function isSeedanceFastModel(model: string) {
+    return /seedance[-_ ]?2(?:\.0)?[-_ ]?fast/i.test(model);
+}
+
+export function seedanceReferenceCountError(images: ReferenceImage[], videos: ReferenceVideo[], audios: ReferenceAudio[]) {
+    if (images.length > SEEDANCE_REFERENCE_LIMITS.images) return `Seedance 最多支持 ${SEEDANCE_REFERENCE_LIMITS.images} 张参考图，请移除多余图片后重试`;
+    if (videos.length > SEEDANCE_REFERENCE_LIMITS.videos) return `Seedance 最多支持 ${SEEDANCE_REFERENCE_LIMITS.videos} 个参考视频，请移除多余视频后重试`;
+    if (audios.length > SEEDANCE_REFERENCE_LIMITS.audios) return `Seedance 最多支持 ${SEEDANCE_REFERENCE_LIMITS.audios} 个参考音频，请移除多余音频后重试`;
+    return "";
 }
 
 export function normalizeSeedanceResolution(value: string) {
@@ -146,6 +158,21 @@ export function seedanceVideoReferenceError(videos: ReferenceVideo[]) {
         }
     }
     if (totalDurationMs > 15000) return "Seedance 参考视频总时长不能超过 15 秒";
+    return "";
+}
+
+export function seedanceAudioReferenceError(audios: ReferenceAudio[]) {
+    let totalDurationMs = 0;
+    for (let index = 0; index < audios.length; index += 1) {
+        const audio = audios[index];
+        const label = seedanceReferenceLabel("audio", index);
+        if (!SEEDANCE_AUDIO_MIME_TYPES.includes(audio.type) && !/\.(mp3|wav)$/i.test(audio.name)) return `${label} 仅支持 mp3/wav 格式`;
+        if (audio.durationMs) {
+            if (audio.durationMs < 2000 || audio.durationMs > 15000) return `${label} 时长需要在 2-15 秒之间`;
+            totalDurationMs += audio.durationMs;
+        }
+    }
+    if (totalDurationMs > 15000) return "Seedance 参考音频总时长不能超过 15 秒";
     return "";
 }
 

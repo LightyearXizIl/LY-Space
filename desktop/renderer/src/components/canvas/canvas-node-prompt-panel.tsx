@@ -134,7 +134,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     ) : (
                         <>
                             <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="text" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />
-                            <CanvasTextSettingsPopover config={config} count={textCount} onConfigChange={(_, value) => onConfigChange(node.id, { reasoningEffort: value })} onCountChange={(nextTextCount) => onConfigChange(node.id, { textCount: nextTextCount })} />
+                            <CanvasTextSettingsPopover config={config} count={textCount} onConfigChange={(key, value) => onConfigChange(node.id, { [key]: value })} onCountChange={(nextTextCount) => onConfigChange(node.id, { textCount: nextTextCount })} />
                         </>
                     )}
                 </div>
@@ -175,6 +175,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         model: resolveModelForCapability(globalConfig, node.metadata?.model, mode),
         textModel: node.metadata?.textModel || globalConfig.textModel || defaultConfig.textModel,
         reasoningEffort: node.metadata?.reasoningEffort || globalConfig.reasoningEffort || defaultConfig.reasoningEffort,
+        arkThinkingMode: node.metadata?.arkThinkingMode || globalConfig.arkThinkingMode || defaultConfig.arkThinkingMode,
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
         imageResolution: node.metadata?.imageResolution || globalConfig.imageResolution || defaultConfig.imageResolution,
         size: node.metadata?.size || globalConfig.size || defaultConfig.size,

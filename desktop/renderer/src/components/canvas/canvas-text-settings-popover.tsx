@@ -3,14 +3,14 @@ import { createPortal } from "react-dom";
 import { Settings2 } from "lucide-react";
 import { Button, InputNumber } from "antd";
 
-import { reasoningEffortLabel, TextSettingsPanel } from "@/components/text-settings-panel";
+import { arkThinkingModeLabel, reasoningEffortLabel, TextSettingsPanel } from "@/components/text-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
-import type { AiConfig, ReasoningEffort } from "@/stores/use-config-store";
+import { resolveModelRequestConfig, type AiConfig, type ArkThinkingMode, type ReasoningEffort } from "@/stores/use-config-store";
 
 type CanvasTextSettingsPopoverProps = {
     config: AiConfig;
-    onConfigChange: (key: "reasoningEffort", value: ReasoningEffort) => void;
+    onConfigChange: (key: "reasoningEffort" | "arkThinkingMode", value: ReasoningEffort | ArkThinkingMode) => void;
     count?: number;
     onCountChange?: (count: number) => void;
     buttonClassName?: string;
@@ -23,6 +23,7 @@ export function CanvasTextSettingsPopover({ config, onConfigChange, count, onCou
     const panelRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
+    const isArk = resolveModelRequestConfig(config, config.model || config.textModel).apiFormat === "ark";
 
     useEffect(() => {
         if (!open) return;
@@ -49,7 +50,7 @@ export function CanvasTextSettingsPopover({ config, onConfigChange, count, onCou
         <>
             <span ref={buttonRef} className="inline-flex min-w-0">
                 <Button size="small" type="text" className={buttonClassName || "!h-8 !max-w-[170px] !justify-start !rounded-full !px-2.5"} style={{ background: theme.node.fill, color: theme.node.text }} icon={<Settings2 className="size-3.5" />} onClick={() => setOpen((current) => !current)}>
-                    <span className="truncate">推理 · {reasoningEffortLabel(config.reasoningEffort)}{onCountChange ? ` · ${count || 1} 个` : ""}</span>
+                    <span className="truncate">{isArk ? "思考" : "推理"} · {isArk ? arkThinkingModeLabel(config.arkThinkingMode) : reasoningEffortLabel(config.reasoningEffort)}{onCountChange ? ` · ${count || 1} 个` : ""}</span>
                 </Button>
             </span>
             {panel}

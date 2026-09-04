@@ -8,6 +8,8 @@ export type ApiCallFormat = "openai" | "gemini" | "ark" | "grsai" | "agnes";
 export type ModelCapability = "image" | "video" | "text" | "audio";
 export type ImageModelFeature = "image-edit" | "mask-edit" | "generative-upscale" | "dedicated-super-resolution";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
+/** 火山方舟 Responses API 的思考开关；与 OpenAI reasoning.effort 不可混用。 */
+export type ArkThinkingMode = "auto" | "enabled" | "disabled";
 
 export type ChannelModel = {
     name: string;
@@ -53,11 +55,13 @@ export type AiConfig = {
     videoNumInferenceSteps: string;
     systemPrompt: string;
     reasoningEffort: ReasoningEffort;
+    arkThinkingMode: ArkThinkingMode;
     models: string[];
     quality: string;
     imageResolution: "1k" | "2k" | "4k" | "8k";
     size: string;
     background: string;
+    imageWatermark: string;
     count: string;
     canvasImageCount: string;
 };
@@ -75,7 +79,8 @@ export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
-const ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
+export const ARK_STANDARD_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
+export const ARK_AGENT_PLAN_BASE_URL = "https://ark.cn-beijing.volces.com/api/plan/v3";
 export const GRSAI_DOMESTIC_BASE_URL = "https://grsai.dakka.com.cn";
 export const GRSAI_GLOBAL_BASE_URL = "https://grsaiapi.com";
 export const AGNES_BASE_URL = "https://apihub.agnes-ai.com";
@@ -145,11 +150,13 @@ export const defaultConfig: AiConfig = {
     videoNumInferenceSteps: "",
     systemPrompt: "",
     reasoningEffort: "auto",
+    arkThinkingMode: "auto",
     models: GRSAI_DEFAULT_MODELS.map((model) => `default::${model.name}`),
     quality: "auto",
     imageResolution: "1k",
     size: "auto",
     background: "",
+    imageWatermark: "true",
     count: "1",
     canvasImageCount: "3",
 };
@@ -316,6 +323,7 @@ export const useConfigStore = create<ConfigStore>()(
                         audioSpeed: config.audioSpeed || defaultConfig.audioSpeed,
                         audioInstructions: config.audioInstructions || "",
                         reasoningEffort: config.reasoningEffort || "auto",
+                        arkThinkingMode: normalizeArkThinkingMode(config.arkThinkingMode),
                         videoSeconds: config.videoSeconds || "6",
                         vquality: config.vquality || "720",
                         videoGenerateAudio: config.videoGenerateAudio || "true",
@@ -326,6 +334,7 @@ export const useConfigStore = create<ConfigStore>()(
                         videoNumInferenceSteps: config.videoNumInferenceSteps || "",
                         canvasImageCount: config.canvasImageCount || "3",
                         imageResolution: normalizeImageResolution(config.imageResolution, config.quality, config.size),
+                        imageWatermark: config.imageWatermark === "false" ? "false" : "true",
                     },
                 };
             },
@@ -462,7 +471,7 @@ function normalizeChannels(config: AiConfig) {
 
 export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
     if (apiFormat === "gemini") return GEMINI_BASE_URL;
-    if (apiFormat === "ark") return ARK_BASE_URL;
+    if (apiFormat === "ark") return ARK_STANDARD_BASE_URL;
     if (apiFormat === "grsai") return GRSAI_DOMESTIC_BASE_URL;
     if (apiFormat === "agnes") return AGNES_BASE_URL;
     return OPENAI_BASE_URL;
@@ -478,20 +487,32 @@ function uniqueModelOptions(models: string[]) {
 
 export function buildApiUrl(baseUrl: string, path: string) {
     let normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, "");
-    normalizedBaseUrl = normalizeArkPlanBaseUrl(normalizedBaseUrl);
+    normalizedBaseUrl = normalizeArkBaseUrl(normalizedBaseUrl);
     const lowerBaseUrl = normalizedBaseUrl.toLowerCase();
     const apiBaseUrl = lowerBaseUrl.endsWith("/v1") || lowerBaseUrl.endsWith("/api/v3") || lowerBaseUrl.endsWith("/api/plan/v3") ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`;
     return `${apiBaseUrl}${path}`;
 }
 
-function normalizeArkPlanBaseUrl(baseUrl: string) {
+/** True only for the dedicated Agent Plan root, including a pasted full Plan endpoint. */
+export function isArkAgentPlanBaseUrl(baseUrl: string) {
+    try {
+        return /\/api\/plan\/v3(?:\/|$)/i.test(new URL(baseUrl).pathname);
+    } catch {
+        return /\/api\/plan\/v3(?:\/|$)/i.test(baseUrl);
+    }
+}
+
+function normalizeArkBaseUrl(baseUrl: string) {
     try {
         const url = new URL(baseUrl);
         const path = url.pathname.replace(/\/+$/, "");
         const lowerPath = path.toLowerCase();
         const arkPlanIndex = lowerPath.indexOf("/api/plan/v3");
-        if (arkPlanIndex < 0) return baseUrl;
-        const end = arkPlanIndex + "/api/plan/v3".length;
+        const arkStandardIndex = lowerPath.indexOf("/api/v3");
+        const index = arkPlanIndex >= 0 ? arkPlanIndex : arkStandardIndex;
+        const root = arkPlanIndex >= 0 ? "/api/plan/v3" : "/api/v3";
+        if (index < 0) return baseUrl;
+        const end = index + root.length;
         if (lowerPath.length !== end && lowerPath[end] !== "/") return baseUrl;
         url.pathname = path.slice(0, end);
         url.search = "";
@@ -500,4 +521,8 @@ function normalizeArkPlanBaseUrl(baseUrl: string) {
     } catch {
         return baseUrl;
     }
+}
+
+function normalizeArkThinkingMode(value: unknown): ArkThinkingMode {
+    return value === "enabled" || value === "disabled" ? value : "auto";
 }

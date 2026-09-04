@@ -216,11 +216,19 @@ export default function VideoPage() {
         const selectedFiles = Array.from(files || []);
         const unsupported = selectedFiles.filter((file) => !file.type.startsWith("image/") && !SEEDANCE_VIDEO_MIME_TYPES.includes(file.type) && !isSupportedAudioFile(file));
         if (unsupported.length) message.warning("已忽略不支持的参考资产，请使用图片、mp4/mov 视频或 mp3/wav 音频");
-        const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/")).slice(0, Math.max(0, imageReferenceLimit - references.length));
+        const requestedImages = selectedFiles.filter((file) => file.type.startsWith("image/"));
+        const imageSlots = Math.max(0, imageReferenceLimit - references.length);
+        if (requestedImages.length > imageSlots) message.warning(`参考图最多 ${imageReferenceLimit} 张；未添加超出数量的图片。`);
+        const imageFiles = requestedImages.slice(0, imageSlots);
         const requestedVideos = selectedFiles.filter((file) => SEEDANCE_VIDEO_MIME_TYPES.includes(file.type));
         if (isAgnesVideo25Flash && requestedVideos.length) message.warning("Agnes Video 2.5 Flash 不支持参考视频，请改用 Agnes Video 2.5 或移除视频。");
-        const videoFiles = requestedVideos.slice(0, Math.max(0, videoReferenceLimit - videoReferences.length));
-        const audioFiles = selectedFiles.filter((file) => isSupportedAudioFile(file)).slice(0, SEEDANCE_REFERENCE_LIMITS.audios - audioReferences.length);
+        const videoSlots = Math.max(0, videoReferenceLimit - videoReferences.length);
+        if (!isAgnesVideo25Flash && requestedVideos.length > videoSlots) message.warning(`参考视频最多 ${videoReferenceLimit} 个；未添加超出数量的视频。`);
+        const videoFiles = requestedVideos.slice(0, videoSlots);
+        const requestedAudios = selectedFiles.filter((file) => isSupportedAudioFile(file));
+        const audioSlots = Math.max(0, SEEDANCE_REFERENCE_LIMITS.audios - audioReferences.length);
+        if (requestedAudios.length > audioSlots) message.warning(`参考音频最多 ${SEEDANCE_REFERENCE_LIMITS.audios} 个；未添加超出数量的音频。`);
+        const audioFiles = requestedAudios.slice(0, audioSlots);
         const nextReferences = await Promise.all(
             imageFiles.map(async (file) => {
                 const image = await uploadImage(file);

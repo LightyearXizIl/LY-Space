@@ -3,7 +3,7 @@ import { Switch } from "antd";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { AGNES_VIDEO_25_ASPECT_RATIOS, AGNES_VIDEO_25_RESOLUTIONS, isAgnesVideo25Family, isAgnesVideo25FlashModel, normalizeAgnesVideo25AspectRatio, normalizeAgnesVideo25Resolution, normalizeAgnesVideo25Seconds } from "@/lib/agnes-video";
-import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
+import { boolConfig, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
@@ -43,7 +43,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     // 渠道判断统一基于当前视频模型（避免被全局默认生图模型误导）
     const videoModel = model || config.videoModel || config.model;
     if (isSeedanceVideoConfig({ ...config, model: videoModel })) {
-        return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+        return <SeedanceVideoSettingsPanel config={config} model={videoModel} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
 
     // Agnes 渠道启用文档对齐的选项（18s 上限、1152x768 默认横屏、高级参数）；其他渠道保持现状
@@ -203,12 +203,13 @@ function AgnesVideo25SettingsPanel({ config, model, onConfigChange, theme, showT
     );
 }
 
-function SeedanceVideoSettingsPanel({ config, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
+function SeedanceVideoSettingsPanel({ config, model, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps & { model: string }) {
     const resolution = normalizeSeedanceResolution(config.vquality);
     const ratio = normalizeSeedanceRatio(config.size);
     const duration = normalizeSeedanceDuration(config.videoSeconds);
     const generateAudio = boolConfig(config.videoGenerateAudio, true);
     const watermark = boolConfig(config.videoWatermark, false);
+    const fast = isSeedanceFastModel(model);
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -217,11 +218,12 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, theme, showTitle, 
                 <SettingGroup title="分辨率" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
                         {seedanceResolutionOptions.map((item) => (
-                            <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
+                            <OptionPill key={item.value} selected={resolution === item.value} disabled={fast && item.value === "1080p"} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
                                 {item.label}
                             </OptionPill>
                         ))}
                     </div>
+                    {fast ? <div className="mt-2 text-xs" style={{ color: theme.node.muted }}>Seedance 2.0 Fast 不支持 1080p；当前选择会保留，提交时请改为 480p 或 720p。</div> : null}
                 </SettingGroup>
                 <SettingGroup title="比例" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
@@ -256,6 +258,9 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, theme, showTitle, 
                         <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} />
                         <SwitchRow label="添加水印" checked={watermark} theme={theme} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} />
                     </div>
+                </SettingGroup>
+                <SettingGroup title="随机种子" color={theme.node.muted}>
+                    <NumberInput value={config.videoSeed || ""} min={-1} max={4294967295} theme={theme} onChange={(value) => onConfigChange("videoSeed", value)} />
                 </SettingGroup>
             </div>
         </ImageSettingsTheme>

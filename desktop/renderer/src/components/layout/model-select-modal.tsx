@@ -3,7 +3,7 @@ import { RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { fetchChannelModels } from "@/services/api/image";
-import type { ModelChannel } from "@/stores/use-config-store";
+import { isArkAgentPlanBaseUrl, type ModelChannel } from "@/stores/use-config-store";
 
 // 选择渠道模型弹窗：拉取上游模型列表或手动增加，勾选后才会进入渠道模型列表。
 export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onClose }: { open: boolean; channel: ModelChannel | null; selectedNames: string[]; onConfirm: (names: string[]) => void; onClose: () => void }) {
@@ -32,6 +32,7 @@ export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onCl
         return keyword ? currentList.filter((name) => name.toLowerCase().includes(keyword)) : currentList;
     }, [currentList, search]);
     const visibleSelectedCount = visibleList.filter((name) => selected.has(name)).length;
+    const manualOnly = channel?.apiFormat === "ark" && isArkAgentPlanBaseUrl(channel.baseUrl);
 
     const toggle = (name: string, checked: boolean) =>
         setSelected((current) => {
@@ -107,11 +108,11 @@ export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onCl
                 <Input className="min-w-[200px] flex-1" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索模型" prefix={<Search className="size-4 text-stone-400" />} allowClear />
                 <Input className="min-w-[180px] flex-1" value={manual} onChange={(event) => setManual(event.target.value)} onPressEnter={addManual} placeholder="输入模型名称" />
                 <Button onClick={addManual}>增加模型</Button>
-                <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void fetchModels()}>
+                <Button icon={<RefreshCw className="size-4" />} loading={loading} disabled={manualOnly} onClick={() => void fetchModels()}>
                     拉取模型列表
                 </Button>
             </div>
-            <div className="mt-2 text-xs text-stone-500">如果上游不提供 OpenAI /models 模型列表接口，请在这里手动增加模型名称。</div>
+            <div className="mt-2 text-xs text-stone-500">{manualOnly ? "Agent Plan 不提供模型列表接口。请按账号套餐可用的模型 ID 手动增加；这里不会猜测或预置模型。" : "如果上游不提供 /models 模型列表接口，请在这里手动增加模型名称。"}</div>
 
             <Tabs
                 className="mt-3"

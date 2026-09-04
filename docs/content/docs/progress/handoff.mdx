@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；当前待发布版本 `v0.6.9`）。
-- **最新发布状态**：`v0.6.8` 已于 `2026-09-04` 正式发布；`v0.6.9` 已完成方舟桌面 CORS 修复和自动化检查，待推送 tag 触发桌面 CI。发布后必须核验正式 Release 的 EXE、blockmap、`latest.yml`、更新清单及本地留存安装包哈希，不可把本地测试当作发布完成。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；当前发布版本 `v0.6.9`）。
+- **最新发布状态**：`v0.6.9` 已于 `2026-09-04` 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `33870358330` 成功。EXE、blockmap、`latest.yml` 均为 uploaded；本地留存 EXE 与远端 digest、更新清单已核验，具体值见 3.39。
 - **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；通用 AI 接口仍可由渲染进程直连，方舟请求在桌面端通过受限主进程 HTTPS 代理；文档站是独立 Next.js 项目（`docs/`，bun）
@@ -325,12 +325,13 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **范围**：渲染层为 `ApiCallFormat: "ark"` 补齐现有文本、图片、视频工作流；只使用 Bearer API Key，不实现 AK/SK。标准方舟根地址为 `/api/v3`，Agent Plan 根地址为 `/api/plan/v3`；地址构造会处理尾部斜杠及误粘贴的完整接口路径，避免重复追加 `/responses`、`/images/generations` 或视频任务路径。
 - **配置与界面**（`use-config-store.ts`、渠道编辑器）：旧配置自动补 `arkThinkingMode: auto` 和默认开启的 `imageWatermark`，不覆盖既有渠道、模型或密钥。标准方舟可尝试 `/models` 并按模型名推断图片/视频能力；Agent Plan 不伪造列表，模型选择器会说明需按账号套餐手动添加模型 ID。文本设置显示“自动/开启/关闭思考”；Seedream 隐藏不支持的质量/透明背景，改为水印；Seedance 显示比例、清晰度、时长、声音、水印和种子，Fast 的 1080p 保留原选择但禁止提交。
 - **协议与错误边界**（`services/api/ark.ts`、`image.ts`、`video.ts`）：Responses 使用 `thinking.type`，保留 SSE、非流式 JSON 回退、系统提示词、图片输入及函数调用解析，不发送 OpenAI `reasoning.effort`。Seedream 统一使用 `/images/generations`：无参考图不发 `image`，单图发字符串、多图发数组；单张为 `sequential_image_generation: disabled`，多张为 `auto + max_images`，并只发送 `size`、`response_format`、`stream: false`、`watermark`。蒙版请求明确阻止。Seedance 发送三类参考资产、比例/分辨率/时长/声音/水印和合法 seed；服务层再次校验 9/3/3 数量、格式和总时长，停止生成后尽力 DELETE 远端任务，失败仅记录已脱敏诊断。
+- **验证与发布核验**：新增方舟协议回归覆盖地址、三种思考模式、SSE 增量、函数工具字段、Seedream 文生图/单图/多图参数、Seedance seed/Fast/素材限制。Node 测试 34/34、渲染层 Vitest 79/79、TypeScript 检查和 `git diff --check` 已通过。发布提交/tag 为 `91063f6` / `v0.6.8`；桌面 CI `33868823083` 已成功。正式 Release 为 `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.6.8`，非 draft、非 prerelease；远端 `LY-Space-Setup-0.6.8.exe`（92,578,074 字节，SHA-256 `a025c92791a030840148606821380782ab25aab26335281ba1a71f1fa48f9d2d`）、blockmap（97,936 字节）和 `latest.yml`（344 字节）均为 uploaded。未使用真实 API Key，未进行可能收费调用。
 
-### 3.39 v0.6.9 方舟桌面 CORS 全链路修复（待发布）
+### 3.39 v0.6.9 方舟桌面 CORS 全链路修复（已发布）
 
 - **根因与范围**：v0.6.8 的方舟标准 `/models`、Responses、Seedream 与 Seedance 仍有渲染进程网络路径，浏览器会因上游没有 CORS 响应头而在请求到达方舟前拦截。v0.6.9 将这些方舟路径统一改为 Electron 主进程 HTTPS 代理；标准方舟与 Agent Plan 都覆盖，Agent Plan 仍不伪造模型列表。
 - **IPC 与安全边界**（`main.cjs`、`preload.cjs`、`services/api/ark.ts`）：普通请求回传 HTTP 状态、正文和白名单 `content-type` / 方舟请求 ID；方舟专用限制为 64 MiB 请求体、32 MiB 响应体、120 秒超时、6 项并发。Responses 的 SSE 分片经 IPC 即时转发；AbortSignal 同时请求本地停止与主进程取消。运行日志只写方法、脱敏 URL、状态、耗时和请求 ID，绝不写 Bearer Key 或正文。
-- **调用与验证**（`image.ts`、`video.ts`、`ark-adapter.test.ts`）：模型列表、Seedream、Seedance 创建/轮询/取消及 Responses 已改用共享适配层；非桌面开发环境保留浏览器直连，并在 CORS 网络失败时说明限制。已执行 Node 测试 34/34、渲染 Vitest 81/81、TypeScript 检查、主进程语法检查与 `git diff --check`；没有使用真实 API Key 或产生收费调用。发布提交、CI、远端资产、远端/本地哈希仍待本次发布完成后补记；`.mimosa/` 与 `desktop/.mimosa/` 保持未改动。
+- **调用与验证**（`image.ts`、`video.ts`、`ark-adapter.test.ts`）：模型列表、Seedream、Seedance 创建/轮询/取消及 Responses 已改用共享适配层；非桌面开发环境保留浏览器直连，并在 CORS 网络失败时说明限制。已执行 Node 测试 34/34、渲染 Vitest 81/81、TypeScript 检查、主进程语法检查与 `git diff --check`；没有使用真实 API Key 或产生收费调用。发布提交/tag 为 `fda0feb` / `v0.6.9`，桌面 CI `33870358330` 成功。正式 Release 为 `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.6.9`，非 draft、非 prerelease；远端 `LY-Space-Setup-0.6.9.exe`（92,580,310 字节，SHA-256 `fb04dfb2c0df4d3177b7313817e313cabf70f55e6f462acf255bd90f5ec4d36e`）、blockmap（97,924 字节）和 `latest.yml`（344 字节）均为 uploaded。`latest.yml` 的 version `0.6.9`、path、size 与 EXE 一致，SHA-512 为 `jBrRCpOMX75ThycxZoi6mCwW6GB7t/lKjFxZ4WeQwQrdcFoOQunus6eXV9x/C5lGtS1Uey+rbbbc/18+f1wPUg==`。本地安装包为 `release\\LY-Space-Setup-0.6.9.exe`，其 SHA-256 与远端 asset digest 一致；`.mimosa/` 与 `desktop/.mimosa/` 保持未改动。真实账号权限、套餐模型、CORS、素材上传、结果质量和远端取消结果仍按 `pending-test.mdx` 人工验收。
 
 ### 3.23 v0.4.7 变更要点
 

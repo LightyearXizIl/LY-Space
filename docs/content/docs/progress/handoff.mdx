@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；当前发布版本 `v0.7.0`）。
-- **最新发布状态**：`v0.7.0` 已于 `2026-09-04` 正式发布（非 draft/prerelease）；GitHub Actions `Publish LY Space Desktop` 运行 `33873193151` 成功。EXE、blockmap、`latest.yml` 均为 uploaded；本地留存 EXE 与远端 digest、更新清单已核验，具体值见 3.40。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；当前发布版本 `v0.7.1`）。
+- **最新发布状态**：`v0.7.1` 已于 `2026-09-05` 正式发布（非 draft/prerelease，GitHub latest 指向本版）；GitHub Actions `Publish LY Space Desktop` 运行 `33946112528` 成功。EXE、blockmap、`latest.yml` 均为 uploaded；本地留存文件与远端 digest、更新清单已核验，具体值见下方 v0.7.1 小节。
 - **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；通用 AI 接口仍可由渲染进程直连，方舟请求在桌面端通过受限主进程 HTTPS 代理；文档站是独立 Next.js 项目（`docs/`，bun）
@@ -27,7 +27,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.7.0 已发布（GitHub Release、三项桌面资产和更新清单均已核验）。
+- **当前版本**：v0.7.1 已发布（GitHub Release、三项桌面资产和更新清单均已核验）。
 
 ## 2. 数据存储
 
@@ -45,13 +45,17 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 3. 关键链路与已修复的坑
 
-### v0.7.1：工作台本地参考图不再强制 OSS（发布中）
+### v0.7.1：工作台本地参考图不再强制 OSS（已发布）
 
 - 背景：另一位用户的视频创作台添加本地参考图时被要求配置 R2；与此前画布的 `ModelNotOpen` 账号权限错误无关。
 - `ReferenceImageUploader` 默认用 `uploadImage` 保存本机 Blob 和 storageKey，由既有 API 适配层转换文件/Base64。视频页只对无自定义脚本的 Agnes 视频开启公网托管模式；生图工作台同样默认使用本地参考图。手动 HTTPS 链接与既有最近上传记录保留；本地临时链接不提供“复制链接”。
 - 渠道切换后清除不适用的托管警告，失败项重试使用当前模式。移除或离开页面后完成的任务不得重新加入参考图。清理图片缓存时保护视频生成记录及工作台会话引用。
-- 回归覆盖无 OSS 本地添加、公网上传、渠道切换重试、处理中移除和清理保护；真实账号生成及另一台电脑的安装验收仍待用户完成。版本已提升为 v0.7.1，CI 和正式资产核验完成后补录发布证据。
+- 回归覆盖无 OSS 本地添加、公网上传、渠道切换重试、处理中移除和清理保护；真实账号生成及另一台电脑的安装验收仍待用户完成。
 - 验证：新增 6 项回归，Renderer Vitest 全量 100/100 通过，TypeScript 与 `git diff --check` 通过；TODO 的持续渠道兼容性事项继续保留。
+- 发布提交/tag：`00211179219395264fbb7f5f8cd4bb4e78f932bb` / `v0.7.1`；`main` 和 tag 已推送。CI `https://github.com/LightyearXizIl/LY-Space/actions/runs/33946112528` 成功，完成类型检查、Windows 构建、包校验、草稿资产下载核验与正式发布。
+- 正式 Release：`https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.7.1`，非 draft/prerelease，发布说明与 CHANGELOG 一致。三项资产均 uploaded：EXE 92,585,991 字节、SHA-256 `f6e2603bf25f5146fb51699b320891df8b983fa707eca0f29c24bb63000c9c66`；blockmap 97,911 字节、SHA-256 `432aa12a5ca59ca20f113ac6eebbb41863ec3d4ff3357ed3c723e8d76b764d90`；`latest.yml` 344 字节、SHA-256 `13640b524fce057c5695fede0816bfc841d4724fb85f7cf656a6be490ea4cc50`。
+- 本地 CI 正式安装包：`E:\Vibe coding\LY Space\LY Space-源码\release\LY-Space-Setup-0.7.1.exe`，blockmap 在同目录；本版清单另存 `release/v0.7.1/latest.yml`，未覆盖旧清单。三份本地文件大小和 SHA-256 均与远端 digest 一致；清单 version/path/files/size/SHA-512 均匹配安装包，SHA-512 为 `6e61fiVVx6plv88KWn7boagVaX7VGvbD/WwG3fJdqGUm0fOUuFsQx9wZTSm9rW51TDIlB84qgBr2YRCHnQ6bNg==`。
+- `.mimosa/` 与 `desktop/.mimosa/` 未修改或提交；本轮未进行真实收费调用或用户电脑安装测试。
 
 ### 3.1 图片生成与落盘（生图工作台 `pages/image/index.tsx`）
 - **落盘**：API 返回 → `persistGeneratedImages`（`services/api/image.ts`）→ `fetchImageBlob`（浏览器 fetch 失败回退主进程 `lyspace:fetch-url`，绕过 CORS）→ `saveGeneratedBlob` → 主进程 `writeGeneratedOutput` 写文件并返回 `{ path, name }` → 图片记录 `localPath`

@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；当前发布版本 `v0.7.1`）。
-- **最新发布状态**：`v0.7.1` 已于 `2026-09-05` 正式发布（非 draft/prerelease，GitHub latest 指向本版）；GitHub Actions `Publish LY Space Desktop` 运行 `33946112528` 成功。EXE、blockmap、`latest.yml` 均为 uploaded；本地留存文件与远端 digest、更新清单已核验，具体值见下方 v0.7.1 小节。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；当前发布版本 `v0.7.2`）。
+- **最新发布状态**：`v0.7.2` 已于 `2026-09-05` 正式发布（非 draft/prerelease，GitHub latest 指向本版）；GitHub Actions `Publish LY Space Desktop` 运行 `33948693908` 成功。EXE、blockmap、`latest.yml` 均为 uploaded；本地留存文件与远端 digest、更新清单已核验，具体值见下方 v0.7.2 小节。
 - **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；通用 AI 接口仍可由渲染进程直连，方舟请求在桌面端通过受限主进程 HTTPS 代理；文档站是独立 Next.js 项目（`docs/`，bun）
@@ -27,7 +27,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.7.1 已发布（GitHub Release、三项桌面资产和更新清单均已核验）。
+- **当前版本**：v0.7.2 已发布（GitHub Release、三项桌面资产和更新清单均已核验）。
 
 ## 2. 数据存储
 
@@ -45,7 +45,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 3. 关键链路与已修复的坑
 
-### v0.7.2：安装向导直接打开与自动保存退出（待 CI 发布核验）
+### v0.7.2：安装向导直接打开与自动保存退出（已发布）
 
 - 安装器不再在 `.onInit` 等待已运行的软件退出；向导先显示，点击安装后通过 `customCheckAppRunning` 执行保存退出脚本，然后才备份数据和调用旧卸载器。覆盖默认强杀逻辑，失败/超时停止安装，不删除原数据。
 - `stop-for-install.ps1` 仅定位同一 Windows 会话、同一完整 EXE 路径的进程，通过 `--lyspace-quit-for-install` 与 `--lyspace-install-dir=` 通知已运行的 Electron 主进程；最长等候 25 秒。主进程校验安装目录并复用带请求 ID、15 秒超时的持久化回执；通知进程若抢到单实例锁，只退出，不初始化存储或打开新窗口。
@@ -53,7 +53,9 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - 过渡限制：v0.7.1 及更早版本不识别退出通知，首次覆盖可能仍需“文件 → 退出”一次；该版本的新向导本身不会再在双击后等待旧应用关闭。从 v0.7.2 起支持后续自动保存退出，不使用强杀兼容旧版。
 - 本地验证：完整 Node 38/38、Renderer Vitest 18 文件 103/103、TypeScript、主进程/preload 语法、版本一致性和 `git diff --check` 通过。隔离 C# 模拟进程验证保存后退出、空闲、精确路径隔离与超时不强杀；备份恢复测试覆盖 `Data cache` 嵌套目录、Result 四类文件、`app-data` 嵌套哨兵及逐文件哈希。
 - 未操作用户实际 LY Space 进程或真实资料；完整 Electron/NSIS 窗口交互、托盘、卸载、不同权限账户和真实覆盖安装仍列入待测。TODO 已复核，无待实施条目需要迁移；`.mimosa/` 与 `desktop/.mimosa/` 保留且不提交。
-- 发布提交、CI、正式资产 digest 和本地安装包路径在 CI 完成后单独补记。
+- 发布提交/tag：`130fc8139342ef5098f42d0c4da698d15bd45ff5` / `v0.7.2`，已推送 `main` 和 tag。CI `https://github.com/LightyearXizIl/LY-Space/actions/runs/33948693908` 成功，完成类型检查、Windows NSIS 构建、包校验、草稿资产下载核验与正式发布。
+- 正式 Release：`https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.7.2`，非 draft/prerelease，GitHub latest 指向本版，发布说明与 CHANGELOG 一致。三项资产均 uploaded：EXE 92,583,075 字节、SHA-256 `878be552f463342589ee3293d7d5ada272b3e054998c750affcf9c772aea9cf1`；blockmap 98,080 字节、SHA-256 `cc3b56439df50e1abd805bbd372c0db4354c2441441bd3f4b78c4b168d9a1ed8`；`latest.yml` 344 字节、SHA-256 `93c79c7a5dd982d9e1f8533f34ac78e3204b17dcb4aed80b4789b18b7a3bfd87`。
+- 本地 CI 正式安装包：`E:\Vibe coding\LY Space\LY Space-源码\release\LY-Space-Setup-0.7.2.exe`，blockmap 在同目录；本版清单另存 `release/v0.7.2/latest.yml`，未覆盖旧版本清单。三份本地文件大小和 SHA-256 均与远端 digest 一致；清单 version/path/files/size/SHA-512 均匹配安装包，SHA-512 为 `D9kfVTII2n5zlkSES0MTXq9XOPiaYp7iYcJRZNNf1XCIviwBHJgABXP97ng3WhVlTNHv1f8A00EdpBpUvhXreA==`。本段发布证据在发布后独立提交，不重新打包或改 tag。
 
 ### v0.7.1：工作台本地参考图不再强制 OSS（已发布）
 

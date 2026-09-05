@@ -21,7 +21,7 @@ import { imageToDataUrl, resolveImageUrl, uploadImage } from "@/services/image-s
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { requestImageQuestion } from "@/services/api/image";
 import { useAssetStore } from "@/stores/use-asset-store";
-import { modelOptionLabel, resolveModelRequestConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionLabel, resolveModelRequestConfig, resolveModelScript, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -564,7 +564,7 @@ export default function VideoPage() {
                                 </div>
                             </div>
 
-                            <ReferenceImageUploader references={references} setReferences={setReferences} limit={imageReferenceLimit} onOpenSettings={() => openConfigDialog(true)} />
+                            <ReferenceImageUploader references={references} setReferences={setReferences} limit={imageReferenceLimit} requiresPublicUrl={requestConfig.apiFormat === "agnes" && !resolveModelScript(effectiveConfig, model)} onOpenSettings={() => openConfigDialog(true)} />
 
                             <div className="min-w-0">
                                 <div className="mb-2 flex items-center justify-between gap-3">

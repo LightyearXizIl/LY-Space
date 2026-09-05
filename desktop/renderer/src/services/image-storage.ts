@@ -16,6 +16,8 @@ export type UploadedImage = {
 
 const store = localforage.createInstance({ name: "infinite-canvas", storeName: "image_files" });
 const generationLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
+const videoLogStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
+const workbenchSessionStore = localforage.createInstance({ name: "infinite-canvas", storeName: "workbench_sessions" });
 const objectUrls = new Map<string, string>();
 
 export async function uploadImage(input: string | Blob): Promise<UploadedImage> {
@@ -88,11 +90,11 @@ export async function deleteStoredImages(keys: Iterable<string>) {
 
 export async function cleanupUnusedImages(usedData: unknown) {
     const usedKeys = collectImageStorageKeys(usedData);
-    // 生图工作台的生成记录/结果也引用 image_files 中的 blob，纳入保护防止资产清理时误删。
+    // 两个工作台的会话与生成记录都可能引用本地参考图，资产清理时一并保护。
     // 注意 iterate 回调不得返回值（返回非 undefined 会终止迭代）。
-    await generationLogStore.iterate((log) => {
-        collectImageStorageKeys(log, usedKeys);
-    });
+    await Promise.all([generationLogStore, videoLogStore, workbenchSessionStore].map((source) => source.iterate((value) => {
+        collectImageStorageKeys(value, usedKeys);
+    })));
     const unused: string[] = [];
     await store.iterate((_value, key) => {
         // 只清理 image_files 中带 image: 前缀的存储键，避免误删其他类型的脏数据

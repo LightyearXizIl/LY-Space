@@ -45,6 +45,14 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 3. 关键链路与已修复的坑
 
+### v0.7.1：工作台本地参考图不再强制 OSS（发布中）
+
+- 背景：另一位用户的视频创作台添加本地参考图时被要求配置 R2；与此前画布的 `ModelNotOpen` 账号权限错误无关。
+- `ReferenceImageUploader` 默认用 `uploadImage` 保存本机 Blob 和 storageKey，由既有 API 适配层转换文件/Base64。视频页只对无自定义脚本的 Agnes 视频开启公网托管模式；生图工作台同样默认使用本地参考图。手动 HTTPS 链接与既有最近上传记录保留；本地临时链接不提供“复制链接”。
+- 渠道切换后清除不适用的托管警告，失败项重试使用当前模式。移除或离开页面后完成的任务不得重新加入参考图。清理图片缓存时保护视频生成记录及工作台会话引用。
+- 回归覆盖无 OSS 本地添加、公网上传、渠道切换重试、处理中移除和清理保护；真实账号生成及另一台电脑的安装验收仍待用户完成。版本已提升为 v0.7.1，CI 和正式资产核验完成后补录发布证据。
+- 验证：新增 6 项回归，Renderer Vitest 全量 100/100 通过，TypeScript 与 `git diff --check` 通过；TODO 的持续渠道兼容性事项继续保留。
+
 ### 3.1 图片生成与落盘（生图工作台 `pages/image/index.tsx`）
 - **落盘**：API 返回 → `persistGeneratedImages`（`services/api/image.ts`）→ `fetchImageBlob`（浏览器 fetch 失败回退主进程 `lyspace:fetch-url`，绕过 CORS）→ `saveGeneratedBlob` → 主进程 `writeGeneratedOutput` 写文件并返回 `{ path, name }` → 图片记录 `localPath`
 - **三条走 blob 的路径**（落盘/uploadImage 转存/下载）都必须用 `fetchImageBlob` 回退，别漏
@@ -56,7 +64,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **任务式生成**：`createVideoGenerationTask` 提交 → `pollVideoGenerationLog` 轮询（Seedance 5s / Agnes 10s / 其他 2.5s）→ `storeGeneratedVideo` 落盘 `Result\Video`（fetch 跨域失败回退主进程 `fetchUrl`）
 - **轮询限流**：Agnes 状态查询遇 429/rate limit 返回 pending 继续轮询，不中断
 - **切换页面**：轮询闭包后台继续，`activeVideoLogIds` 模块级防重复轮询，任务完成通知（`emitVideoTaskUpdate`）刷新新挂载页面
-- **Agnes 参考图**（图生视频）：要求公网 HTTPS 图片 URL。生图和视频工作台的 `ReferenceImageUploader` 会把 PNG/JPG/JPEG/WEBP 本地图片经用户已配置的 Cloudflare R2 Worker 自动上传，并只将 Worker 返回的 HTTPS URL 写入当前参考图数组；最多 3 个并发、100MB 前端限制、失败可重试。阿里云 OSS 的既有生成前托管仍保留；公网 URL 仍可在参考图区手动添加，也可从「OSS设置」通过 `reference-handoff` 加入视频工作台。
+- **Agnes 参考图**（图生视频）：要求公网 HTTPS 图片 URL。视频工作台仅在无自定义脚本的 Agnes 渠道使用 Cloudflare R2 Worker 自动上传；其他视频渠道及生图工作台默认保存本地参考图，生成时交给各自 API 适配层转换。阿里云 OSS 的既有生成前托管仍保留；公网 URL 仍可手动添加，也可从「OSS设置」通过 `reference-handoff` 加入视频工作台。
 - **Agnes API 路径（官方文档 agnes-video-v20）**：Base URL `https://api.agnes-ai.cn`（中国站）/ `https://apihub.agnes-ai.com`（国际站）；创建任务 `POST /v1/videos`（`buildApiUrl` 自动补 `/v1`）、结果查询 `GET /agnesapi?video_id=`（`pollAgnesVideoTask` 已剥 `/v1`）
 - **请求代理回退**（v0.3.0）：`agnesRequest` 网络层失败（CORS/连接/超时）自动回退主进程 `lyspace:proxy-request` 重试；失败节点优先显示上游原始错误正文（包括 HTML、litellm/UploadFile 等），仅在上游没有错误正文时才回退 HTTP 状态或本地提示。
 

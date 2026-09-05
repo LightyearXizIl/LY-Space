@@ -1,3 +1,15 @@
+const path = require("node:path");
+
+const INSTALLER_QUIT_FLAG = "--lyspace-quit-for-install";
+
+function isInstallerQuitRequest(argv, executable) {
+    const prefix = "--lyspace-install-dir=";
+    const target = argv.find((arg) => typeof arg === "string" && arg.startsWith(prefix));
+    return argv.includes(INSTALLER_QUIT_FLAG) && Boolean(target) &&
+        path.win32.isAbsolute(target.slice(prefix.length)) &&
+        path.win32.resolve(target.slice(prefix.length)).toLowerCase() === path.win32.dirname(executable).toLowerCase();
+}
+
 function createPersistenceFlushCoordinator({ timeoutMs = 15000, onTimeout = () => undefined } = {}) {
     let sequence = 0;
     let pending = null;
@@ -57,4 +69,4 @@ function buildInstallerLaunchOptions() {
     return { detached: true, stdio: "ignore" };
 }
 
-module.exports = { buildInstallerArgs, buildInstallerLaunchOptions, createPersistenceFlushCoordinator };
+module.exports = { INSTALLER_QUIT_FLAG, isInstallerQuitRequest, buildInstallerArgs, buildInstallerLaunchOptions, createPersistenceFlushCoordinator };

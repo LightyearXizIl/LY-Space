@@ -39,11 +39,21 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 | 上次下载目录 | `%APPDATA%\LY Space\app-data\last-save-directory.txt` | 下载对话框默认沿用上次目录 |
 
 - **存储策略（v0.4.7 起）**：默认用户数据与程序文件彻底分离；用户自定义过的结果/缓存目录保持不变，换目录安装不覆盖用户设置。
-- **首次升级保护**：`customInit` 在旧卸载器运行前，把当前安装目录数据和旧 AppData 分别保存到 `%LOCALAPPDATA%\LY Space\Backups\v0.4.7-*`，逐文件 SHA-256 校验；新版只从当前安装数据快照恢复，旧 LevelDB 不合并，备份不自动删除。
+- **首次升级保护**：v0.7.2 起使用安装阶段的 `customCheckAppRunning`（此前为 `customInit`），在自动保存退出后、旧卸载器运行前，把当前安装目录数据和旧 AppData 分别保存到 `%LOCALAPPDATA%\LY Space\Backups\v0.4.7-*`，逐文件 SHA-256 校验；新版只从当前安装数据快照恢复，旧 LevelDB 不合并，备份不自动删除。
 - **v0.4.7 故障恢复**：若启动出现 `ENOTEMPTY` 或主进程 JavaScript 错误，先完全退出所有 LY Space 进程，再手动把 v0.4.8 覆盖安装到原目录；禁止删除 `Data cache`、`Data cache.migrating-v0.4.7*` 和 `%LOCALAPPDATA%\LY Space\Backups`。v0.4.8 会使用原校验备份重新恢复，并保留遗留迁移目录作为故障证据。
 - **历史教训**：NSIS `CopyFiles "$INSTDIR\目录\*.*"` 不会递归复制子目录，旧 `customRemoveFiles` 随后执行 `RMDir /r` 会丢失嵌套数据。不得再把用户数据放回安装目录，也不得用通配符复制冒充递归备份。
 
 ## 3. 关键链路与已修复的坑
+
+### v0.7.2：安装向导直接打开与自动保存退出（待 CI 发布核验）
+
+- 安装器不再在 `.onInit` 等待已运行的软件退出；向导先显示，点击安装后通过 `customCheckAppRunning` 执行保存退出脚本，然后才备份数据和调用旧卸载器。覆盖默认强杀逻辑，失败/超时停止安装，不删除原数据。
+- `stop-for-install.ps1` 仅定位同一 Windows 会话、同一完整 EXE 路径的进程，通过 `--lyspace-quit-for-install` 与 `--lyspace-install-dir=` 通知已运行的 Electron 主进程；最长等候 25 秒。主进程校验安装目录并复用带请求 ID、15 秒超时的持久化回执；通知进程若抢到单实例锁，只退出，不初始化存储或打开新窗口。
+- 修复渲染层保存失败仍发送成功回执的问题；同步/异步状态保存与待写入失败均返回失败回执，主进程只接受主窗口发送者，失败保留运行中的应用。脚本保持 ASCII，避免 Windows PowerShell 5 系统代码页误读无 BOM 的中文注释而漏执行检查。
+- 过渡限制：v0.7.1 及更早版本不识别退出通知，首次覆盖可能仍需“文件 → 退出”一次；该版本的新向导本身不会再在双击后等待旧应用关闭。从 v0.7.2 起支持后续自动保存退出，不使用强杀兼容旧版。
+- 本地验证：完整 Node 38/38、Renderer Vitest 18 文件 103/103、TypeScript、主进程/preload 语法、版本一致性和 `git diff --check` 通过。隔离 C# 模拟进程验证保存后退出、空闲、精确路径隔离与超时不强杀；备份恢复测试覆盖 `Data cache` 嵌套目录、Result 四类文件、`app-data` 嵌套哨兵及逐文件哈希。
+- 未操作用户实际 LY Space 进程或真实资料；完整 Electron/NSIS 窗口交互、托盘、卸载、不同权限账户和真实覆盖安装仍列入待测。TODO 已复核，无待实施条目需要迁移；`.mimosa/` 与 `desktop/.mimosa/` 保留且不提交。
+- 发布提交、CI、正式资产 digest 和本地安装包路径在 CI 完成后单独补记。
 
 ### v0.7.1：工作台本地参考图不再强制 OSS（已发布）
 

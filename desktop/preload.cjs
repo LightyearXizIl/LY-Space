@@ -48,7 +48,7 @@ contextBridge.exposeInMainWorld("lySpaceDesktop", {
         return () => ipcRenderer.removeListener("lyspace:proxy-stream-event", handler);
     },
     deleteGeneratedFiles: (paths) => ipcRenderer.invoke("lyspace:delete-generated-files", paths),
-    persistenceFlushed: (requestId) => ipcRenderer.invoke("lyspace:persistence-flushed", requestId),
+    persistenceFlushed: (requestId, error) => ipcRenderer.invoke("lyspace:persistence-flushed", requestId, error),
     relaunchAfterFlush: () => ipcRenderer.invoke("lyspace:relaunch-after-flush"),
     onFlushPersistence: (listener) => {
         const handler = (_event, request) => listener(request);

@@ -7,7 +7,7 @@ const { spawn } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const { copyDirectoryExact, directoryManifest, restoreBridgeBackup, sameManifest } = require("./storage-migration.cjs");
 const { assertWritableDirectory, ensureStorageDirectories: ensureConfiguredStorageDirectories, readStorageSettingsFile, writeStorageSettingsFile } = require("./storage-settings.cjs");
-const { buildInstallerArgs, buildInstallerLaunchOptions, createPersistenceFlushCoordinator } = require("./update-install-coordinator.cjs");
+const { INSTALLER_QUIT_FLAG, isInstallerQuitRequest, buildInstallerArgs, buildInstallerLaunchOptions, createPersistenceFlushCoordinator } = require("./update-install-coordinator.cjs");
 const { createFeaturePluginManager } = require("./feature-plugin-manager.cjs");
 const { applyRecoverySelection, createRecoveryCatalog, directoryLightManifest, ensureCurrentSnapshot, listSafetyRecoverySources, listUpgradeRecoverySources, normalizeProjects, projectDigest, redactPathText, sameLightManifest, saveCurrentSnapshot, saveRecoveryBundle } = require("./canvas-recovery.cjs");
 const { normalizeRetentionDays, pruneLogFile, readLogSettings, writeLogSettings } = require("./app-logs.cjs");
@@ -768,7 +768,8 @@ const featurePluginManager = createFeaturePluginManager({
     log: (entry) => writeAppLog(entry),
 });
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
-if (!hasSingleInstanceLock) {
+// 安装器的通知进程不得初始化存储或在原进程恰好退出时重新打开应用。
+if (!hasSingleInstanceLock || process.argv.includes(INSTALLER_QUIT_FLAG)) {
     app.quit();
 } else {
 let storageReady = true;
@@ -780,7 +781,13 @@ try {
     app.quit();
 }
 if (storageReady) {
-app.on("second-instance", () => {
+app.on("second-instance", (_event, argv) => {
+    if (argv.includes(INSTALLER_QUIT_FLAG)) {
+        if (isInstallerQuitRequest(argv, app.getPath("exe")) && mainWindow && !mainWindow.isDestroyed()) {
+            void requestPersistenceFlush("quit").catch((error) => writeUpdateInstallLog("installer-quit-failed", { error: error.message }));
+        }
+        return;
+    }
     if (mainWindow) {
         if (!mainWindow.isVisible()) mainWindow.show();
         if (mainWindow.isMinimized()) mainWindow.restore();
@@ -1190,9 +1197,17 @@ app.whenReady().then(async () => {
         if (controller) controller.abort();
         return { cancelled: Boolean(controller) };
     });
-    ipcMain.handle("lyspace:persistence-flushed", async (_event, requestId) => {
+    ipcMain.handle("lyspace:persistence-flushed", async (event, requestId, flushError) => {
+        if (!mainWindow || event.sender !== mainWindow.webContents) return { accepted: false };
         const pending = persistenceFlushCoordinator.acknowledge(String(requestId || ""));
         if (!pending || !mainWindow || allowWindowClose) return { accepted: false };
+        if (flushError) {
+            const error = new Error("本地数据保存失败，已取消退出，请检查存储后重试");
+            writeUpdateInstallLog("flush-failed", { id: pending.id, action: pending.action });
+            if (pending.action === "install") updateSnapshot({ status: "downloaded", error: error.message });
+            persistenceFlushCoordinator.fail(pending, error);
+            return { accepted: false };
+        }
         writeUpdateInstallLog("flush-acknowledged", { id: pending.id, action: pending.action });
         if (pending.action === "install") {
             try {

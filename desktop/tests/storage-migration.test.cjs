@@ -26,8 +26,11 @@ function fixture() {
     write(path.join(installDir, "Data cache", "Local Storage", "重名", "sentinel.bin"), "Local Storage 重名文件");
     write(path.join(installDir, "Result", "Picture", "生成图片.png"), Buffer.from([0, 1, 2, 3, 4]));
     write(path.join(installDir, "Result", "Video", "生成视频.mp4"), Buffer.from([5, 6, 7]));
+    write(path.join(installDir, "Result", "Audio", "嵌套目录", "音频.wav"), Buffer.from([8, 9, 10]));
+    write(path.join(installDir, "Result", "text", "嵌套目录", "文本.txt"), "文本结果哨兵");
     write(path.join(userData, "IndexedDB", "legacy.indexeddb.leveldb", "CURRENT"), "旧快照");
     write(path.join(userData, "app-data", "last-save-directory.txt"), "D:\\素材");
+    write(path.join(userData, "app-data", "nested", "sentinel.bin"), "应用数据嵌套哨兵");
     write(path.join(userData, "Data cache", "stale.txt"), "旧目标缓存");
     write(path.join(documents, "LY Space", "Result", "old.txt"), "旧目标结果");
     return { root, installDir, userData, localAppData, documents, storageConfigFile: path.join(userData, "app-data", "storage-settings.json") };
@@ -61,6 +64,7 @@ test("双快照完整复制并把当前安装数据恢复到稳定目录", () =>
         assert.equal(restored.migrated, true);
         assert.ok(sameManifest(directoryManifest(path.join(data.userData, "Data cache")), expectedCache));
         assert.ok(sameManifest(directoryManifest(path.join(data.documents, "LY Space", "Result")), expectedResult));
+        assert.equal(fs.readFileSync(path.join(data.userData, "app-data", "nested", "sentinel.bin"), "utf8"), "应用数据嵌套哨兵");
         assert.equal(fs.readFileSync(path.join(bridge.backupRoot, "replaced-destinations", "Data cache", "stale.txt"), "utf8"), "旧目标缓存");
         assert.equal(fs.readFileSync(path.join(bridge.backupRoot, "replaced-destinations", "Result", "old.txt"), "utf8"), "旧目标结果");
 

@@ -31,7 +31,13 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         };
         window.addEventListener("lyspace:storage-error", showStorageError);
         const unsubscribe = window.lySpaceDesktop?.onFlushPersistence((request) => {
-            void flushLocalState().then(flushPendingStorageWrites).finally(() => void window.lySpaceDesktop?.persistenceFlushed(request.id));
+            void flushLocalState().then(flushPendingStorageWrites).then(
+                () => window.lySpaceDesktop?.persistenceFlushed(request.id),
+                () => {
+                    message.error("本地数据保存失败，已取消退出，请检查存储后重试");
+                    return window.lySpaceDesktop?.persistenceFlushed(request.id, "本地数据保存失败");
+                },
+            ).catch(() => message.error("退出通知失败，请稍后重试"));
         });
         return () => {
             window.removeEventListener("lyspace:storage-error", showStorageError);

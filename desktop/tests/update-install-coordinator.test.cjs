@@ -1,7 +1,28 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { buildInstallerArgs, buildInstallerLaunchOptions, createPersistenceFlushCoordinator } = require("../update-install-coordinator.cjs");
+const { INSTALLER_QUIT_FLAG, isInstallerQuitRequest, buildInstallerArgs, buildInstallerLaunchOptions, createPersistenceFlushCoordinator } = require("../update-install-coordinator.cjs");
+
+test("安装退出通知只匹配当前安装路径，不接受同名其他目录或普通启动", () => {
+    const executable = "D:\\Apps\\LY Space\\LY Space.exe";
+    assert.equal(isInstallerQuitRequest([INSTALLER_QUIT_FLAG, "--lyspace-install-dir=D:\\Apps\\LY Space"], executable), true);
+    assert.equal(isInstallerQuitRequest([INSTALLER_QUIT_FLAG, "--lyspace-install-dir=d:\\apps\\ly space\\"], executable), true);
+    assert.equal(isInstallerQuitRequest([INSTALLER_QUIT_FLAG, "--lyspace-install-dir=D:\\Apps\\LY Space Other"], executable), false);
+    assert.equal(isInstallerQuitRequest([INSTALLER_QUIT_FLAG, "--lyspace-install-dir=LY Space"], executable), false);
+    assert.equal(isInstallerQuitRequest(["--lyspace-install-dir=D:\\Apps\\LY Space"], executable), false);
+});
+
+test("保存失败回执可阻止退出并允许重试", async () => {
+    const coordinator = createPersistenceFlushCoordinator();
+    const started = coordinator.begin("quit");
+    const failed = coordinator.acknowledge(started.request.id);
+    coordinator.fail(failed, new Error("本地数据保存失败"));
+    await assert.rejects(started.promise, /保存失败/);
+    assert.equal(coordinator.current(), null);
+    const retry = coordinator.begin("quit");
+    coordinator.succeed(coordinator.acknowledge(retry.request.id));
+    await retry.promise;
+});
 
 test("可见更新安装器仅预填当前安装目录，且 /D= 保持最后", () => {
     const args = buildInstallerArgs("D:\\Software\\LY Space");

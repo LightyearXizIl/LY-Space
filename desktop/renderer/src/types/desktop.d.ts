@@ -66,7 +66,7 @@ declare global {
             cancelProxyStream: (requestId: string) => Promise<{ cancelled: boolean }>;
             onProxyStreamEvent: (listener: (payload: { requestId: string; type: "headers" | "chunk" | "complete" | "error"; status?: number; headers?: Record<string, string>; data?: string; error?: string }) => void) => () => void;
             deleteGeneratedFiles: (paths: string[]) => Promise<{ deleted: number; missing: number; failed: number; skipped: number }>;
-            persistenceFlushed: (requestId: string) => Promise<{ accepted: boolean }>;
+            persistenceFlushed: (requestId: string, error?: string) => Promise<{ accepted: boolean }>;
             relaunchAfterFlush: () => Promise<void>;
             onFlushPersistence: (listener: (request: { id: string; action: "install" | "quit" | "relaunch" }) => void) => () => void;
             featurePluginsList: () => Promise<FeaturePluginState>;

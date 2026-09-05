@@ -31,7 +31,10 @@ export async function saveGeneratedText(text: string) {
 }
 
 export async function flushPendingStorageWrites() {
-    await Promise.allSettled([...pendingWrites]);
+    while (pendingWrites.size) {
+        const results = await Promise.allSettled([...pendingWrites]);
+        if (results.some((result) => result.status === "rejected")) throw new Error("本地数据保存失败，已取消退出，请检查存储后重试");
+    }
 }
 
 export function registerLocalStateFlusher(flusher: () => void | Promise<void>) {
@@ -42,7 +45,8 @@ export function registerLocalStateFlusher(flusher: () => void | Promise<void>) {
 }
 
 export async function flushLocalState() {
-    await Promise.allSettled([...localStateFlushers].map((flusher) => flusher()));
+    const results = await Promise.allSettled([...localStateFlushers].map((flusher) => Promise.resolve().then(flusher)));
+    if (results.some((result) => result.status === "rejected")) throw new Error("本地状态保存失败，已取消退出，请稍后重试");
 }
 
 export function trackWrite<T>(write: Promise<T>) {

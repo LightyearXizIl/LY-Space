@@ -1,6 +1,6 @@
 import axios from "axios";
 
-import { buildApiUrl, AGNES_DEFAULT_MODELS, GRSAI_DEFAULT_MODELS, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildApiUrl, AGNES_DEFAULT_MODELS, GRSAI_DEFAULT_MODELS, grsaiSupportedImageResolutions, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
@@ -284,8 +284,11 @@ function grsaiAspectRatio(config: AiConfig) {
 export function grsaiRequestBody(config: AiConfig, prompt: string, images: string[]) {
     const model = config.model.trim();
     const lowerModel = model.toLowerCase();
-    const isGptImage = lowerModel === "gpt-image-2" || lowerModel === "gpt-image-2-vip";
+    const isGptImage = lowerModel === "gpt-image-2" || lowerModel === "gpt-image-2-vip" || lowerModel.startsWith("gpt-image-2.5");
     const isVip = lowerModel === "gpt-image-2-vip";
+    const normalizedResolution = normalizeImageResolution(config.imageResolution);
+    const supportedResolutions = grsaiSupportedImageResolutions(model);
+    if (!supportedResolutions.includes(normalizedResolution)) throw new Error(`${model} 仅支持 ${supportedResolutions.map((value) => value.toUpperCase()).join(" / ")} 分辨率`);
     const requestSize = resolveRequestSize(config.imageResolution, config.size);
     const aspectRatio = isVip
         ? requestSize || "auto"

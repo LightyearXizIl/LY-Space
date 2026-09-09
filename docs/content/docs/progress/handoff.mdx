@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；当前发布版本 `v0.7.2`）。
-- **最新发布状态**：`v0.7.2` 已于 `2026-09-05` 正式发布（非 draft/prerelease，GitHub latest 指向本版）；GitHub Actions `Publish LY Space Desktop` 运行 `33948693908` 成功。EXE、blockmap、`latest.yml` 均为 uploaded；本地留存文件与远端 digest、更新清单已核验，具体值见下方 v0.7.2 小节。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；待发布版本 `v0.7.3`）。
+- **发布准备状态**：`v0.7.3` 已加入共享参考图上传框修复，以及 GRS AI 的 GPT Image 2.5、Sunburst、Flare 与 Gemini 3.7 Flash 内置模型；尚未推送标签或经 CI/远端资产核验。最近正式发布仍为 `v0.7.2`（CI `33948693908`），其发布证据见下方 v0.7.2 小节。
 - **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；通用 AI 接口仍可由渲染进程直连，方舟请求在桌面端通过受限主进程 HTTPS 代理；文档站是独立 Next.js 项目（`docs/`，bun）
@@ -27,7 +27,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.7.2 已发布（GitHub Release、三项桌面资产和更新清单均已核验）。
+- **当前源码版本**：v0.7.3 待发布；最近已核验的 GitHub Release 为 v0.7.2。
 
 ## 2. 数据存储
 

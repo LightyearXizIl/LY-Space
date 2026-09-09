@@ -2,7 +2,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import { ConfigProvider, Switch } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { grsaiSupportedImageResolutions, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 const qualityOptions = [
     { value: "auto", label: "自动" },
@@ -49,7 +49,9 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
     const transparentBackground = config.background === "transparent";
-    const isArk = resolveModelRequestConfig(config, config.model || config.imageModel).apiFormat === "ark";
+    const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
+    const isArk = requestConfig.apiFormat === "ark";
+    const supportedResolutions = requestConfig.apiFormat === "grsai" ? grsaiSupportedImageResolutions(requestConfig.model) : resolutionOptions.map((item) => item.value);
     const watermark = config.imageWatermark !== "false";
     const selectedAspect = aspectOptions.find((item) => item.value === activeSize);
     const dimensions = readSizeDimensions(activeSize, resolution, selectedAspect || aspectOptions[0]);
@@ -63,6 +65,10 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
         const height = key === "height" ? next : dimensions.height;
         onConfigChange("size", `${alignDimension(width, snapDimensionToStep)}x${alignDimension(height, snapDimensionToStep)}`);
     };
+
+    useEffect(() => {
+        if (!supportedResolutions.includes(resolution)) onConfigChange("imageResolution", supportedResolutions[0]);
+    }, [resolution, supportedResolutions, onConfigChange]);
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -80,7 +86,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     <SettingTitle color={theme.node.muted}>分辨率</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
                         {resolutionOptions.map((item) => (
-                            <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("imageResolution", item.value)}>
+                            <OptionPill key={item.value} selected={resolution === item.value} disabled={!supportedResolutions.includes(item.value)} theme={theme} onClick={() => onConfigChange("imageResolution", item.value)}>
                                 {item.label}
                             </OptionPill>
                         ))}
@@ -194,11 +200,12 @@ export function imageSizeLabel(size: string) {
     return aspectOptions.find((item) => item.value === size)?.label || size;
 }
 
-function OptionPill({ selected, theme, onClick, children }: { selected: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
+function OptionPill({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
     return (
         <button
             type="button"
-            className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80"
+            disabled={disabled}
+            className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-35"
             style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }}
             onMouseDown={(event) => event.stopPropagation()}
             onClick={onClick}

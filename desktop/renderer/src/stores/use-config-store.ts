@@ -109,6 +109,9 @@ export const AGNES_DEFAULT_MODELS: ChannelModel[] = [
 ];
 
 export const GRSAI_DEFAULT_MODELS: ChannelModel[] = [
+    { name: "gpt-image-2.5", capability: "image" },
+    { name: "gpt-image-2.5-sunburst", capability: "image" },
+    { name: "gpt-image-2.5-flare", capability: "image" },
     { name: "gpt-image-2", capability: "image" },
     { name: "gpt-image-2-vip", capability: "image" },
     { name: "nano-banana-2", capability: "image" },
@@ -119,7 +122,14 @@ export const GRSAI_DEFAULT_MODELS: ChannelModel[] = [
     { name: "gpt-5.4", capability: "text" },
     { name: "gemini-3.1-flash-lite", capability: "text" },
     { name: "gemini-3.1-pro", capability: "text" },
+    { name: "gemini-3.7-flash", capability: "text" },
 ];
+
+export function grsaiSupportedImageResolutions(model: string) {
+    const normalized = model.trim().toLowerCase();
+    if (normalized === "gpt-image-2.5") return ["1k"];
+    return ["1k", "2k", "4k"];
+}
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",

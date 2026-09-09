@@ -65,6 +65,8 @@ it("无 OSS 时本地图片成功加入并保留持久化键，不复制临时�
     expect(references).toHaveLength(2);
     expect(references[0]).toMatchObject({ dataUrl: "blob:stored", storageKey: "image:local" });
     expect(container.textContent).toContain("2 / 9");
+    expect(container.textContent).toContain("继续添加");
+    expect(container.textContent).not.toContain("已添加参考图");
     expect(container.querySelector('[aria-label="复制图片链接"]')).toBeNull();
     expect(mocks.hosted).not.toHaveBeenCalled();
     expect(mocks.recent).not.toHaveBeenCalled();

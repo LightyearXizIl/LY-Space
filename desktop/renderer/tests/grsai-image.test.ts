@@ -21,8 +21,8 @@ describe("GRS AI 参考图", () => {
     });
 });
 
-describe("GRS AI 六个默认图片模型请求体", () => {
-    const models = ["gpt-image-2", "gpt-image-2-vip", "nano-banana-2", "nano-banana-2-lite", "nano-banana-fast", "nano-banana-pro"];
+describe("GRS AI 默认图片模型请求体", () => {
+    const models = ["gpt-image-2.5", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2", "gpt-image-2-vip", "nano-banana-2", "nano-banana-2-lite", "nano-banana-fast", "nano-banana-pro"];
 
     it.each(models)("%s 使用新版 images 字段", (model) => {
         const body = grsaiRequestBody(config(model), "测试", ["aGVsbG8="]);
@@ -40,6 +40,12 @@ describe("GRS AI 六个默认图片模型请求体", () => {
         const body = grsaiRequestBody(config("gpt-image-2-vip", "16:9", "2k"), "测试", []);
         expect(body.aspectRatio).toBe("2048x1152");
         expect(body).not.toHaveProperty("imageSize");
+    });
+
+    it("GPT Image 2.5 标准版只允许 1K，扩展版最高 4K", () => {
+        expect(() => grsaiRequestBody(config("gpt-image-2.5", "1:1", "2k"), "测试", [])).toThrow("仅支持 1K");
+        expect(grsaiRequestBody(config("gpt-image-2.5-sunburst", "16:9", "4k"), "测试", [])).toMatchObject({ aspectRatio: "16:9" });
+        expect(() => grsaiRequestBody(config("gpt-image-2.5-flare", "16:9", "8k"), "测试", [])).toThrow("1K / 2K / 4K");
     });
 
     it("Nano Banana 模型发送比例和分辨率", () => {

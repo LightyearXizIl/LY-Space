@@ -233,7 +233,7 @@ export function ReferenceImageUploader({ references, setReferences, limit, onOpe
         }
     };
 
-    const pasteImages = (event: ReactClipboardEvent<HTMLButtonElement>) => {
+    const pasteImages = (event: ReactClipboardEvent<HTMLDivElement>) => {
         const files = Array.from(event.clipboardData.items)
             .filter((item) => item.kind === "file")
             .map((item) => item.getAsFile())
@@ -242,6 +242,9 @@ export function ReferenceImageUploader({ references, setReferences, limit, onOpe
         event.preventDefault();
         enqueueFiles(files);
     };
+
+    const hasItems = references.length > 0 || uploads.length > 0;
+    const openFilePicker = () => inputRef.current?.click();
 
     return (
         <section className="min-w-0">
@@ -258,12 +261,21 @@ export function ReferenceImageUploader({ references, setReferences, limit, onOpe
                 enqueueFiles(event.target.files);
                 event.target.value = "";
             }} />
-            <button
-                type="button"
-                className={`flex min-h-36 w-full flex-col items-center justify-center rounded-lg border border-dashed px-4 text-center transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900 dark:focus-visible:outline-stone-100 ${dragging ? "border-stone-900 bg-stone-100 dark:border-stone-100 dark:bg-stone-900" : "border-stone-300 text-stone-600 hover:border-stone-500 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-300 dark:hover:border-stone-500 dark:hover:bg-stone-900"}`}
-                onClick={() => inputRef.current?.click()}
+            <div
+                tabIndex={0}
+                aria-label={hasItems ? "参考图列表，支持拖入或粘贴图片" : "添加参考图"}
+                className={`w-full rounded-lg border border-dashed text-center transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900 dark:focus-visible:outline-stone-100 ${hasItems ? "p-2" : "flex min-h-36 flex-col items-center justify-center px-4"} ${dragging ? "border-stone-900 bg-stone-100 dark:border-stone-100 dark:bg-stone-900" : "border-stone-300 text-stone-600 hover:border-stone-500 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-300 dark:hover:border-stone-500 dark:hover:bg-stone-900"}`}
+                onClick={() => {
+                    if (!hasItems) openFilePicker();
+                }}
+                onKeyDown={(event) => {
+                    if (!hasItems && (event.key === "Enter" || event.key === " ")) {
+                        event.preventDefault();
+                        openFilePicker();
+                    }
+                }}
                 onPaste={pasteImages}
-                onDragEnter={(event: DragEvent<HTMLButtonElement>) => {
+                onDragEnter={(event: DragEvent<HTMLDivElement>) => {
                     event.preventDefault();
                     dragDepthRef.current += 1;
                     if (event.dataTransfer.types.includes("Files")) setDragging(true);
@@ -284,49 +296,41 @@ export function ReferenceImageUploader({ references, setReferences, limit, onOpe
                     enqueueFiles(event.dataTransfer.files);
                 }}
             >
-                <ImagePlus className="mb-2 size-7" aria-hidden="true" />
-                <span className="font-medium">{dragging ? "松开即可添加参考图" : "拖入图片，或点击选择文件"}</span>
-                <span className="mt-1 text-xs text-stone-500 dark:text-stone-400"><ClipboardPaste className="mr-1 inline size-3" aria-hidden="true" />PNG / JPG / JPEG / WEBP · 支持 Ctrl+V 粘贴 · 最大 100MB</span>
-            </button>
-
-            <p className="mt-2 text-xs text-stone-500 dark:text-stone-400">{requiresPublicUrl ? "当前视频接口需要公网图片链接，本地图片将上传至已配置的素材托管。" : "本地图片直接添加为参考图，无需配置 OSS。"}</p>
-            {requiresPublicUrl && configurationError ? <Alert className="mt-3" type="warning" showIcon message="尚未配置参考素材托管" description="当前视频接口只接受公网图片链接。请配置 Cloudflare R2 + Worker，或在下方直接添加已有的公网图片链接。" action={<Button size="small" onClick={onOpenSettings}>前往配置</Button>} /> : null}
-
-            {references.length || uploads.length ? (
-                <div className="mt-3">
-                    <div className="mb-2 flex items-center justify-between text-sm">
-                        <span className="font-medium">已添加参考图</span>
-                        <span className="text-stone-500 dark:text-stone-400">{references.length} / {limit}</span>
-                    </div>
+                {hasItems ? (
                     <Image.PreviewGroup>
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap gap-2 text-left">
                             {references.map((item, index) => (
-                                <div key={item.id} className="group relative w-24 overflow-hidden rounded-md border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900">
-                                    <Image src={item.dataUrl} alt={item.name} className="size-24 object-cover" />
+                                <div key={item.id} className="group relative w-20 overflow-hidden rounded-md border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900">
+                                    <Image src={item.dataUrl} alt={item.name} className="size-20 object-cover" />
                                     <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{String(index + 1).padStart(2, "0")} <Check className="inline size-3" aria-label="已添加" /></span>
                                     <div className="absolute inset-x-1 bottom-1 flex justify-between gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-                                        <Tooltip title="前移"><button type="button" aria-label="前移参考图" disabled={index === 0} className="flex size-6 items-center justify-center rounded bg-black/60 text-white disabled:opacity-40" onClick={() => setReferences((current) => moveItem(current, index, -1))}><ChevronLeft className="size-3.5" /></button></Tooltip>
-                                        {isPublicHttpsImageUrl(item.url || item.dataUrl) ? <Tooltip title="复制链接"><button type="button" aria-label="复制图片链接" className="flex size-6 items-center justify-center rounded bg-black/60 text-white" onClick={() => void copyUrl(item.url || item.dataUrl)}><Copy className="size-3.5" /></button></Tooltip> : null}
-                                        <Tooltip title="后移"><button type="button" aria-label="后移参考图" disabled={index === references.length - 1} className="flex size-6 items-center justify-center rounded bg-black/60 text-white disabled:opacity-40" onClick={() => setReferences((current) => moveItem(current, index, 1))}><ChevronRight className="size-3.5" /></button></Tooltip>
-                                        <Tooltip title="移除"><button type="button" aria-label="移除参考图" className="flex size-6 items-center justify-center rounded bg-black/60 text-white" onClick={() => setReferences((current) => current.filter((reference) => reference.id !== item.id))}><Trash2 className="size-3.5" /></button></Tooltip>
+                                        <Tooltip title="前移"><button type="button" aria-label="前移参考图" disabled={index === 0} className="flex size-6 items-center justify-center rounded bg-black/60 text-white disabled:opacity-40" onClick={(event) => { event.stopPropagation(); setReferences((current) => moveItem(current, index, -1)); }}><ChevronLeft className="size-3.5" /></button></Tooltip>
+                                        {isPublicHttpsImageUrl(item.url || item.dataUrl) ? <Tooltip title="复制链接"><button type="button" aria-label="复制图片链接" className="flex size-6 items-center justify-center rounded bg-black/60 text-white" onClick={(event) => { event.stopPropagation(); void copyUrl(item.url || item.dataUrl); }}><Copy className="size-3.5" /></button></Tooltip> : null}
+                                        <Tooltip title="后移"><button type="button" aria-label="后移参考图" disabled={index === references.length - 1} className="flex size-6 items-center justify-center rounded bg-black/60 text-white disabled:opacity-40" onClick={(event) => { event.stopPropagation(); setReferences((current) => moveItem(current, index, 1)); }}><ChevronRight className="size-3.5" /></button></Tooltip>
+                                        <Tooltip title="移除"><button type="button" aria-label="移除参考图" className="flex size-6 items-center justify-center rounded bg-black/60 text-white" onClick={(event) => { event.stopPropagation(); setReferences((current) => current.filter((reference) => reference.id !== item.id)); }}><Trash2 className="size-3.5" /></button></Tooltip>
                                     </div>
                                     <div className="truncate px-1.5 py-1 text-[10px] text-stone-600 dark:text-stone-300">{item.name}</div>
                                 </div>
                             ))}
                             {uploads.map((item) => (
-                                <div key={item.id} className="relative w-24 overflow-hidden rounded-md border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900">
-                                    <img src={item.localPreviewUrl} alt={item.fileName} className="size-24 object-cover" />
+                                <div key={item.id} className="relative w-20 overflow-hidden rounded-md border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900">
+                                    <img src={item.localPreviewUrl} alt={item.fileName} className="size-20 object-cover" />
                                     <div className="absolute inset-0 flex items-center justify-center bg-black/45 text-center text-xs text-white">
                                         {item.status === "error" ? <span className="px-1">添加失败</span> : <LoaderCircle className="size-5 animate-spin" aria-label="添加中" />}
                                     </div>
-                                    {item.status === "error" ? <div className="absolute inset-x-1 bottom-1 flex justify-center gap-1"><button type="button" aria-label="重试上传" className="flex size-6 items-center justify-center rounded bg-black/60 text-white" onClick={() => retryUpload(item.id)}><RotateCcw className="size-3.5" /></button><button type="button" aria-label="删除上传项" className="flex size-6 items-center justify-center rounded bg-black/60 text-white" onClick={() => removeUpload(item.id)}><X className="size-3.5" /></button></div> : null}
+                                    {item.status === "error" ? <div className="absolute inset-x-1 bottom-1 flex justify-center gap-1"><button type="button" aria-label="重试上传" className="flex size-6 items-center justify-center rounded bg-black/60 text-white" onClick={(event) => { event.stopPropagation(); retryUpload(item.id); }}><RotateCcw className="size-3.5" /></button><button type="button" aria-label="删除上传项" className="flex size-6 items-center justify-center rounded bg-black/60 text-white" onClick={(event) => { event.stopPropagation(); removeUpload(item.id); }}><X className="size-3.5" /></button></div> : null}
                                     <div className="truncate px-1.5 py-1 text-[10px] text-stone-600 dark:text-stone-300">{item.status === "error" ? item.error : item.status === "pending" ? "等待添加" : "添加中…"}</div>
                                 </div>
                             ))}
+                            {references.length + uploads.length < limit ? <button type="button" aria-label="继续添加参考图" className="flex size-20 flex-col items-center justify-center rounded-md border border-dashed border-stone-300 text-stone-500 transition-colors hover:border-stone-500 hover:bg-stone-50 dark:border-stone-700 dark:text-stone-400 dark:hover:border-stone-500 dark:hover:bg-stone-900" onClick={(event) => { event.stopPropagation(); openFilePicker(); }}><ImagePlus className="size-5" /><span className="mt-1 text-[10px]">继续添加</span></button> : null}
                         </div>
+                        <div className="mt-2 flex items-center justify-between text-xs text-stone-500 dark:text-stone-400"><span><ClipboardPaste className="mr-1 inline size-3" aria-hidden="true" />可拖入或 Ctrl+V 粘贴</span><span>{references.length} / {limit}</span></div>
                     </Image.PreviewGroup>
-                </div>
-            ) : null}
+                ) : <><ImagePlus className="mb-2 size-7" aria-hidden="true" /><span className="font-medium">{dragging ? "松开即可添加参考图" : "拖入图片，或点击选择文件"}</span><span className="mt-1 text-xs text-stone-500 dark:text-stone-400"><ClipboardPaste className="mr-1 inline size-3" aria-hidden="true" />PNG / JPG / JPEG / WEBP · 支持 Ctrl+V 粘贴 · 最大 100MB</span></>}
+            </div>
+
+            <p className="mt-2 text-xs text-stone-500 dark:text-stone-400">{requiresPublicUrl ? "当前视频接口需要公网图片链接，本地图片将上传至已配置的素材托管。" : "本地图片直接添加为参考图，无需配置 OSS。"}</p>
+            {requiresPublicUrl && configurationError ? <Alert className="mt-3" type="warning" showIcon message="尚未配置参考素材托管" description="当前视频接口只接受公网图片链接。请配置 Cloudflare R2 + Worker，或在下方直接添加已有的公网图片链接。" action={<Button size="small" onClick={onOpenSettings}>前往配置</Button>} /> : null}
 
             {recent.length ? <div className="mt-4"><div className="mb-2 text-sm font-medium">最近上传</div><div className="flex gap-2 overflow-x-auto pb-1">{recent.slice(0, 8).map((asset) => <button key={asset.id} type="button" className="group relative size-14 shrink-0 overflow-hidden rounded border border-stone-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900 dark:border-stone-800 dark:focus-visible:outline-stone-100" onClick={() => addRecent(asset)} aria-label={`添加最近上传的 ${asset.fileName}`}><img src={asset.url} alt="" className="size-full object-cover" /><UploadCloud className="absolute inset-0 m-auto hidden size-4 text-white drop-shadow group-hover:block" /></button>)}</div></div> : null}
 

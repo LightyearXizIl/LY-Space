@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；待发布版本 `v0.7.3`）。
-- **发布准备状态**：`v0.7.3` 已加入共享参考图上传框修复，以及 GRS AI 的 GPT Image 2.5、Sunburst、Flare 与 Gemini 3.7 Flash 内置模型；尚未推送标签或经 CI/远端资产核验。最近正式发布仍为 `v0.7.2`（CI `33948693908`），其发布证据见下方 v0.7.2 小节。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；当前发布版本 `v0.7.3`）。
+- **最新发布状态**：`v0.7.3` 已正式发布；GitHub Actions `Publish LY Space Desktop` 运行 `34316341469` 成功完成类型检查、Windows 构建、草稿资产下载核验和正式发布。GitHub Release 的 EXE、blockmap、`latest.yml` 均为 uploaded，具体校验值见下方 v0.7.3 小节；真实 API 与桌面人工验收仍待完成。
 - **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；通用 AI 接口仍可由渲染进程直连，方舟请求在桌面端通过受限主进程 HTTPS 代理；文档站是独立 Next.js 项目（`docs/`，bun）
@@ -27,7 +27,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前源码版本**：v0.7.3 待发布；最近已核验的 GitHub Release 为 v0.7.2。
+- **当前版本**：v0.7.3 已发布（GitHub Release、三项桌面资产和更新清单均已由 CI 与远端 digest 核验）。
 
 ## 2. 数据存储
 
@@ -44,6 +44,14 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **历史教训**：NSIS `CopyFiles "$INSTDIR\目录\*.*"` 不会递归复制子目录，旧 `customRemoveFiles` 随后执行 `RMDir /r` 会丢失嵌套数据。不得再把用户数据放回安装目录，也不得用通配符复制冒充递归备份。
 
 ## 3. 关键链路与已修复的坑
+
+### v0.7.3：工作台参考图布局与 GRS AI GPT Image 2.5（已发布）
+
+- 生图与视频工作台复用 `ReferenceImageUploader`：添加后缩略图、上传状态与“继续添加”都位于同一虚线上传框，空状态仍显示选择、拖入和粘贴提示。内层排序、删除、复制链接和失败重试会阻止事件冒泡，不会打开文件选择；截图预览不改变已有图片处理协议。
+- GRS AI 内置清单新增 `gpt-image-2.5`、`gpt-image-2.5-sunburst`、`gpt-image-2.5-flare` 与 `gemini-3.7-flash`。图片模型继续使用既有 `images` 参考图字段；`gpt-image-2.5` 限为 1K，其余当前内置 GRS 图片模型限为 1K / 2K / 4K，设置界面会禁用不支持档位且请求层再次校验。
+- 发布提交/tag：`5d9aaf1b4cb9897ec7b9415296911dad0a7bbbb5` / `v0.7.3`，已推送 `main` 和 tag。CI `https://github.com/LightyearXizIl/LY-Space/actions/runs/34316341469` 成功；工作流先构建草稿，再上传、下载并对比 EXE 和 `latest.yml` 后发布正式 Release。
+- 正式 Release：`https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.7.3`，非 draft/prerelease。远端资产：EXE 92,583,528 字节、SHA-256 `a9ca7d5a78b752d119e3605fbbe30ad09ed61321dedd4bf6d10a6117a13b48fa`；blockmap 97,841 字节、SHA-256 `23fc951c50ba01d3267b842a3b607bb8bbe32ee8bc0bba3741605fc8563b0bf0`；`latest.yml` 344 字节、SHA-256 `1bf02bc4fdced92465811538cc3720ef7d6a9009676a30928242883da79ccaa9`。清单记录的 EXE SHA-512 为 `9yTwY6D1GyCjt8KNtzp2ndZCmN0qArvCWA25Wla8QCm1Vp9y2kohYsJfxAjufMwhAMXAZ+4yEJaXQ+z4dgqdfg==`，与 CI 下载核验一致。
+- 未执行真实 GRS AI 计费调用或已安装桌面端手工验收；`pending-test.mdx` 保留双工作台粘贴、托管与三种 GPT Image 2.5 的测试矩阵。当前主机直连 GitHub EXE 下载因 TLS 连接超时未完成，不能据此声称本机下载验收。
 
 ### v0.7.2：安装向导直接打开与自动保存退出（已发布）
 

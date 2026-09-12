@@ -281,26 +281,37 @@ function grsaiAspectRatio(config: AiConfig) {
     return dimensions ? closestGeminiAspectRatio(`${dimensions.width}:${dimensions.height}`) : closestGeminiAspectRatio(value);
 }
 
+function grsaiGptImageAspectRatio(config: AiConfig) {
+    const value = config.size.trim();
+    const ratio = !value || value.toLowerCase() === "auto" ? "1:1" : value;
+    const dimensions = parseImageDimensions(ratio);
+    if (dimensions) {
+        validateImageSize(dimensions.width, dimensions.height);
+        return `${dimensions.width}x${dimensions.height}`;
+    }
+    // GRS AI 的 GPT Image 接口只接受像素值；4K 正方形上限按官方文档使用 2880x2880。
+    if (normalizeImageResolution(config.imageResolution) === "4k" && ratio === "1:1") return "2880x2880";
+    return resolveSize(config.imageResolution, ratio);
+}
+
 export function grsaiRequestBody(config: AiConfig, prompt: string, images: string[]) {
     const model = config.model.trim();
     const lowerModel = model.toLowerCase();
     const isGptImage = lowerModel === "gpt-image-2" || lowerModel === "gpt-image-2-vip" || lowerModel.startsWith("gpt-image-2.5");
-    const isVip = lowerModel === "gpt-image-2-vip";
+    const isGptImage25 = lowerModel.startsWith("gpt-image-2.5");
     const normalizedResolution = normalizeImageResolution(config.imageResolution);
     const supportedResolutions = grsaiSupportedImageResolutions(model);
     if (!supportedResolutions.includes(normalizedResolution)) throw new Error(`${model} 仅支持 ${supportedResolutions.map((value) => value.toUpperCase()).join(" / ")} 分辨率`);
-    const requestSize = resolveRequestSize(config.imageResolution, config.size);
-    const aspectRatio = isVip
-        ? requestSize || "auto"
-        : isGptImage
-            ? (config.size.trim().includes(":") ? config.size.trim() : requestSize || "auto")
-            : grsaiAspectRatio(config);
+    const aspectRatio = isGptImage ? grsaiGptImageAspectRatio(config) : grsaiAspectRatio(config);
+    const quality = normalizeQuality(config.quality || "auto");
+    const background = normalizeBackground(config.background);
     return {
         model,
         prompt: withSystemPrompt(config, prompt),
         images,
         aspectRatio,
         ...(isGptImage ? {} : { imageSize: grsaiImageSize(config.imageResolution) }),
+        ...(isGptImage25 ? { quality: quality || "auto", ...(background ? { background } : {}) } : {}),
         replyType: "json",
     };
 }

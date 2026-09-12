@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "plugins": [
+    {
+      "schemaVersion": 1,
+      "id": "agent-core",
+      "name": "Agent Core",
+      "description": "本地 Canvas Agent、对话、历史、模型、权限、附件、画布操作、MCP 与 Agent 凭据。",
+      "version": "0.2.0",
+      "minAppVersion": ">=0.5.9",
+      "protocolVersion": "6",
+      "hostApiVersion": "2",
+      "permissions": [
+        "本地 Agent 服务",
+        "画布读取与写入（每次确认）",
+        "附件",
+        "MCP",
+        "远程 Agent HTTPS"
+      ],
+      "dependencies": [],
+      "rendererEntry": "agent-core.mjs",
+      "serviceEntry": "agent-core-service/service/launcher.cjs",
+      "assets": [
+        {
+          "path": "agent-core.mjs",
+          "url": "https://cdn.jsdelivr.net/gh/LightyearXizIl/LY-Space@plugins-dist/agent-core.mjs",
+          "size": 10281,
+          "sha256": "4d14220e8411f38b83b09cf5748bd10489d98b22657dac5f1dd0c23e9b57fd44"
+        },
+        {
+          "path": ".archive/agent-core-service-0.2.0-win32-x64.tar.gz",
+          "url": "https://cdn.jsdelivr.net/gh/LightyearXizIl/LY-Space@plugins-dist/.archive/agent-core-service-0.2.0-win32-x64.tar.gz",
+          "size": 3969691,
+          "sha256": "5510dd7793ff22c3350d12d502c66354e280605feeb0ce6c5e7f1be9725b63ef"
+        }
+      ],
+      "runtime": {
+        "versionRange": ">=0.146.0 <0.147.0",
+        "version": "0.146.0",
+        "entry": "package/vendor/x86_64-pc-windows-msvc/bin/codex.exe",
+        "format": "tar",
+        "asset": {
+          "path": "codex-win32-x64.tgz",
+          "url": "https://github.com/LightyearXizIl/LY-Space/releases/download/feature-runtime-v0.146.0/codex-0.146.0-win32-x64.tgz",
+          "size": 151682891,
+          "sha256": "a7b0c568c1ee6ba6de7c419ae5ccf1473f229871caafed0205432654a2b8ec6f"
+        }
+      },
+      "serviceArchive": {
+        "schemaVersion": 1,
+        "format": "tar.gz",
+        "platform": "win32",
+        "arch": "x64",
+        "root": "agent-core-service",
+        "asset": {
+          "path": ".archive/agent-core-service-0.2.0-win32-x64.tar.gz",
+          "url": "https://cdn.jsdelivr.net/gh/LightyearXizIl/LY-Space@plugins-dist/.archive/agent-core-service-0.2.0-win32-x64.tar.gz",
+          "size": 3969691,
+          "sha256": "5510dd7793ff22c3350d12d502c66354e280605feeb0ce6c5e7f1be9725b63ef"
+        },
+        "tree": {
+          "path": "service-tree.json",
+          "sha256": "99411e91b0d8f511c5026cd3356a25895f19d705a85545ef902b3449185ffbf2",
+          "fileCount": 4258,
+          "totalBytes": 18393374
+        }
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "id": "skill-manager",
+      "name": "Skill 管理",
+      "description": "查看、创建、编辑、启停和删除 Skills，并可从对话或画布生成草稿。",
+      "version": "0.2.0",
+      "minAppVersion": ">=0.5.9",
+      "protocolVersion": "6",
+      "hostApiVersion": "2",
+      "permissions": [
+        "Agent Skill 管理"
+      ],
+      "dependencies": [
+        {
+          "id": "agent-core",
+          "range": ">=0.2.0 <1.0.0"
+        }
+      ],
+      "rendererEntry": "skill-manager.mjs",
+      "assets": [
+        {
+          "path": "skill-manager.mjs",
+          "url": "https://cdn.jsdelivr.net/gh/LightyearXizIl/LY-Space@plugins-dist/skill-manager.mjs",
+          "size": 5667,
+          "sha256": "3f0e9df663d670e85e3f6447e95822564e69c78bdf29dcf5f01958e03c42acf3"
+        }
+      ]
+    }
+  ]
+}

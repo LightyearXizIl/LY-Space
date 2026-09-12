@@ -115,6 +115,8 @@ const IMAGE_MAX_PIXELS = 7680 * 7680;
 const IMAGE_MAX_EDGE = 7680;
 const IMAGE_MAX_RATIO = 3;
 const IMAGE_OUTPUT_FORMAT = "png";
+const GRSAI_GPT_MIN_PIXELS = 655360;
+const GRSAI_GPT_MAX_PIXELS = 8294400;
 
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
 
@@ -287,11 +289,30 @@ function grsaiGptImageAspectRatio(config: AiConfig) {
     const dimensions = parseImageDimensions(ratio);
     if (dimensions) {
         validateImageSize(dimensions.width, dimensions.height);
+        validateGrsaiGptPixelCount(dimensions.width, dimensions.height);
         return `${dimensions.width}x${dimensions.height}`;
     }
-    // GRS AI 的 GPT Image 接口只接受像素值；4K 正方形上限按官方文档使用 2880x2880。
-    if (normalizeImageResolution(config.imageResolution) === "4k" && ratio === "1:1") return "2880x2880";
-    return resolveSize(config.imageResolution, ratio);
+    const resolved = parseImageDimensions(resolveSize(config.imageResolution, ratio));
+    if (!resolved) throw new Error("GRS AI GPT Image 尺寸转换失败，请重新选择宽高比");
+    const pixels = resolved.width * resolved.height;
+    const scale = pixels < GRSAI_GPT_MIN_PIXELS
+        ? Math.sqrt(GRSAI_GPT_MIN_PIXELS / pixels)
+        : pixels > GRSAI_GPT_MAX_PIXELS
+            ? Math.sqrt(GRSAI_GPT_MAX_PIXELS / pixels)
+            : 1;
+    const align = scale > 1 ? Math.ceil : Math.floor;
+    const width = align(resolved.width * scale / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
+    const height = align(resolved.height * scale / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
+    validateImageSize(width, height);
+    validateGrsaiGptPixelCount(width, height);
+    return `${width}x${height}`;
+}
+
+function validateGrsaiGptPixelCount(width: number, height: number) {
+    const pixels = width * height;
+    if (pixels < GRSAI_GPT_MIN_PIXELS || pixels > GRSAI_GPT_MAX_PIXELS) {
+        throw new Error(`GRS AI GPT Image 总像素需在 ${GRSAI_GPT_MIN_PIXELS} 到 ${GRSAI_GPT_MAX_PIXELS} 之间，请调整尺寸`);
+    }
 }
 
 export function grsaiRequestBody(config: AiConfig, prompt: string, images: string[]) {

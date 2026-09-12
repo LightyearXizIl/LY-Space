@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；当前发布版本 `v0.7.5`）。
-- **最新发布状态**：`v0.7.5` 已正式发布；GitHub Actions `Publish LY Space Desktop` 运行 `34679486909` 成功完成版本校验、Windows 构建、草稿资产下载核验和正式发布。GitHub Release 的 EXE、blockmap、`latest.yml` 均为 uploaded，具体校验值见下方 v0.7.5 小节；真实 GRS AI API 与桌面人工验收仍待完成。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；源码版本 `v0.7.6`，最新已核验发布版本 `v0.7.5`）。
+- **最新发布状态**：`v0.7.6` 正在修复 GRS AI GPT Image 2.5 总像素范围并准备发布；`v0.7.5` 的 GitHub Actions `Publish LY Space Desktop` 运行 `34679486909` 已成功，具体远端资产校验值见下方 v0.7.5 小节。真实 GRS AI API 与桌面人工验收仍待完成。
 - **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；通用 AI 接口仍可由渲染进程直连，方舟请求在桌面端通过受限主进程 HTTPS 代理；文档站是独立 Next.js 项目（`docs/`，bun）
@@ -27,7 +27,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：v0.7.5 已发布（GitHub Release、三项桌面资产和更新清单均已由 CI 与远端 digest 核验）。
+- **当前版本**：源码 v0.7.6；最新已核验 Release 为 v0.7.5。
 
 ## 2. 数据存储
 
@@ -44,6 +44,11 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **历史教训**：NSIS `CopyFiles "$INSTDIR\目录\*.*"` 不会递归复制子目录，旧 `customRemoveFiles` 随后执行 `RMDir /r` 会丢失嵌套数据。不得再把用户数据放回安装目录，也不得用通配符复制冒充递归备份。
 
 ## 3. 关键链路与已修复的坑
+
+### v0.7.6：GRS AI GPT Image 2.5 总像素范围修复（待发布核验）
+
+- v0.7.5 已把比例改为具体像素，但 1K 宽屏会得到 `1024x576`，低于服务端要求的 655,360 总像素；4K 的部分比例也会超过 8,294,400。比例预设现会在保持方向和 16 像素对齐的前提下缩放到合法范围，手动输入超限尺寸会在提交前显示中文错误。
+- 新增请求体回归，覆盖 1K 16:9 输出 `1088x608`、4K 4:3 输出 `3312x2480`，以及手动输入 `1024x576` 时的本地拦截。
 
 ### v0.7.5：GRS AI GPT Image 2.5 修复安装版（已发布）
 

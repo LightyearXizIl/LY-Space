@@ -10,7 +10,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 ## 0. 给 ZCode 的快速上手
 
 - **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；本次发布版本为 `v0.7.7`）。
-- **本次发布状态**：`v0.7.7` 包含画布 ZIP 导入、项目分页和生成节点布局修复。GitHub 标签工作流会构建 Windows 安装包、校验草稿 Release 资产并再发布正式版本；真实应用内回归仍需人工验收。
+- **本次发布状态**：`v0.7.7` 已包含画布 ZIP 导入、项目分页和生成节点布局修复。GitHub Actions `Publish LY Space Desktop` 运行 `35555517527` 已成功，完成构建、草稿资产下载核验和正式发布；真实应用内回归仍需人工验收。
 - **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；通用 AI 接口仍可由渲染进程直连，方舟请求在桌面端通过受限主进程 HTTPS 代理；文档站是独立 Next.js 项目（`docs/`，bun）
@@ -51,7 +51,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **原子导入与素材冲突**：`canvas-import.ts` 先验证 `projects.json`、项目数组、素材清单与每个素材尺寸；校验全部通过后才写入。已有同键素材需按实际内容比对：一致即复用，不一致即明确报冲突，绝不覆盖。写入失败时回收本次新建素材，避免半导入。
 - **项目分页**：`canvas-project-pagination.ts` 固定每页 15 项，桌面 3 列 × 最多 5 行，项目数超过 15 才显示 Ant Design 分页。删除导致页码越界时回到有效末页；导入成功后回第一页。分页仅切片展示，不改变全局顺序、跨页选中或批量操作；拖拽仅在当前页可见卡片之间调整全局顺序。
 - **生成节点排布**：`canvas-node-geometry.ts` 的 `positionNodeToRightOf` 使用源节点真实的 `position`、`width`、`height` 计算右侧首个结果位置。图片、文本与生成配置节点在放大或缩小后生成，均不会再因默认节点尺寸而压到源节点；批量图片仍保留既有的右侧两列向下展开方式。
-- **验证边界**：已通过 TypeScript、renderer Vitest（22 文件 / 119 测试）和 `git diff --check`；未执行本地打包、真实收费 API 或应用内手工回归。GitHub 标签工作流负责打包和正式发布。继续保留 `.mimosa/` 与 `desktop/.mimosa/` 的既有未跟踪内容，不纳入本次改动。
+- **发布核验**：GitHub Actions `35555517527` 成功完成构建、草稿资产下载比对与正式发布。正式 Release 为 `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.7.7`，非草稿、非预发布；远端资产为 EXE 92,584,490 字节（SHA-256 `747355df65c9dff338b0017a3d53e248c37aa7118bd7a487c0a43bd0dafc0845`）、blockmap 98,093 字节（SHA-256 `494231b3498d14944a507bea3c707fab641d935e37f0f86aea09991c120685a0`）和 `latest.yml` 344 字节（SHA-256 `627ea21d8ac54a3e9edd15c75a8ccebb9112f031b743b2cb6b86fa2a775f6bb7`）。
+- **验证边界**：已通过 TypeScript、renderer Vitest（22 文件 / 119 测试）和 `git diff --check`；未执行真实收费 API 或应用内手工回归。继续保留 `.mimosa/` 与 `desktop/.mimosa/` 的既有未跟踪内容，不纳入本次改动。
 
 ### v0.7.6：GRS AI GPT Image 2.5 总像素范围修复（已发布）
 

@@ -262,9 +262,7 @@ export default function CanvasPage() {
                         {shouldShowCanvasProjectPagination(projects.length) ? (
                             <nav className="flex justify-center" aria-label="画布项目分页">
                                 <div className="flex items-center gap-1">
-                                    <Button type="text" size="small" icon={<ChevronsLeft className="size-4" />} disabled={currentPage === 1} onClick={() => setPage(1)}>
-                                        首页
-                                    </Button>
+                                    <Button type="text" size="small" shape="circle" icon={<ChevronsLeft className="size-4" />} aria-label="首页" disabled={currentPage === 1} onClick={() => setPage(1)} />
                                     <Button type="text" size="small" shape="circle" icon={<ChevronLeft className="size-4" />} aria-label="上一页" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)} />
                                     {pageWindow.map((item) => (
                                         <Button key={item} type={item === currentPage ? "primary" : "text"} size="small" shape="circle" onClick={() => setPage(item)}>
@@ -272,9 +270,7 @@ export default function CanvasPage() {
                                         </Button>
                                     ))}
                                     <Button type="text" size="small" shape="circle" icon={<ChevronRight className="size-4" />} aria-label="下一页" disabled={currentPage === pageCount} onClick={() => setPage(currentPage + 1)} />
-                                    <Button type="text" size="small" icon={<ChevronsRight className="size-4" />} disabled={currentPage === pageCount} onClick={() => setPage(pageCount)}>
-                                        尾页
-                                    </Button>
+                                    <Button type="text" size="small" shape="circle" icon={<ChevronsRight className="size-4" />} aria-label="尾页" disabled={currentPage === pageCount} onClick={() => setPage(pageCount)} />
                                 </div>
                             </nav>
                         ) : null}

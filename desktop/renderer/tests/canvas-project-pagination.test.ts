@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { CANVAS_PROJECTS_PER_PAGE, clampCanvasProjectPage, getCanvasProjectPage, getCanvasProjectPageCount } from "@/lib/canvas/canvas-project-pagination";
+import { CANVAS_PROJECTS_PER_PAGE, clampCanvasProjectPage, getCanvasProjectPage, getCanvasProjectPageCount, shouldShowCanvasProjectPagination } from "@/lib/canvas/canvas-project-pagination";
 
 describe("画布库分页", () => {
     it("每页固定 15 个项目并正确计算边界页", () => {
         expect(CANVAS_PROJECTS_PER_PAGE).toBe(15);
         expect([0, 1, 15, 16, 30, 31].map(getCanvasProjectPageCount)).toEqual([1, 1, 1, 2, 2, 3]);
+    });
+
+    it("有项目时显示列表下方分页控件，空项目时隐藏", () => {
+        expect(shouldShowCanvasProjectPagination(0)).toBe(false);
+        expect(shouldShowCanvasProjectPagination(1)).toBe(true);
+        expect(shouldShowCanvasProjectPagination(15)).toBe(true);
     });
 
     it("页码越界时回到有效页，并保持项目顺序", () => {

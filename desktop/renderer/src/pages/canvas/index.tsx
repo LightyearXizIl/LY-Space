@@ -14,7 +14,7 @@ import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { areCanvasImportBlobsEqual, CanvasImportError, readCanvasImportPackage, uniqueCanvasImportAssets } from "@/lib/canvas/canvas-import";
 import { shouldInsertProjectBefore } from "@/lib/canvas/canvas-project-order";
-import { CANVAS_PROJECTS_PER_PAGE, clampCanvasProjectPage, getCanvasProjectPage } from "@/lib/canvas/canvas-project-pagination";
+import { CANVAS_PROJECTS_PER_PAGE, clampCanvasProjectPage, getCanvasProjectPage, shouldShowCanvasProjectPagination } from "@/lib/canvas/canvas-project-pagination";
 import { logAppEvent } from "@/services/app-logger";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 
@@ -257,7 +257,7 @@ export default function CanvasPage() {
                                 );
                             })}
                         </div>
-                        {projects.length > CANVAS_PROJECTS_PER_PAGE ? (
+                        {shouldShowCanvasProjectPagination(projects.length) ? (
                             <div className="flex justify-center">
                                 <Pagination current={currentPage} pageSize={CANVAS_PROJECTS_PER_PAGE} total={projects.length} showSizeChanger={false} onChange={setPage} />
                             </div>

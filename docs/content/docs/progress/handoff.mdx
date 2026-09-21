@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；本次发布版本为 `v0.7.8`）。
-- **本次发布状态**：`v0.7.8` 已修复画布库单页项目未显示分页控件的问题。GitHub Actions `Publish LY Space Desktop` 运行 `35556319029` 已成功，完成构建、草稿资产下载核验和正式发布；真实应用内回归仍需人工验收。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；本次发布版本为 `v0.7.9`）。
+- **本次发布状态**：`v0.7.9` 固定画布库分页位置，限制页码窗口为 3 页，并增加首页和尾页快捷跳转。GitHub 标签工作流会构建 Windows 安装包、校验草稿 Release 资产并再发布正式版本；真实应用内回归仍需人工验收。
 - **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；通用 AI 接口仍可由渲染进程直连，方舟请求在桌面端通过受限主进程 HTTPS 代理；文档站是独立 Next.js 项目（`docs/`，bun）
@@ -44,6 +44,12 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **历史教训**：NSIS `CopyFiles "$INSTDIR\目录\*.*"` 不会递归复制子目录，旧 `customRemoveFiles` 随后执行 `RMDir /r` 会丢失嵌套数据。不得再把用户数据放回安装目录，也不得用通配符复制冒充递归备份。
 
 ## 3. 关键链路与已修复的坑
+
+### v0.7.9：画布库分页稳定布局与快捷跳转
+
+- **固定位置**：项目网格为一页 15 个项目预留固定高度；桌面 3 列时固定为 5 行高度，因此最后一页仅有少量项目时，列表下方的分页不会上移。窄窗口按 2 列或 1 列预留同一页所需行数。
+- **页码窗口与跳转**：分页最多显示 3 个连续页码；当前页向后翻动时页码窗口同步向后移动，到末尾时保留最后 3 页。控件从左到右提供首页、上一页、页码、下一页、尾页，边界页禁用无效跳转。
+- **验证边界**：新增页码窗口回归，覆盖连续前翻和末页窗口；待 GitHub 标签工作流完成构建和远端资产核验后，再记录正式发布结果。
 
 ### v0.7.8：画布库单页分页控件
 

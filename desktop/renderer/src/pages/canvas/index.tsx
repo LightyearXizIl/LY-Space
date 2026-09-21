@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Alert, App, Button, Checkbox, Modal, Pagination, Spin } from "antd";
-import { Download, FileUp, Plus, RefreshCw } from "lucide-react";
+import { Alert, App, Button, Checkbox, Modal, Spin } from "antd";
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, FileUp, Plus, RefreshCw } from "lucide-react";
 
 import { readZip } from "@/lib/zip";
 import { deleteStoredMedia, getMediaBlob, setMediaBlob } from "@/services/file-storage";
@@ -14,7 +14,7 @@ import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { areCanvasImportBlobsEqual, CanvasImportError, readCanvasImportPackage, uniqueCanvasImportAssets } from "@/lib/canvas/canvas-import";
 import { shouldInsertProjectBefore } from "@/lib/canvas/canvas-project-order";
-import { CANVAS_PROJECTS_PER_PAGE, clampCanvasProjectPage, getCanvasProjectPage, shouldShowCanvasProjectPagination } from "@/lib/canvas/canvas-project-pagination";
+import { CANVAS_PROJECTS_PER_PAGE, clampCanvasProjectPage, getCanvasProjectPage, getCanvasProjectPageCount, getCanvasProjectPageWindow, shouldShowCanvasProjectPagination } from "@/lib/canvas/canvas-project-pagination";
 import { logAppEvent } from "@/services/app-logger";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 
@@ -49,6 +49,8 @@ export default function CanvasPage() {
     const [page, setPage] = useState(1);
     const currentPage = clampCanvasProjectPage(page, projects.length);
     const visibleProjects = getCanvasProjectPage(projects, currentPage);
+    const pageCount = getCanvasProjectPageCount(projects.length);
+    const pageWindow = getCanvasProjectPageWindow(currentPage, projects.length);
 
     const scanRecovery = useCallback(async () => {
         const desktop = window.lySpaceDesktop;
@@ -236,7 +238,7 @@ export default function CanvasPage() {
                     <section className="flex min-h-[360px] items-center justify-center border-y border-stone-200 text-sm text-stone-500 dark:border-stone-800">正在加载画布...</section>
                 ) : projects.length ? (
                     <>
-                        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                        <div className="grid min-h-[182.5rem] auto-rows-[11rem] gap-5 sm:min-h-[96.75rem] sm:grid-cols-2 xl:min-h-[60rem] xl:grid-cols-3">
                             {visibleProjects.map((project) => {
                                 const dragging = dragProjectId === project.id;
                                 const dropSide = dropTarget?.id === project.id ? (dropTarget.before ? "before" : "after") : null;
@@ -258,9 +260,23 @@ export default function CanvasPage() {
                             })}
                         </div>
                         {shouldShowCanvasProjectPagination(projects.length) ? (
-                            <div className="flex justify-center">
-                                <Pagination current={currentPage} pageSize={CANVAS_PROJECTS_PER_PAGE} total={projects.length} showSizeChanger={false} onChange={setPage} />
-                            </div>
+                            <nav className="flex justify-center" aria-label="画布项目分页">
+                                <div className="flex items-center gap-1">
+                                    <Button type="text" size="small" icon={<ChevronsLeft className="size-4" />} disabled={currentPage === 1} onClick={() => setPage(1)}>
+                                        首页
+                                    </Button>
+                                    <Button type="text" size="small" shape="circle" icon={<ChevronLeft className="size-4" />} aria-label="上一页" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)} />
+                                    {pageWindow.map((item) => (
+                                        <Button key={item} type={item === currentPage ? "primary" : "text"} size="small" shape="circle" onClick={() => setPage(item)}>
+                                            {item}
+                                        </Button>
+                                    ))}
+                                    <Button type="text" size="small" shape="circle" icon={<ChevronRight className="size-4" />} aria-label="下一页" disabled={currentPage === pageCount} onClick={() => setPage(currentPage + 1)} />
+                                    <Button type="text" size="small" icon={<ChevronsRight className="size-4" />} disabled={currentPage === pageCount} onClick={() => setPage(pageCount)}>
+                                        尾页
+                                    </Button>
+                                </div>
+                            </nav>
                         ) : null}
                     </>
                 ) : (

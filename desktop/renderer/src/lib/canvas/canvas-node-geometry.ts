@@ -12,6 +12,14 @@ export function nodeBounds(nodes: CanvasNodeData[]) {
     );
 }
 
+/** Places a target node to the right of a source node using their actual canvas dimensions. */
+export function positionNodeToRightOf(source: Pick<CanvasNodeData, "position" | "width" | "height">, target: Pick<CanvasNodeData, "width" | "height">, gap = 96) {
+    return {
+        x: source.position.x + source.width + gap,
+        y: source.position.y + source.height / 2 - target.height / 2,
+    };
+}
+
 export function findGroupDropTarget(movedIds: Set<string>, nodes: CanvasNodeData[]) {
     if (nodes.some((node) => movedIds.has(node.id) && node.type === CanvasNodeType.Group)) return null;
     const movingNodes = nodes.filter((node) => movedIds.has(node.id) && node.type !== CanvasNodeType.Group);
@@ -77,9 +85,7 @@ export function normalizeConnection(firstNodeId: string, secondNodeId: string, n
     if (second.type === CanvasNodeType.Config) return { fromNodeId: first.id, toNodeId: second.id, fromSide: firstSide, toSide: secondSide };
     if (first.type === CanvasNodeType.Config && firstHandleType === "target") return { fromNodeId: second.id, toNodeId: first.id, fromSide: secondSide, toSide: firstSide };
     if (first.type === CanvasNodeType.Config) return { fromNodeId: first.id, toNodeId: second.id, fromSide: firstSide, toSide: secondSide };
-    return firstHandleType === "source"
-        ? { fromNodeId: first.id, toNodeId: second.id, fromSide: firstSide, toSide: secondSide }
-        : { fromNodeId: second.id, toNodeId: first.id, fromSide: secondSide, toSide: firstSide };
+    return firstHandleType === "source" ? { fromNodeId: first.id, toNodeId: second.id, fromSide: firstSide, toSide: secondSide } : { fromNodeId: second.id, toNodeId: first.id, fromSide: secondSide, toSide: firstSide };
 }
 
 export function isHiddenBatchChild(node: CanvasNodeData, nodes: CanvasNodeData[], collapsingBatchIds?: Set<string>) {

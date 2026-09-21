@@ -1,21 +1,27 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Alert, App, Button, Checkbox, Modal, Spin } from "antd";
+import { Alert, App, Button, Checkbox, Modal, Pagination, Spin } from "antd";
 import { Download, FileUp, Plus, RefreshCw } from "lucide-react";
 
 import { readZip } from "@/lib/zip";
-import { getMediaBlob, setMediaBlob } from "@/services/file-storage";
-import { getImageBlob, setImageBlob } from "@/services/image-storage";
+import { deleteStoredMedia, getMediaBlob, setMediaBlob } from "@/services/file-storage";
+import { deleteStoredImages, getImageBlob, setImageBlob } from "@/services/image-storage";
 import { CanvasDeleteProjectsDialog } from "@/components/canvas/canvas-delete-projects-dialog";
 import { CanvasProjectCard } from "@/components/canvas/canvas-project-card";
-import type { CanvasExportFile } from "@/types/canvas-export";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useConfigStore } from "@/stores/use-config-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
+import { areCanvasImportBlobsEqual, CanvasImportError, readCanvasImportPackage, uniqueCanvasImportAssets } from "@/lib/canvas/canvas-import";
 import { shouldInsertProjectBefore } from "@/lib/canvas/canvas-project-order";
+import { CANVAS_PROJECTS_PER_PAGE, clampCanvasProjectPage, getCanvasProjectPage } from "@/lib/canvas/canvas-project-pagination";
 import { logAppEvent } from "@/services/app-logger";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
+
+const ZIP_READ_ERROR_MESSAGES: Record<string, string> = {
+    压缩包文件数量过多: "压缩包文件数量超过 5000 个，无法导入",
+    压缩包包含非法路径: "压缩包包含非法路径，无法导入",
+};
 
 export default function CanvasPage() {
     const { message } = App.useApp();
@@ -40,6 +46,9 @@ export default function CanvasPage() {
     const [recoveryApplying, setRecoveryApplying] = useState(false);
     const [selectedRecoveryIds, setSelectedRecoveryIds] = useState<string[]>([]);
     const [restoreConfiguration, setRestoreConfiguration] = useState(false);
+    const [page, setPage] = useState(1);
+    const currentPage = clampCanvasProjectPage(page, projects.length);
+    const visibleProjects = getCanvasProjectPage(projects, currentPage);
 
     const scanRecovery = useCallback(async () => {
         const desktop = window.lySpaceDesktop;
@@ -135,29 +144,43 @@ export default function CanvasPage() {
     const createAndEnter = () => enterProject(createProject(`无限画布 ${projects.length + 1}`));
     const importCanvas = async (file?: File) => {
         if (!file) return;
+        const addedImages: string[] = [];
+        const addedMedia: string[] = [];
         try {
-            const zip = await readZip(file);
-            const projectFile = zip.get("projects.json");
-            if (!projectFile) throw new Error("missing projects.json");
-            const data = JSON.parse(await projectFile.text()) as CanvasExportFile;
-            if (data.app !== "infinite-canvas" || data.version !== 3 || !Array.isArray(data.projects)) throw new Error("invalid project package");
-            await Promise.all(
-                data.projects.flatMap((project) =>
-                    project.files.map(async (item) => {
-                        if (!item?.storageKey || !item.path || !item.mimeType || !Number.isSafeInteger(item.bytes) || item.bytes < 0) throw new Error("invalid project file");
-                        const blob = zip.get(item.path);
-                        if (!blob || blob.size !== item.bytes) throw new Error(`missing project file: ${item.path}`);
-                        const typedBlob = blob.type ? blob : blob.slice(0, blob.size, item.mimeType);
-                        const existing = item.storageKey.startsWith("image:") ? await getImageBlob(item.storageKey) : await getMediaBlob(item.storageKey);
-                        if (existing) throw new Error(`导入包与当前素材冲突：${item.storageKey}`);
-                        await (item.storageKey.startsWith("image:") ? setImageBlob(item.storageKey, typedBlob) : setMediaBlob(item.storageKey, typedBlob));
-                    }),
-                ),
-            );
+            let zip: Map<string, Blob>;
+            try {
+                zip = await readZip(file);
+            } catch (error) {
+                const reason = error instanceof Error ? ZIP_READ_ERROR_MESSAGES[error.message] : undefined;
+                throw new CanvasImportError(reason || "无法读取画布压缩包，请确认文件未损坏");
+            }
+            const data = await readCanvasImportPackage(zip);
+            const assetsToWrite = [];
+            for (const item of await uniqueCanvasImportAssets(data.assets)) {
+                const image = item.storageKey.startsWith("image:");
+                const existing = await (image ? getImageBlob(item.storageKey) : getMediaBlob(item.storageKey));
+                if (existing && !(await areCanvasImportBlobsEqual(existing, item.blob))) throw new CanvasImportError("导入素材与本机已有素材冲突，未覆盖原素材");
+                if (!existing) assetsToWrite.push(item);
+            }
+            for (const item of assetsToWrite) {
+                const image = item.storageKey.startsWith("image:");
+                try {
+                    await (image ? setImageBlob(item.storageKey, item.blob) : setMediaBlob(item.storageKey, item.blob));
+                } catch {
+                    throw new CanvasImportError("素材保存失败，请检查可用磁盘空间后重试");
+                }
+                (image ? addedImages : addedMedia).push(item.storageKey);
+            }
             data.projects.forEach((item) => importProject(item.project));
+            setPage(1);
             message.success(`已导入 ${data.projects.length} 个画布`);
-        } catch {
-            message.error("导入失败，请选择有效的画布压缩包");
+        } catch (error) {
+            try {
+                await Promise.all([deleteStoredImages(addedImages), deleteStoredMedia(addedMedia)]);
+            } catch {
+                // 素材存储不可用时优先保留原始导入错误，不掩盖用户可操作的失败原因。
+            }
+            message.error(error instanceof CanvasImportError ? error.message : "导入失败，请稍后重试");
         } finally {
             if (inputRef.current) inputRef.current.value = "";
         }
@@ -174,7 +197,16 @@ export default function CanvasPage() {
                     <div className="flex items-center gap-2">
                         {selectedIds.length ? (
                             <>
-                                <Button disabled={!hydrated} icon={<Download className="size-4" />} onClick={() => void exportCanvasProjects(projects.filter((project) => selectedIds.includes(project.id)), `无限画布-${selectedIds.length}个项目`)}>
+                                <Button
+                                    disabled={!hydrated}
+                                    icon={<Download className="size-4" />}
+                                    onClick={() =>
+                                        void exportCanvasProjects(
+                                            projects.filter((project) => selectedIds.includes(project.id)),
+                                            `无限画布-${selectedIds.length}个项目`,
+                                        )
+                                    }
+                                >
                                     导出选中
                                 </Button>
                                 <Button disabled={!hydrated} onClick={() => setDeleteIds(selectedIds)}>
@@ -203,27 +235,34 @@ export default function CanvasPage() {
                 {!hydrated ? (
                     <section className="flex min-h-[360px] items-center justify-center border-y border-stone-200 text-sm text-stone-500 dark:border-stone-800">正在加载画布...</section>
                 ) : projects.length ? (
-                    <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-                        {projects.map((project) => {
-                            const dragging = dragProjectId === project.id;
-                            const dropSide = dropTarget?.id === project.id ? (dropTarget.before ? "before" : "after") : null;
-                            return (
-                                <div
-                                    key={project.id}
-                                    draggable={hydrated}
-                                    title="拖动卡片可自定义排序"
-                                    onDragStart={(event) => handleCardDragStart(event, project.id)}
-                                    onDragOver={(event) => handleCardDragOver(event, project.id)}
-                                    onDrop={(event) => handleCardDrop(event, project.id)}
-                                    onDragEnd={clearDragState}
-                                    className={dragging ? "opacity-40" : undefined}
-                                    style={dropSide ? { boxShadow: `inset ${dropSide === "before" ? "3px" : "-3px"} 0 0 0 #2f80ff` } : undefined}
-                                >
-                                    <CanvasProjectCard project={project} />
-                                </div>
-                            );
-                        })}
-                    </div>
+                    <>
+                        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                            {visibleProjects.map((project) => {
+                                const dragging = dragProjectId === project.id;
+                                const dropSide = dropTarget?.id === project.id ? (dropTarget.before ? "before" : "after") : null;
+                                return (
+                                    <div
+                                        key={project.id}
+                                        draggable={hydrated}
+                                        title="拖动卡片可自定义排序"
+                                        onDragStart={(event) => handleCardDragStart(event, project.id)}
+                                        onDragOver={(event) => handleCardDragOver(event, project.id)}
+                                        onDrop={(event) => handleCardDrop(event, project.id)}
+                                        onDragEnd={clearDragState}
+                                        className={dragging ? "opacity-40" : undefined}
+                                        style={dropSide ? { boxShadow: `inset ${dropSide === "before" ? "3px" : "-3px"} 0 0 0 #2f80ff` } : undefined}
+                                    >
+                                        <CanvasProjectCard project={project} />
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        {projects.length > CANVAS_PROJECTS_PER_PAGE ? (
+                            <div className="flex justify-center">
+                                <Pagination current={currentPage} pageSize={CANVAS_PROJECTS_PER_PAGE} total={projects.length} showSizeChanger={false} onChange={setPage} />
+                            </div>
+                        ) : null}
+                    </>
                 ) : (
                     <section className="flex min-h-[360px] flex-col items-center justify-center border-y border-stone-200 text-center dark:border-stone-800">
                         <h2 className="text-xl font-medium">还没有画布</h2>
@@ -247,7 +286,9 @@ export default function CanvasPage() {
                 cancelText="暂不恢复"
                 okButtonProps={{ disabled: recoveryScanning || !selectedRecoveryIds.length, loading: recoveryApplying }}
                 onOk={() => void applyRecovery()}
-                onCancel={() => { if (!recoveryApplying) setRecoveryOpen(false); }}
+                onCancel={() => {
+                    if (!recoveryApplying) setRecoveryOpen(false);
+                }}
             >
                 {recoveryScanning || !recoveryScan ? (
                     <div className="flex flex-col items-center gap-3 py-8 text-sm text-stone-600 dark:text-stone-300">
@@ -259,7 +300,11 @@ export default function CanvasPage() {
                     <div className="space-y-4">
                         <p className="text-sm text-stone-600 dark:text-stone-300">已检查 {recoveryScan.sources.length} 个可读备份来源。恢复会保留当前较新的版本，并在写入前创建可回退副本。</p>
                         {recoveryScan.unreadableSources ? <Alert showIcon type="warning" message={`${recoveryScan.unreadableSources} 个备份来源无法读取，已继续检查其余来源`} /> : null}
-                        <Checkbox checked={selectedRecoveryIds.length === recoveryScan.projects.length} indeterminate={selectedRecoveryIds.length > 0 && selectedRecoveryIds.length < recoveryScan.projects.length} onChange={(event) => setSelectedRecoveryIds(event.target.checked ? recoveryScan.projects.map((project) => project.id) : [])}>
+                        <Checkbox
+                            checked={selectedRecoveryIds.length === recoveryScan.projects.length}
+                            indeterminate={selectedRecoveryIds.length > 0 && selectedRecoveryIds.length < recoveryScan.projects.length}
+                            onChange={(event) => setSelectedRecoveryIds(event.target.checked ? recoveryScan.projects.map((project) => project.id) : [])}
+                        >
                             选择全部可恢复画布
                         </Checkbox>
                         <Checkbox.Group value={selectedRecoveryIds} className="flex max-h-80 w-full flex-col gap-2 overflow-y-auto pr-1" onChange={(values) => setSelectedRecoveryIds(values.map(String))}>
@@ -267,19 +312,29 @@ export default function CanvasPage() {
                                 <Checkbox key={project.id} value={project.id} className="m-0 rounded border border-stone-200 px-3 py-2 dark:border-stone-700">
                                     <span className="flex min-w-0 flex-col gap-1">
                                         <span className="truncate font-medium">{project.title}</span>
-                                        <span className="text-xs text-stone-500">{project.status === "missing" ? "缺失项目" : "可恢复的新版本"} · {project.source} · {project.updatedAt ? new Date(project.updatedAt).toLocaleString() : "更新时间未知"}</span>
+                                        <span className="text-xs text-stone-500">
+                                            {project.status === "missing" ? "缺失项目" : "可恢复的新版本"} · {project.source} · {project.updatedAt ? new Date(project.updatedAt).toLocaleString() : "更新时间未知"}
+                                        </span>
                                     </span>
                                 </Checkbox>
                             ))}
                         </Checkbox.Group>
-                        {recoveryScan.configuration ? <Checkbox checked={restoreConfiguration} onChange={(event) => setRestoreConfiguration(event.target.checked)}>同时恢复 AI/WebDAV 配置（来自 {recoveryScan.configuration.source}）</Checkbox> : null}
-                        <Button size="small" onClick={() => void exportRecoveryDiagnostics()}>导出恢复诊断</Button>
+                        {recoveryScan.configuration ? (
+                            <Checkbox checked={restoreConfiguration} onChange={(event) => setRestoreConfiguration(event.target.checked)}>
+                                同时恢复 AI/WebDAV 配置（来自 {recoveryScan.configuration.source}）
+                            </Checkbox>
+                        ) : null}
+                        <Button size="small" onClick={() => void exportRecoveryDiagnostics()}>
+                            导出恢复诊断
+                        </Button>
                     </div>
                 ) : (
                     <div className="space-y-3 text-sm text-stone-600 dark:text-stone-300">
                         <p>未检测到可恢复的缺失画布或较新版本。</p>
                         {recoveryScan?.unreadableSources ? <Alert showIcon type="warning" message={`${recoveryScan.unreadableSources} 个备份来源无法读取，请保留备份目录后联系支持`} /> : <p>扫描只读取本机备份，未修改任何画布或升级备份。</p>}
-                        <Button size="small" onClick={() => void exportRecoveryDiagnostics()}>导出恢复诊断</Button>
+                        <Button size="small" onClick={() => void exportRecoveryDiagnostics()}>
+                            导出恢复诊断
+                        </Button>
                     </div>
                 )}
             </Modal>

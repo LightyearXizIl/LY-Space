@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；本次发布版本为 `v0.8.0`）。
-- **本次发布状态**：`v0.8.0` 已将画布库分页的首页和尾页改为仅双箭头图标。GitHub Actions `Publish LY Space Desktop` 运行 `35558088227` 已成功，完成构建、草稿资产下载核验和正式发布；真实应用内回归仍需人工验收。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；本次发布版本为 `v0.8.1`）。
+- **本次发布状态**：`v0.8.1` 已对火山方舟 Seedance 2.5 增加独立的时长、参考素材与自由宽高比规则，不再错用 Seedance 2.0 的 15 秒上限。GitHub Actions `Publish LY Space Desktop` 运行 `35693116993` 已成功，完成构建、草稿资产下载核验和正式发布；真实方舟收费调用与应用内回归仍需人工验收。
 - **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；通用 AI 接口仍可由渲染进程直连，方舟请求在桌面端通过受限主进程 HTTPS 代理；文档站是独立 Next.js 项目（`docs/`，bun）
@@ -27,7 +27,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：源码与最新已核验 Release 均为 v0.7.6。
+- **当前版本**：源码与最新已核验 Release 均为 v0.8.1。
 
 ## 2. 数据存储
 
@@ -44,6 +44,13 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **历史教训**：NSIS `CopyFiles "$INSTDIR\目录\*.*"` 不会递归复制子目录，旧 `customRemoveFiles` 随后执行 `RMDir /r` 会丢失嵌套数据。不得再把用户数据放回安装目录，也不得用通配符复制冒充递归备份。
 
 ## 3. 关键链路与已修复的坑
+
+### v0.8.1：Seedance 2.5 模型分流适配
+
+- **模型分流**：`doubao-seedance-2-5-260628` 使用 4-30 秒或智能时长，支持 30 张参考图、10 个参考视频、10 个参考音频和最多 50 个参考素材；参考视频与音频各自总时长不超过 30 秒。Seedance 2.0/2.0 Fast/2.0 Mini 保留原 15 秒与 9/3/3 规则。
+- **比例与界面**：2.5 的 `adaptive` 在设置面板改为优先显示“跟随素材”，说明 0.4-2.5 自由宽高比；固定比例、480p/720p/1080p、生成声音、水印和随机种子继续保留。视频工作台和画布生成共用同一套模型识别、验证与请求构造。
+- **发布核验**：GitHub Actions `35693116993` 成功完成版本校验、Windows 构建、草稿资产比对和正式发布。正式 Release 为 `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.8.1`，非草稿、非预发布；远程资产为 EXE 92,585,505 字节（SHA-256 `870d10b06280e94e01c57fcca1c4e287ca122e0d440642a7f0e84894af1e0916`）、blockmap 98,002 字节（SHA-256 `b9d926a11862966ab22827bbd262b71b613e0d7159c8afa6fac718939a3f0b25`）和 `latest.yml` 344 字节（SHA-256 `684e02b9e05a8696d724f57be162194f5ad28f64b5924a63d3b17c9e39a27a09`）。`latest.yml` 声明的 EXE 文件名、大小 92,585,505 字节和 SHA-512 为 `FsZgcQdy1jdS1t+HnyZem3fKJG+kFclNkKnAfAq1Rq8jxYnS87baNfPB/xIlP/29ArkKUJ9lPNhhxkl3e/EwMQ==`。
+- **验证边界**：本地按项目规则未执行编译或真实收费 API 生成；CI 已构建成功并校验资产。独立下载复核已验证 blockmap 和 `latest.yml`；EXE 下载因当前 GitHub 对象存储链路超时未完整落地，其远程大小与 SHA-256 来自 GitHub Release 元数据并已经发布工作流的资产比对步骤验证。
 
 ### v0.8.0：画布库分页双箭头快捷键
 

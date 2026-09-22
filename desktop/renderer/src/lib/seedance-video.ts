@@ -6,6 +6,17 @@ export const SEEDANCE_REFERENCE_LIMITS = {
     images: 9,
     videos: 3,
     audios: 3,
+    total: 15,
+    videoDurationMs: 15000,
+    audioDurationMs: 15000,
+};
+export const SEEDANCE_25_REFERENCE_LIMITS = {
+    images: 30,
+    videos: 10,
+    audios: 10,
+    total: 50,
+    videoDurationMs: 30000,
+    audioDurationMs: 30000,
 };
 export const SEEDANCE_VIDEO_MIME_TYPES = ["video/mp4", "video/quicktime"];
 export const SEEDANCE_AUDIO_MIME_TYPES = ["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav"];
@@ -27,6 +38,7 @@ export const seedanceRatioOptions = [
 ] as const;
 
 export const seedanceDurationOptions = [-1, 4, 5, 6, 8, 10, 12, 15] as const;
+export const seedance25DurationOptions = [-1, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30] as const;
 
 const seedancePixels = {
     "480p": {
@@ -64,10 +76,21 @@ export function isSeedanceFastModel(model: string) {
     return /seedance[-_ ]?2(?:\.0)?[-_ ]?fast/i.test(model);
 }
 
-export function seedanceReferenceCountError(images: ReferenceImage[], videos: ReferenceVideo[], audios: ReferenceAudio[]) {
-    if (images.length > SEEDANCE_REFERENCE_LIMITS.images) return `Seedance 最多支持 ${SEEDANCE_REFERENCE_LIMITS.images} 张参考图，请移除多余图片后重试`;
-    if (videos.length > SEEDANCE_REFERENCE_LIMITS.videos) return `Seedance 最多支持 ${SEEDANCE_REFERENCE_LIMITS.videos} 个参考视频，请移除多余视频后重试`;
-    if (audios.length > SEEDANCE_REFERENCE_LIMITS.audios) return `Seedance 最多支持 ${SEEDANCE_REFERENCE_LIMITS.audios} 个参考音频，请移除多余音频后重试`;
+export function isSeedance25Model(model: string) {
+    return /seedance[-_. ]?2[-_. ]?5(?:[-_. ]|$)/i.test(model);
+}
+
+export function seedanceReferenceLimits(model = "") {
+    return isSeedance25Model(model) ? SEEDANCE_25_REFERENCE_LIMITS : SEEDANCE_REFERENCE_LIMITS;
+}
+
+export function seedanceReferenceCountError(images: ReferenceImage[], videos: ReferenceVideo[], audios: ReferenceAudio[], model = "") {
+    const limits = seedanceReferenceLimits(model);
+    const name = isSeedance25Model(model) ? "Seedance 2.5" : "Seedance";
+    if (images.length > limits.images) return `${name} 最多支持 ${limits.images} 张参考图，请移除多余图片后重试`;
+    if (videos.length > limits.videos) return `${name} 最多支持 ${limits.videos} 个参考视频，请移除多余视频后重试`;
+    if (audios.length > limits.audios) return `${name} 最多支持 ${limits.audios} 个参考音频，请移除多余音频后重试`;
+    if (images.length + videos.length + audios.length > limits.total) return `${name} 参考素材总数不能超过 ${limits.total} 个`;
     return "";
 }
 
@@ -83,10 +106,10 @@ export function normalizeResolutionToken(value: string) {
     return `${resolution}p`;
 }
 
-export function normalizeSeedanceDuration(value: string) {
+export function normalizeSeedanceDuration(value: string, model = "") {
     if (String(value).trim() === "-1") return -1;
     const seconds = Math.floor(Number(value) || 5);
-    return Math.max(4, Math.min(15, seconds));
+    return Math.max(4, Math.min(isSeedance25Model(model) ? 30 : 15, seconds));
 }
 
 export function normalizeSeedanceRatio(value: string) {
@@ -139,14 +162,16 @@ export function buildSeedancePromptText(prompt: string, images: ReferenceImage[]
     return `参考资产编号：${labels.join("、")}。请按这些编号理解提示词中的图片、视频和音频引用。\n\n${text}`;
 }
 
-export function seedanceVideoReferenceError(videos: ReferenceVideo[]) {
+export function seedanceVideoReferenceError(videos: ReferenceVideo[], model = "") {
+    const seedance25 = isSeedance25Model(model);
+    const maxDurationMs = seedanceReferenceLimits(model).videoDurationMs;
     let totalDurationMs = 0;
     for (let index = 0; index < videos.length; index += 1) {
         const video = videos[index];
         const label = seedanceReferenceLabel("video", index);
         if (!SEEDANCE_VIDEO_MIME_TYPES.includes(video.type)) return `${label} 仅支持 mp4/mov 格式`;
         if (video.durationMs) {
-            if (video.durationMs < 2000 || video.durationMs > 15000) return `${label} 时长需要在 2-15 秒之间`;
+            if (!seedance25 && (video.durationMs < 2000 || video.durationMs > maxDurationMs)) return `${label} 时长需要在 2-15 秒之间`;
             totalDurationMs += video.durationMs;
         }
         if (video.width && video.height) {
@@ -157,22 +182,24 @@ export function seedanceVideoReferenceError(videos: ReferenceVideo[]) {
             if (pixels < 640 * 640 || pixels > 3326 * 2494) return `${label} 总像素需要在 409600-8295044 之间`;
         }
     }
-    if (totalDurationMs > 15000) return "Seedance 参考视频总时长不能超过 15 秒";
+    if (totalDurationMs > maxDurationMs) return `${seedance25 ? "Seedance 2.5" : "Seedance"} 参考视频总时长不能超过 ${maxDurationMs / 1000} 秒`;
     return "";
 }
 
-export function seedanceAudioReferenceError(audios: ReferenceAudio[]) {
+export function seedanceAudioReferenceError(audios: ReferenceAudio[], model = "") {
+    const seedance25 = isSeedance25Model(model);
+    const maxDurationMs = seedanceReferenceLimits(model).audioDurationMs;
     let totalDurationMs = 0;
     for (let index = 0; index < audios.length; index += 1) {
         const audio = audios[index];
         const label = seedanceReferenceLabel("audio", index);
         if (!SEEDANCE_AUDIO_MIME_TYPES.includes(audio.type) && !/\.(mp3|wav)$/i.test(audio.name)) return `${label} 仅支持 mp3/wav 格式`;
         if (audio.durationMs) {
-            if (audio.durationMs < 2000 || audio.durationMs > 15000) return `${label} 时长需要在 2-15 秒之间`;
+            if (!seedance25 && (audio.durationMs < 2000 || audio.durationMs > maxDurationMs)) return `${label} 时长需要在 2-15 秒之间`;
             totalDurationMs += audio.durationMs;
         }
     }
-    if (totalDurationMs > 15000) return "Seedance 参考音频总时长不能超过 15 秒";
+    if (totalDurationMs > maxDurationMs) return `${seedance25 ? "Seedance 2.5" : "Seedance"} 参考音频总时长不能超过 ${maxDurationMs / 1000} 秒`;
     return "";
 }
 

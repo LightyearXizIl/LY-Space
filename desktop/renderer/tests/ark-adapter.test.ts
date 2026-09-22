@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { arkRequestJson, arkStreamText, buildArkImageRequest, buildArkResponsesRequest, buildArkSeedanceTaskRequest, normalizeArkSeed } from "@/services/api/ark";
 import { requestImageQuestion } from "@/services/api/image";
 import { sanitizeConfig } from "@/services/config-file";
-import { isSeedanceFastModel, seedanceAudioReferenceError, seedanceReferenceCountError } from "@/lib/seedance-video";
+import { isSeedance25Model, isSeedanceFastModel, normalizeSeedanceDuration, seedanceAudioReferenceError, seedanceReferenceCountError, seedanceVideoReferenceError } from "@/lib/seedance-video";
 import { ARK_AGENT_PLAN_BASE_URL, ARK_STANDARD_BASE_URL, buildApiUrl, defaultConfig, isArkAgentPlanBaseUrl, type AiConfig } from "@/stores/use-config-store";
 
 function arkConfig(overrides: Partial<AiConfig> = {}) {
@@ -123,11 +123,28 @@ describe("Seedance 参数边界", () => {
         expect(normalizeArkSeed("4294967296")).toBeUndefined();
         expect(buildArkSeedanceTaskRequest(arkConfig({ model: "seedance-2.0", videoSeed: "42", videoWatermark: "true" }), [{ type: "text", text: "测试" }], "16:9", "720p", 5)).toMatchObject({ seed: 42, watermark: true, generate_audio: true });
         expect(isSeedanceFastModel("seedance-2.0-fast")).toBe(true);
+        expect(isSeedance25Model("doubao-seedance-2-5-260628")).toBe(true);
+        expect(normalizeSeedanceDuration("30", "doubao-seedance-2-5-260628")).toBe(30);
+        expect(normalizeSeedanceDuration("30", "doubao-seedance-2-0-260128")).toBe(15);
     });
 
     it("超额素材和不支持的音频格式会明确报错", () => {
         expect(seedanceReferenceCountError(Array.from({ length: 10 }, (_, id) => ({ id: String(id), name: "a.png", type: "image/png", dataUrl: "data:image/png;base64,AA==" })), [], [])).toContain("最多支持 9 张");
         expect(seedanceAudioReferenceError([{ id: "a", name: "a.ogg", type: "audio/ogg", url: "https://example.com/a.ogg", durationMs: 3000 }])).toContain("仅支持 mp3/wav");
+    });
+
+    it("Seedance 2.5 使用 30 秒时长与 30/10/10 参考素材上限", () => {
+        const model = "doubao-seedance-2-5-260628";
+        const audio = (id: string, durationMs: number) => ({ id, name: `${id}.wav`, type: "audio/wav", url: `https://example.com/${id}.wav`, durationMs });
+        const video = (id: string, durationMs: number) => ({ id, name: `${id}.mp4`, type: "video/mp4", url: `https://example.com/${id}.mp4`, durationMs });
+        const images = Array.from({ length: 30 }, (_, id) => ({ id: String(id), name: "a.png", type: "image/png", dataUrl: "data:image/png;base64,AA==" }));
+
+        expect(seedanceAudioReferenceError([audio("a", 16000)], model)).toBe("");
+        expect(seedanceAudioReferenceError([audio("a", 16000), audio("b", 15000)], model)).toContain("总时长不能超过 30 秒");
+        expect(seedanceVideoReferenceError([video("a", 16000)], model)).toBe("");
+        expect(seedanceVideoReferenceError([video("a", 16000), video("b", 15000)], model)).toContain("总时长不能超过 30 秒");
+        expect(seedanceReferenceCountError(images, [], [], model)).toBe("");
+        expect(seedanceReferenceCountError([...images, images[0]], [], [], model)).toContain("最多支持 30 张");
     });
 });
 

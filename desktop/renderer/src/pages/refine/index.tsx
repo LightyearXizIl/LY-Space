@@ -15,7 +15,6 @@ import { uploadImage } from "@/services/image-storage";
 import { requestEdit } from "@/services/api/image";
 import { selectableImageModelsByFeature, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { loadWorkbenchSession, saveWorkbenchSession } from "@/services/workbench-session";
-import { SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import type { ReferenceImage } from "@/types/image";
 import { RefinePreviewStage } from "@/pages/refine/components/preview-stage";
 import { RefineSettingsPanel } from "@/pages/refine/components/settings-panel";
@@ -253,10 +252,6 @@ export default function RefinePage() {
     const sendTo = async (target: "image" | "video") => {
         setBusy(true);
         try {
-            if (target === "video") {
-                const session = await loadWorkbenchSession<{ references?: ReferenceImage[] }>("video-workbench:current-session");
-                if ((session?.references || []).length >= SEEDANCE_REFERENCE_LIMITS.images) throw new Error("视频创作台最多保留 9 张参考图");
-            }
             const { blob, dimensions: output } = await buildOutput();
             const stored = await uploadImage(blob);
             await enqueueReferenceHandoff({ target, storageKey: stored.storageKey, name: `refined-${output.width}x${output.height}.${refineExtension(format)}`, type: refineMimeType(format), width: output.width, height: output.height });

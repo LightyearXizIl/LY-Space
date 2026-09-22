@@ -6,7 +6,7 @@ import { saveGeneratedBlob } from "@/services/desktop-storage";
 import { hostReferenceAudio, hostReferenceImage, hostReferenceVideo } from "@/services/image-hosting";
 import { imageToDataUrl, imageToFile } from "@/services/image-storage";
 import { isAgnesVideo25Family, isAgnesVideo25FlashModel, normalizeAgnesVideo25AspectRatio, normalizeAgnesVideo25Resolution, normalizeAgnesVideo25Seconds } from "@/lib/agnes-video";
-import { boolConfig, buildSeedancePromptText, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceAudioReferenceError, seedanceReferenceCountError, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
+import { boolConfig, buildSeedancePromptText, isSeedance25Model, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceAudioReferenceError, seedanceReferenceCountError, seedanceReferenceLimits, seedanceVideoReferenceError } from "@/lib/seedance-video";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
 import { logAppEvent } from "@/services/app-logger";
 import { arkRequestJson, arkRequestText, buildArkSeedanceTaskRequest } from "./ark";
@@ -405,17 +405,18 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
 }
 
 async function createSeedanceTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
-    if (audioReferences.length && !references.length && !videoReferences.length) {
+    const modelName = modelOptionName(model);
+    if (!isSeedance25Model(modelName) && audioReferences.length && !references.length && !videoReferences.length) {
         throw new Error("Seedance 参考音频不能单独使用，请同时添加参考图或参考视频");
     }
-    assertSeedanceReferences(references, videoReferences, audioReferences);
+    assertSeedanceReferences(references, videoReferences, audioReferences, modelName);
     const resolution = normalizeSeedanceResolution(config.vquality);
-    if (isSeedanceFastModel(modelOptionName(model)) && resolution === "1080p") {
+    if (isSeedanceFastModel(modelName) && resolution === "1080p") {
         throw new Error("Seedance 2.0 Fast 不支持 1080p；请保留当前选择并改用 480p 或 720p 后再提交");
     }
-    const content = await buildSeedanceContent(config, prompt, references, videoReferences, audioReferences);
+    const content = await buildSeedanceContent(config, prompt, references, videoReferences, audioReferences, modelName);
     if (!content.length) throw new Error("请输入视频提示词，或连接参考图片/视频/音频");
-    const payload = buildArkSeedanceTaskRequest({ ...config, model: modelOptionName(model) }, content, normalizeSeedanceRatio(config.size), resolution, normalizeSeedanceDuration(config.videoSeconds));
+    const payload = buildArkSeedanceTaskRequest({ ...config, model: modelName }, content, normalizeSeedanceRatio(config.size), resolution, normalizeSeedanceDuration(config.videoSeconds, modelName));
 
     try {
         const created = unwrapSeedanceTask(await arkRequestJson<ApiEnvelope<SeedanceTask>>(config, "/contents/generations/tasks", { method: "POST", body: payload }, options));
@@ -439,35 +440,21 @@ async function pollSeedanceTask(config: AiConfig, task: VideoGenerationTask, opt
     }
 }
 
-function assertSeedanceReferences(references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[]) {
-    const countError = seedanceReferenceCountError(references, videoReferences, audioReferences);
+function assertSeedanceReferences(references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], model: string) {
+    const countError = seedanceReferenceCountError(references, videoReferences, audioReferences, model);
     if (countError) throw new Error(countError);
-    assertSeedanceVideoReferences(videoReferences);
-    assertSeedanceAudioReferences(audioReferences);
+    assertSeedanceVideoReferences(videoReferences, model);
+    assertSeedanceAudioReferences(audioReferences, model);
 }
 
-function assertSeedanceVideoReferences(videoReferences: ReferenceVideo[]) {
-    const error = seedanceVideoReferenceError(videoReferences);
+function assertSeedanceVideoReferences(videoReferences: ReferenceVideo[], model: string) {
+    const error = seedanceVideoReferenceError(videoReferences, model);
     if (error) throw new Error(error);
-    let total = 0;
-    for (const video of videoReferences) {
-        if (!video.durationMs) continue;
-        if (video.durationMs < 2000 || video.durationMs > 15000) throw new Error("Seedance 参考视频单个时长需要在 2-15 秒之间");
-        total += video.durationMs;
-    }
-    if (total > 15000) throw new Error("Seedance 参考视频总时长不能超过 15 秒");
 }
 
-function assertSeedanceAudioReferences(audioReferences: ReferenceAudio[]) {
-    const formatError = seedanceAudioReferenceError(audioReferences);
+function assertSeedanceAudioReferences(audioReferences: ReferenceAudio[], model: string) {
+    const formatError = seedanceAudioReferenceError(audioReferences, model);
     if (formatError) throw new Error(formatError);
-    let total = 0;
-    for (const audio of audioReferences) {
-        if (!audio.durationMs) continue;
-        if (audio.durationMs < 2000 || audio.durationMs > 15000) throw new Error("Seedance 参考音频单个时长需要在 2-15 秒之间");
-        total += audio.durationMs;
-    }
-    if (total > 15000) throw new Error("Seedance 参考音频总时长不能超过 15 秒");
 }
 
 export async function cancelSeedanceTask(config: AiConfig, task: Pick<VideoGenerationTask, "id" | "model">) {
@@ -480,17 +467,18 @@ export async function cancelSeedanceTask(config: AiConfig, task: Pick<VideoGener
     }
 }
 
-async function buildSeedanceContent(config: AiConfig, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[]) {
+async function buildSeedanceContent(config: AiConfig, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], model: string) {
+    const limits = seedanceReferenceLimits(model);
     const content: Array<Record<string, unknown>> = [];
     const text = buildSeedancePromptText(prompt, references, videoReferences, audioReferences);
     if (text) content.push({ type: "text", text });
-    for (const image of references.slice(0, SEEDANCE_REFERENCE_LIMITS.images)) {
+    for (const image of references.slice(0, limits.images)) {
         content.push({ type: "image_url", image_url: { url: await resolveSeedanceImageUrl(config, image) }, role: "reference_image" });
     }
-    for (const video of videoReferences.slice(0, SEEDANCE_REFERENCE_LIMITS.videos)) {
+    for (const video of videoReferences.slice(0, limits.videos)) {
         content.push({ type: "video_url", video_url: { url: await resolveSeedanceVideoUrl(video) }, role: "reference_video" });
     }
-    for (const audio of audioReferences.slice(0, SEEDANCE_REFERENCE_LIMITS.audios)) {
+    for (const audio of audioReferences.slice(0, limits.audios)) {
         content.push({ type: "audio_url", audio_url: { url: await resolveSeedanceAudioUrl(audio) }, role: "reference_audio" });
     }
     return content;

@@ -15,7 +15,7 @@ import { isAgnesVideo25Family, isAgnesVideo25FlashModel, normalizeAgnesVideo25As
 import { canvasThemes } from "@/lib/canvas-theme";
 import { buildCameraPrompt, formatCameraSelection, normalizeCameraSelection, type CameraSelection } from "@/lib/camera";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS, SEEDANCE_VIDEO_MIME_TYPES } from "@/lib/seedance-video";
+import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, seedanceAudioReferenceError, seedanceReferenceCountError, seedanceReferenceLabel, seedanceReferenceLimits, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_VIDEO_MIME_TYPES } from "@/lib/seedance-video";
 import { resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { imageToDataUrl, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
@@ -137,8 +137,10 @@ export default function VideoPage() {
     const requestConfig = resolveModelRequestConfig({ ...effectiveConfig, model }, model);
     const isAgnesVideo25 = requestConfig.apiFormat === "agnes" && isAgnesVideo25Family(model);
     const isAgnesVideo25Flash = isAgnesVideo25 && isAgnesVideo25FlashModel(model);
-    const imageReferenceLimit = isAgnesVideo25Flash ? 5 : SEEDANCE_REFERENCE_LIMITS.images;
-    const videoReferenceLimit = isAgnesVideo25Flash ? 0 : SEEDANCE_REFERENCE_LIMITS.videos;
+    const seedanceLimits = seedanceReferenceLimits(model);
+    const imageReferenceLimit = isAgnesVideo25Flash ? 5 : seedanceLimits.images;
+    const videoReferenceLimit = isAgnesVideo25Flash ? 0 : seedanceLimits.videos;
+    const audioReferenceLimit = seedanceLimits.audios;
     const canGenerate = Boolean(prompt.trim());
 
     useEffect(() => {
@@ -184,8 +186,8 @@ export default function VideoPage() {
         if (!handoffs.length) return;
         let nextReferences = referencesRef.current;
         for (const handoff of handoffs) {
-            if (nextReferences.length >= SEEDANCE_REFERENCE_LIMITS.images) {
-                message.warning("视频创作台最多保留 9 张参考图");
+            if (nextReferences.length >= imageReferenceLimit) {
+                message.warning(`当前视频模型最多保留 ${imageReferenceLimit} 张参考图`);
                 break;
             }
             if (handoff.url) {
@@ -226,8 +228,8 @@ export default function VideoPage() {
         if (!isAgnesVideo25Flash && requestedVideos.length > videoSlots) message.warning(`参考视频最多 ${videoReferenceLimit} 个；未添加超出数量的视频。`);
         const videoFiles = requestedVideos.slice(0, videoSlots);
         const requestedAudios = selectedFiles.filter((file) => isSupportedAudioFile(file));
-        const audioSlots = Math.max(0, SEEDANCE_REFERENCE_LIMITS.audios - audioReferences.length);
-        if (requestedAudios.length > audioSlots) message.warning(`参考音频最多 ${SEEDANCE_REFERENCE_LIMITS.audios} 个；未添加超出数量的音频。`);
+        const audioSlots = Math.max(0, audioReferenceLimit - audioReferences.length);
+        if (requestedAudios.length > audioSlots) message.warning(`参考音频最多 ${audioReferenceLimit} 个；未添加超出数量的音频。`);
         const audioFiles = requestedAudios.slice(0, audioSlots);
         const nextReferences = await Promise.all(
             imageFiles.map(async (file) => {
@@ -247,10 +249,10 @@ export default function VideoPage() {
                 return { id: nanoid(), name: file.name, type: audio.mimeType, url: audio.url, storageKey: audio.storageKey, durationMs: audio.durationMs };
             }),
         );
-        const nextAudioReferences = isSeedanceVideoConfig({ ...effectiveConfig, model }) ? filterAudioReferencesByDuration(audioReferences, uploadedAudioReferences, message.warning) : uploadedAudioReferences;
+        const nextAudioReferences = isSeedanceVideoConfig({ ...effectiveConfig, model }) ? filterAudioReferencesByDuration(audioReferences, uploadedAudioReferences, model, message.warning) : uploadedAudioReferences;
         setReferences((value) => [...value, ...nextReferences].slice(0, imageReferenceLimit));
         setVideoReferences((value) => [...value, ...nextVideoReferences].slice(0, videoReferenceLimit));
-        setAudioReferences((value) => [...value, ...nextAudioReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.audios));
+        setAudioReferences((value) => [...value, ...nextAudioReferences].slice(0, audioReferenceLimit));
     };
 
     const handleReferenceDragEnter = (event: DragEvent<HTMLDivElement>, target: "video" | "audio") => {
@@ -343,9 +345,19 @@ export default function VideoPage() {
             return null;
         }
         if (isSeedanceVideoConfig({ ...effectiveConfig, model })) {
-            const videoReferenceError = seedanceVideoReferenceError(videoReferences);
+            const countError = seedanceReferenceCountError(references, videoReferences, audioReferences, model);
+            if (countError) {
+                message.error(countError);
+                return null;
+            }
+            const videoReferenceError = seedanceVideoReferenceError(videoReferences, model);
             if (videoReferenceError) {
                 message.error(`${videoReferenceError}。${seedanceVideoReferenceHint}`);
+                return null;
+            }
+            const audioReferenceError = seedanceAudioReferenceError(audioReferences, model);
+            if (audioReferenceError) {
+                message.error(audioReferenceError);
                 return null;
             }
         }
@@ -383,9 +395,9 @@ export default function VideoPage() {
             setPrompt(payload.content);
         } else if (payload.kind === "image") {
             const stored = await uploadImage(payload.dataUrl);
-            setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }].slice(0, SEEDANCE_REFERENCE_LIMITS.images));
+            setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }].slice(0, imageReferenceLimit));
         } else if (payload.kind === "video") {
-            setVideoReferences((value) => [...value, { id: nanoid(), name: payload.title, type: "video/mp4", url: payload.url, storageKey: payload.storageKey, width: payload.width, height: payload.height }].slice(0, SEEDANCE_REFERENCE_LIMITS.videos));
+            setVideoReferences((value) => [...value, { id: nanoid(), name: payload.title, type: "video/mp4", url: payload.url, storageKey: payload.storageKey, width: payload.width, height: payload.height }].slice(0, videoReferenceLimit));
         } else if (payload.kind === "audio") {
             message.info("音频资产请在画布中使用");
         }
@@ -638,13 +650,13 @@ export default function VideoPage() {
                                             </button>
                                         </div>
                                     ))}
-                                    {!audioReferences.length ? <div className="flex min-w-full items-center justify-center text-center text-sm text-stone-500">{referenceDragTarget === "audio" ? "松开即可上传参考资产" : "暂无参考音频，可拖入文件，最多 3 个，mp3/wav"}</div> : null}
+                                    {!audioReferences.length ? <div className="flex min-w-full items-center justify-center text-center text-sm text-stone-500">{referenceDragTarget === "audio" ? "松开即可上传参考资产" : `暂无参考音频，可拖入文件，最多 ${audioReferenceLimit} 个，mp3/wav`}</div> : null}
                                 </div>
                             </div>
 
                             <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
                                 <span className="truncate text-stone-500 dark:text-stone-400">
-                                    {modelOptionLabel(effectiveConfig, model)} · {normalizeResolution(effectiveConfig.vquality)}p · {videoSizeLabel(effectiveConfig.size)} · {normalizeVideoSeconds(effectiveConfig.videoSeconds)}s
+                                    {modelOptionLabel(effectiveConfig, model)} · {normalizeResolution(effectiveConfig.vquality)}p · {videoSizeLabel(effectiveConfig.size, model)} · {isSeedanceVideoConfig({ ...effectiveConfig, model }) ? normalizeSeedanceDuration(effectiveConfig.videoSeconds, model) : normalizeVideoSeconds(effectiveConfig.videoSeconds, isAgnesVideo25)}s
                                 </span>
                                 <Button size="small" type="text" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
                                     调整
@@ -928,23 +940,25 @@ function isSupportedAudioFile(file: File) {
     return file.type === "audio/mpeg" || file.type === "audio/mp3" || file.type === "audio/wav" || file.type === "audio/x-wav" || /\.(mp3|wav)$/i.test(file.name);
 }
 
-function filterAudioReferencesByDuration(existing: ReferenceAudio[], next: ReferenceAudio[], warn: (content: string) => void) {
+function filterAudioReferencesByDuration(existing: ReferenceAudio[], next: ReferenceAudio[], model: string, warn: (content: string) => void) {
     let total = existing.reduce((sum, item) => sum + (item.durationMs || 0), 0);
+    const maxDurationMs = seedanceReferenceLimits(model).audioDurationMs;
+    const seedance25 = maxDurationMs === 30000;
     const accepted: ReferenceAudio[] = [];
     let skipped = false;
     for (const item of next) {
-        if (item.durationMs && (item.durationMs < 2000 || item.durationMs > 15000)) {
+        if (!seedance25 && item.durationMs && (item.durationMs < 2000 || item.durationMs > maxDurationMs)) {
             skipped = true;
             continue;
         }
-        if (item.durationMs && total + item.durationMs > 15000) {
+        if (item.durationMs && total + item.durationMs > maxDurationMs) {
             skipped = true;
             continue;
         }
         total += item.durationMs || 0;
         accepted.push(item);
     }
-    if (skipped) warn("已忽略不符合时长要求的参考音频：单个 2-15 秒，总时长不超过 15 秒");
+    if (skipped) warn(seedance25 ? "已忽略超出 Seedance 2.5 总时长上限的参考音频：所有音频合计不超过 30 秒" : "已忽略不符合时长要求的参考音频：单个 2-15 秒，总时长不超过 15 秒");
     return accepted;
 }
 
@@ -1021,7 +1035,7 @@ function buildVideoConfig(config: AiConfig, model: string): AiConfig {
         model,
         videoModel: model,
         size: seedance ? normalizeSeedanceRatio(config.size) : agnes25 ? normalizeAgnesVideo25AspectRatio(config.size) : normalizeVideoSize(config.size),
-        videoSeconds: agnes25 ? normalizeAgnesVideo25Seconds(config.videoSeconds) : normalizeVideoSeconds(config.videoSeconds, agnes),
+        videoSeconds: seedance ? String(normalizeSeedanceDuration(config.videoSeconds, model)) : agnes25 ? normalizeAgnesVideo25Seconds(config.videoSeconds) : normalizeVideoSeconds(config.videoSeconds, agnes),
         vquality: agnes25 ? normalizeAgnesVideo25Resolution(config.vquality, flash) : normalizeResolution(config.vquality),
         videoGenerateAudio: String(boolConfig(config.videoGenerateAudio, true)),
         videoWatermark: String(boolConfig(config.videoWatermark, false)),

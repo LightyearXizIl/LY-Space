@@ -3,7 +3,7 @@ import { Switch } from "antd";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { AGNES_VIDEO_25_ASPECT_RATIOS, AGNES_VIDEO_25_RESOLUTIONS, isAgnesVideo25Family, isAgnesVideo25FlashModel, normalizeAgnesVideo25AspectRatio, normalizeAgnesVideo25Resolution, normalizeAgnesVideo25Seconds } from "@/lib/agnes-video";
-import { boolConfig, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
+import { boolConfig, isSeedance25Model, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedance25DurationOptions, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
@@ -204,12 +204,15 @@ function AgnesVideo25SettingsPanel({ config, model, onConfigChange, theme, showT
 }
 
 function SeedanceVideoSettingsPanel({ config, model, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps & { model: string }) {
+    const seedance25 = isSeedance25Model(model);
     const resolution = normalizeSeedanceResolution(config.vquality);
     const ratio = normalizeSeedanceRatio(config.size);
-    const duration = normalizeSeedanceDuration(config.videoSeconds);
+    const duration = normalizeSeedanceDuration(config.videoSeconds, model);
     const generateAudio = boolConfig(config.videoGenerateAudio, true);
     const watermark = boolConfig(config.videoWatermark, false);
     const fast = isSeedanceFastModel(model);
+    const ratioOptions = seedance25 ? [...seedanceRatioOptions.filter((item) => item.value === "adaptive"), ...seedanceRatioOptions.filter((item) => item.value !== "adaptive")] : seedanceRatioOptions;
+    const durationOptions = seedance25 ? seedance25DurationOptions : seedanceDurationOptions;
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -227,7 +230,7 @@ function SeedanceVideoSettingsPanel({ config, model, onConfigChange, theme, show
                 </SettingGroup>
                 <SettingGroup title="比例" color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
-                        {seedanceRatioOptions.map((item) => (
+                        {ratioOptions.map((item) => (
                             <button
                                 key={item.value}
                                 type="button"
@@ -237,21 +240,22 @@ function SeedanceVideoSettingsPanel({ config, model, onConfigChange, theme, show
                                 onClick={() => onConfigChange("size", item.value)}
                             >
                                 <SizePreview width={ratioPreview(item.value).width} height={ratioPreview(item.value).height} color={theme.node.text} />
-                                <span>{item.label}</span>
-                                <span className="text-[10px] leading-none opacity-55">{item.value === "adaptive" ? "adaptive" : seedancePixelLabel(resolution, item.value)}</span>
+                                <span>{seedance25 && item.value === "adaptive" ? "跟随素材" : item.label}</span>
+                                <span className="text-[10px] leading-none opacity-55">{item.value === "adaptive" ? (seedance25 ? "0.4–2.5" : "adaptive") : seedancePixelLabel(resolution, item.value)}</span>
                             </button>
                         ))}
                     </div>
+                    {seedance25 ? <div className="text-xs" style={{ color: theme.node.muted }}>选择“跟随素材”可按参考素材输出 0.4–2.5 的自由宽高比；编辑、首尾帧和延长任务需使用该选项。</div> : null}
                 </SettingGroup>
                 <SettingGroup title="时长" color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-2.5">
-                        {seedanceDurationOptions.map((value) => (
+                        {durationOptions.map((value) => (
                             <OptionPill key={value} selected={duration === value} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
                                 {value === -1 ? "智能" : `${value}s`}
                             </OptionPill>
                         ))}
                     </div>
-                    <NumberInput value={String(duration)} min={-1} max={15} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
+                    <NumberInput value={String(duration)} min={-1} max={seedance25 ? 30 : 15} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
                 </SettingGroup>
                 <SettingGroup title="输出" color={theme.node.muted}>
                     <div className="grid gap-2 rounded-xl border p-2.5" style={{ borderColor: theme.node.stroke }}>
@@ -275,7 +279,7 @@ export function videoResolutionLabel(value: string, model = "") {
 export function videoSizeLabel(value: string, model = "") {
     if (isAgnesVideo25Family(model)) return normalizeAgnesVideo25AspectRatio(value);
     const ratio = normalizeSeedanceRatio(value);
-    if (value === "adaptive" || value === "auto") return "自适应";
+    if (value === "adaptive" || value === "auto") return isSeedance25Model(model) ? "跟随素材" : "自适应";
     if (ratio === value) return seedanceRatioOptions.find((item) => item.value === ratio)?.label || ratio;
     const size = normalizeVideoSizeValue(value);
     return sizeOptions.find((item) => item.value === size)?.label || size;

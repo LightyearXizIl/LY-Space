@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；本次发布版本为 `v0.8.1`）。
-- **本次发布状态**：`v0.8.1` 已对火山方舟 Seedance 2.5 增加独立的时长、参考素材与自由宽高比规则，不再错用 Seedance 2.0 的 15 秒上限。GitHub Actions `Publish LY Space Desktop` 运行 `35693116993` 已成功，完成构建、草稿资产下载核验和正式发布；真实方舟收费调用与应用内回归仍需人工验收。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；本次发布版本为 `v0.8.2`）。
+- **本次发布状态**：`v0.8.2` 包含大画布拖拽与框选优化，以及生图、视频参考图固定尺寸修复；GitHub Actions 构建和发布状态以远端实际结果为准，真实桌面交互仍需人工验收。
 - **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；通用 AI 接口仍可由渲染进程直连，方舟请求在桌面端通过受限主进程 HTTPS 代理；文档站是独立 Next.js 项目（`docs/`，bun）
@@ -27,7 +27,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：源码与最新已核验 Release 均为 v0.8.1。
+- **当前版本**：源码为 v0.8.2；最新已核验 Release 在本次发布前为 v0.8.1。
 
 ## 2. 数据存储
 
@@ -44,6 +44,12 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **历史教训**：NSIS `CopyFiles "$INSTDIR\目录\*.*"` 不会递归复制子目录，旧 `customRemoveFiles` 随后执行 `RMDir /r` 会丢失嵌套数据。不得再把用户数据放回安装目录，也不得用通配符复制冒充递归备份。
 
 ## 3. 关键链路与已修复的坑
+
+### v0.8.2：大画布拖拽与参考图缩略图
+
+- **大画布**：拖拽期间保留正在移动的节点可见，并避免因位置变化重复计算全图的生成输入与引用；批量子节点的查找改用节点索引。含大量节点、连线和批量图片的真实画布仍需在问题电脑上人工验收。
+- **参考图**：生图与视频工作台共用的参考图预览固定为 80×80，横图和竖图按原比例完整显示；上传中预览使用相同尺寸。选择、粘贴、拖入、预览、排序和删除等交互仍需在桌面端复核。
+- **发布边界**：本地按项目规则不执行构建或测试；CI 构建、远端资产校验和正式 Release 状态需以本次工作流结果为准。
 
 ### v0.8.1：Seedance 2.5 模型分流适配
 

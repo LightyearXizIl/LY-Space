@@ -300,8 +300,8 @@ export function ReferenceImageUploader({ references, setReferences, limit, onOpe
                     <Image.PreviewGroup>
                         <div className="flex flex-wrap gap-2 text-left">
                             {references.map((item, index) => (
-                                <div key={item.id} className="group relative w-20 overflow-hidden rounded-md border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900">
-                                    <Image src={item.dataUrl} alt={item.name} className="size-20 object-cover" />
+                                <div key={item.id} className="group relative w-20 shrink-0 overflow-hidden rounded-md border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900">
+                                    <Image src={item.dataUrl} alt={item.name} width={80} height={80} styles={{ image: { width: 80, height: 80, objectFit: "contain" } }} />
                                     <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{String(index + 1).padStart(2, "0")} <Check className="inline size-3" aria-label="已添加" /></span>
                                     <div className="absolute inset-x-1 bottom-1 flex justify-between gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                                         <Tooltip title="前移"><button type="button" aria-label="前移参考图" disabled={index === 0} className="flex size-6 items-center justify-center rounded bg-black/60 text-white disabled:opacity-40" onClick={(event) => { event.stopPropagation(); setReferences((current) => moveItem(current, index, -1)); }}><ChevronLeft className="size-3.5" /></button></Tooltip>
@@ -313,8 +313,8 @@ export function ReferenceImageUploader({ references, setReferences, limit, onOpe
                                 </div>
                             ))}
                             {uploads.map((item) => (
-                                <div key={item.id} className="relative w-20 overflow-hidden rounded-md border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900">
-                                    <img src={item.localPreviewUrl} alt={item.fileName} className="size-20 object-cover" />
+                                <div key={item.id} className="relative w-20 shrink-0 overflow-hidden rounded-md border border-stone-200 bg-stone-50 dark:border-stone-800 dark:bg-stone-900">
+                                    <img src={item.localPreviewUrl} alt={item.fileName} className="size-20 object-contain" />
                                     <div className="absolute inset-0 flex items-center justify-center bg-black/45 text-center text-xs text-white">
                                         {item.status === "error" ? <span className="px-1">添加失败</span> : <LoaderCircle className="size-5 animate-spin" aria-label="添加中" />}
                                     </div>

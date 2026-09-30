@@ -88,10 +88,10 @@ export function normalizeConnection(firstNodeId: string, secondNodeId: string, n
     return firstHandleType === "source" ? { fromNodeId: first.id, toNodeId: second.id, fromSide: firstSide, toSide: secondSide } : { fromNodeId: second.id, toNodeId: first.id, fromSide: secondSide, toSide: firstSide };
 }
 
-export function isHiddenBatchChild(node: CanvasNodeData, nodes: CanvasNodeData[], collapsingBatchIds?: Set<string>) {
+export function isHiddenBatchChild(node: CanvasNodeData, nodes: CanvasNodeData[], collapsingBatchIds?: Set<string>, nodeById?: ReadonlyMap<string, CanvasNodeData>) {
     const rootId = node.metadata?.batchRootId;
     if (!rootId) return false;
-    const root = nodes.find((item) => item.id === rootId);
+    const root = nodeById ? nodeById.get(rootId) : nodes.find((item) => item.id === rootId);
     if (root && collapsingBatchIds?.has(rootId)) return false;
     return Boolean(root && !root.metadata?.imageBatchExpanded);
 }

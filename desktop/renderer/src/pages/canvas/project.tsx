@@ -296,6 +296,7 @@ function InfiniteCanvasPage() {
     const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
 
     const nodesRef = useRef(nodes);
+    const nodeByIdRef = useRef<Map<string, CanvasNodeData>>(new Map());
     const connectionsRef = useRef(connections);
     const selectedNodeIdsRef = useRef(selectedNodeIds);
     const viewportRef = useRef(viewport);
@@ -670,7 +671,7 @@ function InfiniteCanvasPage() {
             }
 
             [...nodesRef.current]
-                .filter((node) => !isHiddenBatchChild(node, nodesRef.current))
+                .filter((node) => !isHiddenBatchChild(node, nodesRef.current, undefined, nodeByIdRef.current))
                 .reverse()
                 .forEach((node) => {
                     const side = nearestConnectionSide(node, world.x);
@@ -700,6 +701,11 @@ function InfiniteCanvasPage() {
         [screenToCanvas],
     );
 
+    const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+    useLayoutEffect(() => {
+        nodeByIdRef.current = nodeById;
+    }, [nodeById]);
+
     const visibleNodes = useMemo(() => {
         const padding = 280;
         const rect = containerRef.current?.getBoundingClientRect();
@@ -709,11 +715,11 @@ function InfiniteCanvasPage() {
         const viewTop = -viewport.y / viewport.k - padding;
         const viewRight = viewLeft + width / viewport.k + padding * 2;
         const viewBottom = viewTop + height / viewport.k + padding * 2;
+        const draggingIds = isNodeDragging ? new Set(dragRef.current.initialSelectedNodes.map((item) => item.id)) : null;
 
-        return nodes.filter((node) => !isHiddenBatchChild(node, nodes, collapsingBatchIds) && node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom);
-    }, [collapsingBatchIds, nodes, size.height, size.width, viewport.k, viewport.x, viewport.y]);
+        return nodes.filter((node) => !isHiddenBatchChild(node, nodes, collapsingBatchIds, nodeById) && (draggingIds?.has(node.id) || (node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom)));
+    }, [collapsingBatchIds, isNodeDragging, nodeById, nodes, size.height, size.width, viewport.k, viewport.x, viewport.y]);
 
-    const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
     // 工具条仅由「右键节点」触发（toolbarNodeId）；选中/新建/框选/键盘选中不再自动显示。
     const toolbarNode = toolbarNodeId ? nodeById.get(toolbarNodeId) || null : null;
     const infoNode = infoNodeId ? nodeById.get(infoNodeId) || null : null;
@@ -741,6 +747,7 @@ function InfiniteCanvasPage() {
         });
         return map;
     }, [nodes]);
+    const previousBatchMotionRef = useRef(new Map<string, { x: number; y: number; index: number }>());
     const batchMotionById = useMemo(() => {
         const map = new Map<string, { x: number; y: number; index: number }>();
         nodes.forEach((node) => {
@@ -750,10 +757,17 @@ function InfiniteCanvasPage() {
             const index = root?.metadata?.batchChildIds?.indexOf(node.id) ?? 0;
             const stackX = root ? root.position.x + 34 + index * 14 : node.position.x;
             const stackY = root ? root.position.y + 14 + index * 8 : node.position.y;
-            map.set(node.id, { x: stackX - node.position.x, y: stackY - node.position.y, index: Math.max(index, 0) });
+            const x = stackX - node.position.x;
+            const y = stackY - node.position.y;
+            const boundedIndex = Math.max(index, 0);
+            const previous = previousBatchMotionRef.current.get(node.id);
+            map.set(node.id, previous && previous.x === x && previous.y === y && previous.index === boundedIndex ? previous : { x, y, index: boundedIndex });
         });
         return map;
     }, [nodeById, nodes]);
+    useLayoutEffect(() => {
+        previousBatchMotionRef.current = batchMotionById;
+    }, [batchMotionById]);
     const relatedHighlight = useMemo(() => {
         const nodeIds = new Set<string>();
         const connectionIds = new Set<string>();
@@ -771,19 +785,34 @@ function InfiniteCanvasPage() {
         return { nodeIds, connectionIds };
     }, [activeNodeId, connections]);
 
+    // 拖动只改变 position，不应重算所有节点的资源引用与生成输入。
+    const graphNodesRef = useRef(nodes);
+    const graphNodes = useMemo(() => {
+        const previous = graphNodesRef.current;
+        if (previous === nodes) return previous;
+        if (nodeDraggingRef.current && previous.length === nodes.length && nodes.every((node, index) => {
+            const old = previous[index];
+            return node === old || (node.id === old.id && node.type === old.type && node.title === old.title && node.width === old.width && node.height === old.height && node.metadata === old.metadata);
+        })) return previous;
+        return nodes;
+    }, [isNodeDragging, nodes]);
+    useLayoutEffect(() => {
+        graphNodesRef.current = graphNodes;
+    }, [graphNodes]);
+
     const configInputsById = useMemo(() => {
         const map = new Map<string, NodeGenerationInput[]>();
-        nodes.forEach((node) => {
+        graphNodes.forEach((node) => {
             if (node.type !== CanvasNodeType.Config) return;
-            map.set(node.id, buildNodeGenerationInputs(node.id, nodes, connections));
+            map.set(node.id, buildNodeGenerationInputs(node.id, graphNodes, connections));
         });
         return map;
-    }, [connections, nodes]);
+    }, [connections, graphNodes]);
     const mentionReferencesByNodeId = useMemo(() => {
         const map = new Map<string, ReturnType<typeof buildNodeMentionReferences>>();
-        nodes.forEach((node) => map.set(node.id, buildNodeMentionReferences(node, nodes, connections)));
+        graphNodes.forEach((node) => map.set(node.id, buildNodeMentionReferences(node, graphNodes, connections)));
         return map;
-    }, [connections, nodes]);
+    }, [connections, graphNodes]);
     const applyPluginOps = useCallback((ops?: CanvasOp[]) => {
         const safeOps = Array.isArray(ops) ? ops.filter((op) => op?.type) : [];
         const generationOps = safeOps.filter((op): op is Extract<CanvasOp, { type: "run_generation" }> => op.type === "run_generation" && Boolean(op.nodeId));
@@ -1372,6 +1401,7 @@ function InfiniteCanvasPage() {
         const dx = clientX == null ? 0 : (clientX - dragRef.current.startX) / currentViewport.k;
         const dy = clientY == null ? 0 : (clientY - dragRef.current.startY) / currentViewport.k;
         const initialPositions = dragRef.current.initialSelectedNodes;
+        const initialById = new Map(initialPositions.map((item) => [item.id, item]));
 
         historyPausedRef.current = false;
         nodeDraggingRef.current = false;
@@ -1381,7 +1411,7 @@ function InfiniteCanvasPage() {
             const movedIds = new Set(initialPositions.map((item) => item.id));
             setNodes((prev) => {
                 const moved = prev.map((node) => {
-                    const initial = initialPositions.find((item) => item.id === node.id);
+                    const initial = initialById.get(node.id);
                     return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
                 });
                 const targetGroup = findGroupDropTarget(movedIds, moved);
@@ -1452,13 +1482,14 @@ function InfiniteCanvasPage() {
                 const dx = (event.clientX - dragRef.current.startX) / currentViewport.k;
                 const dy = (event.clientY - dragRef.current.startY) / currentViewport.k;
                 const initialPositions = dragRef.current.initialSelectedNodes;
+                const initialById = new Map(initialPositions.map((item) => [item.id, item]));
                 if (Math.abs(event.clientX - dragRef.current.startX) > 3 || Math.abs(event.clientY - dragRef.current.startY) > 3) {
                     dragRef.current.hasMoved = true;
                 }
 
                 const movedIds = new Set(initialPositions.map((item) => item.id));
                 const previewNodes = nodesRef.current.map((node) => {
-                    const initial = initialPositions.find((item) => item.id === node.id);
+                    const initial = initialById.get(node.id);
                     return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
                 });
                 setDropTargetGroupId(findGroupDropTarget(movedIds, previewNodes)?.id || null);
@@ -1467,7 +1498,7 @@ function InfiniteCanvasPage() {
                 rafRef.current = requestAnimationFrame(() => {
                     setNodes((prev) =>
                         prev.map((node) => {
-                            const initial = initialPositions.find((item) => item.id === node.id);
+                            const initial = initialById.get(node.id);
                             return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
                         }),
                     );
@@ -1514,7 +1545,7 @@ function InfiniteCanvasPage() {
                 const nextSelected = new Set<string>(currentSelection.additive ? currentSelection.initialSelectedNodeIds : []);
 
                 nodesRef.current
-                    .filter((node) => !isHiddenBatchChild(node, nodesRef.current))
+                    .filter((node) => !isHiddenBatchChild(node, nodesRef.current, undefined, nodeByIdRef.current))
                     .forEach((node) => {
                         const intersects = rectX < node.position.x + node.width && rectX + rectW > node.position.x && rectY < node.position.y + node.height && rectY + rectH > node.position.y;
 
@@ -3253,7 +3284,7 @@ function InfiniteCanvasPage() {
 
     return (
         <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
-            <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} onSaveNodeAsset={(node) => void saveNodeAsset(node)} />
+            <CanvasSidePanel nodes={graphNodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} onSaveNodeAsset={saveNodeAsset} />
             <section className="relative min-w-0 flex-1 overflow-hidden">
                 <CanvasTopBar
                     title={currentProject?.title || "未命名画布"}

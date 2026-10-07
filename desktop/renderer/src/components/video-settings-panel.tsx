@@ -3,6 +3,7 @@ import { Switch } from "antd";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { AGNES_VIDEO_25_ASPECT_RATIOS, AGNES_VIDEO_25_RESOLUTIONS, isAgnesVideo25Family, isAgnesVideo25FlashModel, normalizeAgnesVideo25AspectRatio, normalizeAgnesVideo25Resolution, normalizeAgnesVideo25Seconds } from "@/lib/agnes-video";
+import { grsaiVideoAspectRatioOptions, grsaiVideoResolutionOptions, isGrsaiMinimaxH3Model, normalizeGrsaiVideoAspectRatio, normalizeGrsaiVideoDuration, normalizeGrsaiVideoResolution } from "@/lib/grsai-video";
 import { boolConfig, isSeedance25Model, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedance25DurationOptions, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
@@ -44,6 +45,10 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const videoModel = model || config.videoModel || config.model;
     if (isSeedanceVideoConfig({ ...config, model: videoModel })) {
         return <SeedanceVideoSettingsPanel config={config} model={videoModel} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+    }
+
+    if (resolveModelRequestConfig(config, videoModel).apiFormat === "grsai" && isGrsaiMinimaxH3Model(videoModel)) {
+        return <GrsaiMinimaxH3SettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
 
     // Agnes 渠道启用文档对齐的选项（18s 上限、1152x768 默认横屏、高级参数）；其他渠道保持现状
@@ -147,6 +152,52 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         </div>
                     </SettingGroup>
                 ) : null}
+            </div>
+        </ImageSettingsTheme>
+    );
+}
+
+function GrsaiMinimaxH3SettingsPanel({ config, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
+    const resolution = normalizeGrsaiVideoResolution(config.vquality);
+    const aspectRatio = normalizeGrsaiVideoAspectRatio(config.size);
+    const seconds = normalizeGrsaiVideoDuration(config.videoSeconds, resolution);
+    const maxSeconds = resolution === "1080p" ? 10 : 15;
+    return (
+        <ImageSettingsTheme theme={theme}>
+            <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
+                {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
+                <SettingGroup title="清晰度" color={theme.node.muted}>
+                    <div className="grid grid-cols-3 gap-2.5">
+                        {grsaiVideoResolutionOptions.map((item) => (
+                            <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
+                                {item.label}
+                            </OptionPill>
+                        ))}
+                    </div>
+                </SettingGroup>
+                <SettingGroup title="画幅" color={theme.node.muted}>
+                    <div className="grid grid-cols-2 gap-2.5">
+                        {grsaiVideoAspectRatioOptions.map((item) => (
+                            <OptionPill key={item.value} selected={aspectRatio === item.value} theme={theme} onClick={() => onConfigChange("size", item.value)}>
+                                {item.label}
+                            </OptionPill>
+                        ))}
+                    </div>
+                </SettingGroup>
+                <SettingGroup title="秒数" color={theme.node.muted}>
+                    <div className="grid grid-cols-4 gap-2.5">
+                        {[1, 5, 10, 15].filter((value) => value <= maxSeconds).map((value) => (
+                            <OptionPill key={value} selected={seconds === value} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
+                                {value}s
+                            </OptionPill>
+                        ))}
+                        <NumberInput value={String(seconds)} min={1} max={maxSeconds} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
+                    </div>
+                    {resolution === "1080p" ? <div className="text-xs" style={{ color: theme.node.muted }}>1080p 最长 10 秒；480p 和 768p 最长 15 秒。</div> : null}
+                </SettingGroup>
+                <SettingGroup title="随机种子" color={theme.node.muted}>
+                    <NumberInput value={config.videoSeed || ""} min={0} max={9999999999} theme={theme} onChange={(value) => onConfigChange("videoSeed", value)} />
+                </SettingGroup>
             </div>
         </ImageSettingsTheme>
     );
@@ -273,11 +324,13 @@ function SeedanceVideoSettingsPanel({ config, model, onConfigChange, theme, show
 
 export function videoResolutionLabel(value: string, model = "") {
     if (isAgnesVideo25Family(model)) return normalizeAgnesVideo25Resolution(value, isAgnesVideo25FlashModel(model));
+    if (isGrsaiMinimaxH3Model(model)) return normalizeGrsaiVideoResolution(value);
     return `${normalizeVideoResolutionValue(value)}p`;
 }
 
 export function videoSizeLabel(value: string, model = "") {
     if (isAgnesVideo25Family(model)) return normalizeAgnesVideo25AspectRatio(value);
+    if (isGrsaiMinimaxH3Model(model)) return normalizeGrsaiVideoAspectRatio(value) === "portrait" ? "竖屏" : "横屏";
     const ratio = normalizeSeedanceRatio(value);
     if (value === "adaptive" || value === "auto") return isSeedance25Model(model) ? "跟随素材" : "自适应";
     if (ratio === value) return seedanceRatioOptions.find((item) => item.value === ratio)?.label || ratio;

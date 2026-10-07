@@ -12,6 +12,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoSizeLabel } from "@/components/video-settings-panel";
 import { isAgnesVideo25Family, isAgnesVideo25FlashModel, normalizeAgnesVideo25AspectRatio, normalizeAgnesVideo25Resolution, normalizeAgnesVideo25Seconds } from "@/lib/agnes-video";
+import { grsaiVideoReferenceLimits, isGrsaiMinimaxH3Model, normalizeGrsaiVideoAspectRatio, normalizeGrsaiVideoDuration, normalizeGrsaiVideoResolution } from "@/lib/grsai-video";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { buildCameraPrompt, formatCameraSelection, normalizeCameraSelection, type CameraSelection } from "@/lib/camera";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
@@ -137,10 +138,12 @@ export default function VideoPage() {
     const requestConfig = resolveModelRequestConfig({ ...effectiveConfig, model }, model);
     const isAgnesVideo25 = requestConfig.apiFormat === "agnes" && isAgnesVideo25Family(model);
     const isAgnesVideo25Flash = isAgnesVideo25 && isAgnesVideo25FlashModel(model);
+    const isGrsaiH3 = requestConfig.apiFormat === "grsai" && isGrsaiMinimaxH3Model(model);
     const seedanceLimits = seedanceReferenceLimits(model);
-    const imageReferenceLimit = isAgnesVideo25Flash ? 5 : seedanceLimits.images;
-    const videoReferenceLimit = isAgnesVideo25Flash ? 0 : seedanceLimits.videos;
-    const audioReferenceLimit = seedanceLimits.audios;
+    const grsaiLimits = grsaiVideoReferenceLimits(model);
+    const imageReferenceLimit = isAgnesVideo25Flash ? 5 : isGrsaiH3 ? grsaiLimits.images : seedanceLimits.images;
+    const videoReferenceLimit = isAgnesVideo25Flash ? 0 : isGrsaiH3 ? grsaiLimits.videos : seedanceLimits.videos;
+    const audioReferenceLimit = isGrsaiH3 ? grsaiLimits.audios : seedanceLimits.audios;
     const canGenerate = Boolean(prompt.trim());
 
     useEffect(() => {
@@ -361,6 +364,20 @@ export default function VideoPage() {
                 return null;
             }
         }
+        if (isGrsaiH3) {
+            if (references.length > 9 || audioReferences.length > 3 || references.length + audioReferences.length > 12) {
+                message.error("GRS AI minimax-h3 最多支持 9 张参考图、3 个参考音频，参考素材总数不能超过 12 个");
+                return null;
+            }
+            if (videoReferences.length) {
+                message.error("GRS AI minimax-h3 暂不支持参考视频，请移除参考视频后重试");
+                return null;
+            }
+            if (normalizeGrsaiVideoResolution(effectiveConfig.vquality) === "1080p" && Number(effectiveConfig.videoSeconds) > 10) {
+                message.error("GRS AI minimax-h3 使用 1080p 时最长 10 秒，请降低时长或改用 480p / 768p");
+                return null;
+            }
+        }
         if (isAgnesVideo25Flash && (videoReferences.length || references.length > 5)) {
             message.error(videoReferences.length ? "Agnes Video 2.5 Flash 不支持参考视频，请改用 Agnes Video 2.5。" : "Agnes Video 2.5 Flash 最多支持 5 张参考图，请移除多余图片后重试。");
             return null;
@@ -576,7 +593,7 @@ export default function VideoPage() {
                                 </div>
                             </div>
 
-                            <ReferenceImageUploader references={references} setReferences={setReferences} limit={imageReferenceLimit} requiresPublicUrl={requestConfig.apiFormat === "agnes" && !resolveModelScript(effectiveConfig, model)} onOpenSettings={() => openConfigDialog(true)} />
+                            <ReferenceImageUploader references={references} setReferences={setReferences} limit={imageReferenceLimit} requiresPublicUrl={(requestConfig.apiFormat === "agnes" || isGrsaiH3) && !resolveModelScript(effectiveConfig, model)} onOpenSettings={() => openConfigDialog(true)} />
 
                             <div className="min-w-0">
                                 <div className="mb-2 flex items-center justify-between gap-3">
@@ -656,7 +673,7 @@ export default function VideoPage() {
 
                             <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
                                 <span className="truncate text-stone-500 dark:text-stone-400">
-                                    {modelOptionLabel(effectiveConfig, model)} · {normalizeResolution(effectiveConfig.vquality)}p · {videoSizeLabel(effectiveConfig.size, model)} · {isSeedanceVideoConfig({ ...effectiveConfig, model }) ? normalizeSeedanceDuration(effectiveConfig.videoSeconds, model) : normalizeVideoSeconds(effectiveConfig.videoSeconds, isAgnesVideo25)}s
+                                    {modelOptionLabel(effectiveConfig, model)} · {isGrsaiH3 ? normalizeGrsaiVideoResolution(effectiveConfig.vquality) : `${normalizeResolution(effectiveConfig.vquality)}p`} · {videoSizeLabel(effectiveConfig.size, model)} · {isSeedanceVideoConfig({ ...effectiveConfig, model }) ? normalizeSeedanceDuration(effectiveConfig.videoSeconds, model) : isGrsaiH3 ? normalizeGrsaiVideoDuration(effectiveConfig.videoSeconds, effectiveConfig.vquality) : normalizeVideoSeconds(effectiveConfig.videoSeconds, isAgnesVideo25)}s
                                 </span>
                                 <Button size="small" type="text" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
                                     调整
@@ -1028,15 +1045,16 @@ function buildLog({ prompt, camera, model, config, references, videoReferences, 
 function buildVideoConfig(config: AiConfig, model: string): AiConfig {
     const seedance = isSeedanceVideoConfig({ ...config, model });
     const agnes = resolveModelRequestConfig({ ...config, model }, model).apiFormat === "agnes";
+    const grsaiH3 = resolveModelRequestConfig({ ...config, model }, model).apiFormat === "grsai" && isGrsaiMinimaxH3Model(model);
     const agnes25 = agnes && isAgnesVideo25Family(model);
     const flash = agnes25 && isAgnesVideo25FlashModel(model);
     return {
         ...config,
         model,
         videoModel: model,
-        size: seedance ? normalizeSeedanceRatio(config.size) : agnes25 ? normalizeAgnesVideo25AspectRatio(config.size) : normalizeVideoSize(config.size),
-        videoSeconds: seedance ? String(normalizeSeedanceDuration(config.videoSeconds, model)) : agnes25 ? normalizeAgnesVideo25Seconds(config.videoSeconds) : normalizeVideoSeconds(config.videoSeconds, agnes),
-        vquality: agnes25 ? normalizeAgnesVideo25Resolution(config.vquality, flash) : normalizeResolution(config.vquality),
+        size: seedance ? normalizeSeedanceRatio(config.size) : agnes25 ? normalizeAgnesVideo25AspectRatio(config.size) : grsaiH3 ? normalizeGrsaiVideoAspectRatio(config.size) : normalizeVideoSize(config.size),
+        videoSeconds: seedance ? String(normalizeSeedanceDuration(config.videoSeconds, model)) : agnes25 ? normalizeAgnesVideo25Seconds(config.videoSeconds) : grsaiH3 ? String(normalizeGrsaiVideoDuration(config.videoSeconds, config.vquality)) : normalizeVideoSeconds(config.videoSeconds, agnes),
+        vquality: agnes25 ? normalizeAgnesVideo25Resolution(config.vquality, flash) : grsaiH3 ? normalizeGrsaiVideoResolution(config.vquality) : normalizeResolution(config.vquality),
         videoGenerateAudio: String(boolConfig(config.videoGenerateAudio, true)),
         videoWatermark: String(boolConfig(config.videoWatermark, false)),
         videoFrameRate: normalizeVideoFrameRate(config.videoFrameRate),

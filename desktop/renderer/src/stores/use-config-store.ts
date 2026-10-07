@@ -109,6 +109,7 @@ export const AGNES_DEFAULT_MODELS: ChannelModel[] = [
 ];
 
 export const GRSAI_DEFAULT_MODELS: ChannelModel[] = [
+    { name: "nano-banana-2.1", capability: "image" },
     { name: "gpt-image-2.5", capability: "image" },
     { name: "gpt-image-2.5-sunburst", capability: "image" },
     { name: "gpt-image-2.5-flare", capability: "image" },
@@ -118,16 +119,36 @@ export const GRSAI_DEFAULT_MODELS: ChannelModel[] = [
     { name: "nano-banana-2-lite", capability: "image" },
     { name: "nano-banana-fast", capability: "image" },
     { name: "nano-banana-pro", capability: "image" },
+    { name: "nano-banana-2-cl", capability: "image" },
+    { name: "nano-banana-pro-cl", capability: "image" },
+    { name: "nano-banana-2-2k-cl", capability: "image" },
+    { name: "nano-banana-pro-4k-vip", capability: "image" },
+    { name: "nano-banana-2-4k-cl", capability: "image" },
+    { name: "nano-banana-pro-vip", capability: "image" },
+    { name: "minimax-h3", capability: "video" },
+    { name: "gpt-6-astra", capability: "text" },
+    { name: "gpt-5.6-terra", capability: "text" },
+    { name: "gpt-5.6-sol", capability: "text" },
     { name: "gpt-5.5", capability: "text" },
     { name: "gpt-5.4", capability: "text" },
+    { name: "gemini-3.5-flash", capability: "text" },
     { name: "gemini-3.1-flash-lite", capability: "text" },
+    { name: "gemini-3.5-flash-lite", capability: "text" },
+    { name: "gemini-3.8-flash", capability: "text" },
     { name: "gemini-3.1-pro", capability: "text" },
     { name: "gemini-3.7-flash", capability: "text" },
+    { name: "gemini-3-flash", capability: "text" },
+    { name: "gemini-3-pro", capability: "text" },
+    { name: "gemini-2.5-flash", capability: "text" },
+    { name: "gemini-2.5-pro", capability: "text" },
 ];
 
 export function grsaiSupportedImageResolutions(model: string) {
     const normalized = model.trim().toLowerCase();
-    if (normalized === "gpt-image-2.5") return ["1k"];
+    if (["gpt-image-2.5", "gpt-image-2", "nano-banana-2-cl", "nano-banana-pro-cl"].includes(normalized)) return ["1k"];
+    if (normalized === "nano-banana-2-2k-cl") return ["2k"];
+    if (normalized === "nano-banana-2-4k-cl" || normalized === "nano-banana-pro-4k-vip") return ["4k"];
+    if (normalized === "nano-banana-pro-vip") return ["1k", "2k"];
     return ["1k", "2k", "4k"];
 }
 

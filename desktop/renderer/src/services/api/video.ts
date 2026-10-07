@@ -6,6 +6,7 @@ import { saveGeneratedBlob } from "@/services/desktop-storage";
 import { hostReferenceAudio, hostReferenceImage, hostReferenceVideo } from "@/services/image-hosting";
 import { imageToDataUrl, imageToFile } from "@/services/image-storage";
 import { isAgnesVideo25Family, isAgnesVideo25FlashModel, normalizeAgnesVideo25AspectRatio, normalizeAgnesVideo25Resolution, normalizeAgnesVideo25Seconds } from "@/lib/agnes-video";
+import { isGrsaiMinimaxH3Model, normalizeGrsaiVideoAspectRatio, normalizeGrsaiVideoDuration, normalizeGrsaiVideoResolution } from "@/lib/grsai-video";
 import { boolConfig, buildSeedancePromptText, isSeedance25Model, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceAudioReferenceError, seedanceReferenceCountError, seedanceReferenceLimits, seedanceVideoReferenceError } from "@/lib/seedance-video";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
 import { logAppEvent } from "@/services/app-logger";
@@ -26,15 +27,24 @@ type SeedanceTask = {
     result_url?: string;
     video_url?: string;
 };
+type GrsaiVideoTask = {
+    id?: string;
+    status?: string;
+    error?: string | { message?: string };
+    msg?: string;
+    message?: string;
+    results?: Array<{ url?: string }>;
+};
 type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: string; message?: string; error?: { message?: string } };
 type RequestOptions = { signal?: AbortSignal };
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "agnes" | "plugin"; model: string; videoId?: string };
+export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "agnes" | "grsai" | "plugin"; model: string; videoId?: string };
 export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
 
 /** Results for scripted (plugin) video models, which run their own create+poll in one shot at task creation. */
 const pluginVideoResults = new Map<string, VideoGenerationResult>();
+const grsaiVideoResults = new Map<string, VideoGenerationResult>();
 
 function aiApiUrl(config: AiConfig, path: string) {
     return buildApiUrl(config.baseUrl, path);
@@ -50,13 +60,14 @@ function aiHeaders(config: AiConfig, contentType?: string) {
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationResult> {
     const task = await createVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
     try {
-        const delayMs = task.provider === "seedance" ? 5000 : task.provider === "agnes" ? 10000 : 2500;
-        for (let attempt = 0; attempt < 120; attempt += 1) {
+        const delayMs = task.provider === "seedance" || task.provider === "grsai" ? 5000 : task.provider === "agnes" ? 10000 : 2500;
+        const maxAttempts = task.provider === "grsai" ? 180 : 120;
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
             if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
             const state = await pollVideoGenerationTask(config, task, options);
             if (state.status === "completed") return state.result;
             if (state.status === "failed") throw new Error(state.error);
-            if (attempt === 119) throw new Error(`${task.provider === "seedance" ? "Seedance " : task.provider === "agnes" ? "Agnes " : ""}视频生成超时，请稍后重试`);
+            if (attempt === maxAttempts - 1) throw new Error(`${task.provider === "seedance" ? "Seedance " : task.provider === "agnes" ? "Agnes " : task.provider === "grsai" ? "GRS AI " : ""}视频生成超时，请稍后重试`);
             await delay(delayMs, options?.signal);
         }
         throw new Error("视频生成超时，请稍后重试");
@@ -69,7 +80,7 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
 }
 
 // Agnes 参考素材需使用公网 HTTPS 地址；本地素材仅托管到用户已配置的签名 OSS。
-async function ensurePublicReferenceUrlsForRequest(refs: ReferenceImage[], options?: RequestOptions): Promise<ReferenceImage[]> {
+async function ensurePublicReferenceUrlsForRequest(refs: ReferenceImage[], options?: RequestOptions, providerLabel = "Agnes"): Promise<ReferenceImage[]> {
     const localRefs = refs.filter((item) => !/^https:\/\//i.test(item.url || item.dataUrl || ""));
     if (!localRefs.length) return refs;
     const hosted = await Promise.all(
@@ -77,7 +88,7 @@ async function ensurePublicReferenceUrlsForRequest(refs: ReferenceImage[], optio
             try {
                 return await hostReferenceImage(item, options);
             } catch (error) {
-                throw new Error(error instanceof Error ? `${error.message}；Agnes 生成需参考图为公网可访问地址` : "参考图片无法托管，请改用公网 HTTPS 图片 URL");
+                throw new Error(error instanceof Error ? `${error.message}；${providerLabel} 生成需参考图为公网可访问地址` : "参考图片无法托管，请改用公网 HTTPS 图片 URL");
             }
         }),
     );
@@ -98,14 +109,14 @@ async function ensurePublicVideoReferenceUrlsForRequest(refs: ReferenceVideo[], 
     );
 }
 
-async function ensurePublicAudioReferenceUrlsForRequest(refs: ReferenceAudio[], options?: RequestOptions): Promise<ReferenceAudio[]> {
+async function ensurePublicAudioReferenceUrlsForRequest(refs: ReferenceAudio[], options?: RequestOptions, providerLabel = "Agnes"): Promise<ReferenceAudio[]> {
     return Promise.all(
         refs.map(async (item) => {
             if (/^https:\/\//i.test(item.url)) return item;
             try {
                 return await hostReferenceAudio(item, options);
             } catch (error) {
-                throw new Error(error instanceof Error ? `${error.message}；Agnes 生成需参考音频为公网可访问地址` : "参考音频无法托管，请改用公网 HTTPS 音频 URL");
+                throw new Error(error instanceof Error ? `${error.message}；${providerLabel} 生成需参考音频为公网可访问地址` : "参考音频无法托管，请改用公网 HTTPS 音频 URL");
             }
         }),
     );
@@ -130,6 +141,14 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
         ]);
         return createAgnesVideoTask(requestConfig, selectedModel, prompt, publicReferences, publicVideoReferences, publicAudioReferences, options);
     }
+    if (requestConfig.apiFormat === "grsai" && isGrsaiMinimaxH3Model(selectedModel)) {
+        if (videoReferences.length) throw new Error("GRS AI minimax-h3 暂不支持参考视频，请移除参考视频后重试");
+        const [publicReferences, publicAudioReferences] = await Promise.all([
+            ensurePublicReferenceUrlsForRequest(references, options, "GRS AI"),
+            ensurePublicAudioReferenceUrlsForRequest(audioReferences, options, "GRS AI"),
+        ]);
+        return createGrsaiVideoTask(requestConfig, selectedModel, prompt, publicReferences, publicAudioReferences, options);
+    }
     if (videoReferences.length || audioReferences.length) {
         throw new Error("当前视频接口不支持参考视频或参考音频，请切换到 Seedance 2.0 / 火山 Agent Plan 模型，或移除参考资产");
     }
@@ -147,6 +166,7 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
     assertVideoConfig(requestConfig, requestConfig.model);
     if (task.provider === "seedance") return pollSeedanceTask(requestConfig, task, options);
     if (task.provider === "agnes") return pollAgnesVideoTask(requestConfig, task, options);
+    if (task.provider === "grsai") return pollGrsaiVideoTask(requestConfig, task, options);
     return pollOpenAIVideoTask(requestConfig, task, options);
 }
 
@@ -298,6 +318,90 @@ async function pollAgnesVideoTask(config: AiConfig, task: VideoGenerationTask, o
         }
         throw new Error(readAxiosError(error, "Agnes 视频任务查询失败"));
     }
+}
+
+export function buildGrsaiVideoRequestBody(config: AiConfig, model: string, prompt: string, images: string[], audios: string[]) {
+    const resolution = normalizeGrsaiVideoResolution(config.vquality);
+    const requestedDuration = Math.floor(Number(config.videoSeconds) || 6);
+    if (resolution === "1080p" && requestedDuration > 10) throw new Error("GRS AI minimax-h3 使用 1080p 时最长 10 秒，请降低时长或改用 480p / 768p");
+    const duration = normalizeGrsaiVideoDuration(config.videoSeconds, resolution);
+    const seed = Number((config.videoSeed || "").trim());
+    return {
+        prompt,
+        aspectRatio: normalizeGrsaiVideoAspectRatio(config.size),
+        images,
+        audios,
+        ...(Number.isInteger(seed) && seed >= 0 && seed <= 9999999999 ? { seed } : {}),
+        resolution,
+        model: modelOptionName(model),
+        duration,
+        replyType: "json",
+    };
+}
+
+function grsaiPublicImageUrl(image: ReferenceImage) {
+    const url = image.url || image.dataUrl;
+    if (!/^https:\/\//i.test(url)) throw new Error("GRS AI 视频只接受公网 HTTPS 参考图片 URL，请先配置 OSS 或改用公网图片 URL");
+    return url;
+}
+
+function grsaiPublicAudioUrl(audio: ReferenceAudio) {
+    if (!/^https:\/\//i.test(audio.url)) throw new Error("GRS AI 视频只接受公网 HTTPS 参考音频 URL，请先配置 OSS 或改用公网音频 URL");
+    return audio.url;
+}
+
+async function createGrsaiVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
+    if (references.length > 9) throw new Error("GRS AI minimax-h3 最多支持 9 张参考图");
+    if (audioReferences.length > 3) throw new Error("GRS AI minimax-h3 最多支持 3 个参考音频");
+    if (references.length + audioReferences.length > 12) throw new Error("GRS AI minimax-h3 参考素材总数不能超过 12 个");
+    const images = references.slice(0, 9).map(grsaiPublicImageUrl);
+    const audios = audioReferences.slice(0, 3).map(grsaiPublicAudioUrl);
+    try {
+        const created = (await axios.post<GrsaiVideoTask>(aiApiUrl(config, "/api/generate"), buildGrsaiVideoRequestBody(config, model, prompt, images, audios), {
+            headers: aiHeaders(config, "application/json"),
+            signal: options?.signal,
+        })).data;
+        const resultUrl = grsaiVideoResultUrl(created);
+        if (["failed", "violation", "error"].includes((created.status || "").toLowerCase())) {
+            throw new Error(readApiErrorMessage(created.error) || created.msg || created.message || "GRS AI 视频生成失败");
+        }
+        const id = created.id || (resultUrl ? nanoid() : "");
+        if (!id) throw new Error("GRS AI 视频接口没有返回任务 ID");
+        if (resultUrl) grsaiVideoResults.set(id, { url: resultUrl, mimeType: "video/mp4" });
+        return { id, provider: "grsai", model };
+    } catch (error) {
+        throw new Error(readAxiosError(error, "GRS AI 视频任务创建失败"));
+    }
+}
+
+async function pollGrsaiVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
+    const immediate = grsaiVideoResults.get(task.id);
+    if (immediate) {
+        grsaiVideoResults.delete(task.id);
+        if (!immediate.url) return { status: "failed", error: "GRS AI 视频任务成功但没有返回视频 URL" };
+        return { status: "completed", result: await videoResultFromUrl(immediate.url, options) };
+    }
+    try {
+        const payload = (await axios.get<GrsaiVideoTask>(aiApiUrl(config, "/api/result"), {
+            headers: aiHeaders(config),
+            params: { id: task.id },
+            signal: options?.signal,
+        })).data;
+        const resultUrl = grsaiVideoResultUrl(payload);
+        if (resultUrl) return { status: "completed", result: await videoResultFromUrl(resultUrl, options) };
+        const status = (payload.status || "").toLowerCase();
+        if (["failed", "violation", "error", "cancelled"].includes(status)) {
+            return { status: "failed", error: readApiErrorMessage(payload.error) || payload.msg || payload.message || (status === "violation" ? "提示词未通过安全审核" : "GRS AI 视频生成失败") };
+        }
+        if (["succeeded", "completed"].includes(status)) return { status: "failed", error: "GRS AI 视频任务成功但没有返回视频 URL" };
+        return { status: "pending" };
+    } catch (error) {
+        throw new Error(readAxiosError(error, "GRS AI 视频任务查询失败"));
+    }
+}
+
+function grsaiVideoResultUrl(payload: GrsaiVideoTask) {
+    return payload.results?.map((item) => item.url).find((url): url is string => typeof url === "string" && /^https?:\/\//i.test(url));
 }
 
 async function createPluginVideoTask(config: AiConfig, model: string, script: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTask> {
@@ -525,7 +629,7 @@ function assertVideoConfig(config: AiConfig, model: string) {
     if (!model) throw new Error("请先配置视频模型");
     if (!config.baseUrl.trim()) throw new Error("请先配置 Base URL");
     if (!config.apiKey.trim()) throw new Error("请先配置 API Key");
-    if (config.apiFormat === "gemini" || config.apiFormat === "grsai") throw new Error("当前渠道暂不支持视频生成，请使用 OpenAI 格式渠道或为模型配置调用脚本");
+    if (config.apiFormat === "gemini" || (config.apiFormat === "grsai" && !isGrsaiMinimaxH3Model(model))) throw new Error("当前渠道暂不支持该视频模型，请使用 OpenAI 格式渠道或为模型配置调用脚本");
 }
 
 function normalizeVideoSeconds(value: string) {

@@ -5,6 +5,12 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+## GRS AI 新模型目录与 minimax-h3 视频
+
+- 在 GRS AI 渠道拉取或确认内置清单包含 `nano-banana-2.1`、`nano-banana-2-cl`、`nano-banana-pro-cl`、`nano-banana-2-2k-cl`、`nano-banana-pro-4k-vip`、`nano-banana-2-4k-cl`、`nano-banana-pro-vip`，以及 `gpt-6-astra`、`gpt-5.6-terra`、`gpt-5.6-sol`、`gemini-3.5-flash`、`gemini-3.5-flash-lite`、`gemini-3.8-flash`、`gemini-3-flash`、`gemini-3-pro`、`gemini-2.5-flash`、`gemini-2.5-pro`；图片变体的 1K/2K/4K 选项应与官网模型目录一致。
+- 选择 `minimax-h3`，分别验证横屏/竖屏、480p/768p/1080p、1-15 秒，以及 1080p 超过 10 秒时的本地提示；确认最多 9 张参考图、3 个参考音频，参考视频被明确拒绝。
+- 使用真实 GRS AI API Key 完成一次 `minimax-h3` 文生视频、带参考图和带参考音频生成，确认任务轮询、远程视频下载和本地 Result/Video 落盘；本轮只完成代码适配，未执行可能计费的真实调用。
+
 ## 生图与视频参考图缩略图
 
 - 在生图和视频工作台分别添加横图、竖图及极长图，确认每张参考图预览保持 80×80 方形、图片完整显示且不变形，文件名与“继续添加”按钮不会被竖图挤走。

@@ -70,7 +70,7 @@ export type AiConfig = {
     reasoningEffort: ReasoningEffort;
     arkThinkingMode: ArkThinkingMode;
     models: string[];
-    /** 用户在偏好设置中调整后的模型选择顺序。值使用 channelId::model 编码。 */
+    /** 用户在默认模型下拉框中调整后的模型选择顺序。值使用 channelId::model 编码。 */
     modelOrder: string[];
     quality: string;
     imageResolution: "1k" | "2k" | "4k" | "8k";
@@ -223,6 +223,7 @@ type ConfigStore = {
     configTab: ConfigTabKey;
     shouldPromptContinue: boolean;
     updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
+    reorderModels: (models: string[]) => void;
     updateWebdavConfig: <K extends keyof WebdavSyncConfig>(key: K, value: WebdavSyncConfig[K]) => void;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
     openConfigDialog: (shouldPromptContinue?: boolean, tab?: ConfigTabKey) => void;
@@ -321,6 +322,17 @@ export const useConfigStore = create<ConfigStore>()(
                         ...(key === "modelOrder" ? { models: value as AiConfig["models"] } : {}),
                     },
                 }));
+            },
+            reorderModels: (models) => {
+                logAppEvent({ category: "operation", message: "调整模型顺序" });
+                set((state) => {
+                    const allModels = modelOptionsForConfig(state.config);
+                    const ordered = [...new Set(models)].filter((model) => allModels.includes(model));
+                    const selected = new Set(ordered);
+                    let index = 0;
+                    const modelOrder = allModels.map((model) => selected.has(model) ? ordered[index++] : model);
+                    return { config: { ...state.config, models: modelOrder, modelOrder } };
+                });
             },
             updateWebdavConfig: (key, value) => {
                 logAppEvent({ category: "operation", message: "更新 WebDAV 配置", details: { field: key } });

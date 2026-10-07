@@ -447,7 +447,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 - **下拉分组**（`model-picker.tsx`）：生图、视频、文本和音频模型选择器按渠道名称分组，组内保持已保存顺序，不同渠道的模型不再混排；同一组件在画布和工作台中继续复用。
 - **直接排序**（`model-picker.tsx`、`use-config-store.ts`、`app-config-modal.tsx`）：默认模型下拉框内支持拖动或上下箭头调整当前渠道组内顺序，排序通过配置状态持久化并同步到其他模型选择器；排序控件阻止误触发模型选择。
-- **验证边界**：新增人工验收项已记录在 `pending-test.mdx`，需检查四类模型下拉的渠道分组、组内排序持久化、切换选择器后的顺序同步及配置导入导出兼容。
+- **验证与发布核验**：新增人工验收项已记录在 `pending-test.mdx`，需检查四类模型下拉的渠道分组、组内排序持久化、切换选择器后的顺序同步及配置导入导出兼容。发布提交/tag 为 `3872a24` / `v0.8.5`；桌面发布工作流 `37607475806`、Docs Docker 工作流 `37607475930`、功能插件工作流 `37607475823`、官方插件工作流 `37607475834` 均成功。正式 Release 为 `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.8.5`，非 draft、非 prerelease；远端 `LY-Space-Setup-0.8.5.exe`（92,588,530 字节，SHA-256 `10ebfa17c3666b4c39388cf7d6df049aa1213758c42c5ff4a0c90ed6882e4590`）、blockmap（98,014 字节，SHA-256 `abeb7877ac67a1eca01555775300aa411bdbdc8a7ee78b4f552399f36141d9f0`）和 `latest.yml`（344 字节，SHA-256 `b4e1681939be021276f958d89805b06a5372b757738ef78b4c7f5d0cf85ed066`）均已上传。`latest.yml` 的 version 为 `0.8.5`，path、size 与 EXE 一致，SHA-512 为 `zYB80mLzVrVvHxRebu7EpEr2ZKkNRfDbZZHLDUJN2eN0V7WeovTTDu9/yrmbbXMHvp630zXqNlG00Dwwu67chA==`；安装包由 CI 构建并发布，本地未另行下载。真实桌面交互验收仍按 `pending-test.mdx` 核实。
 
 ### 3.41 v0.8.4 模型排序与批量主图星标
 

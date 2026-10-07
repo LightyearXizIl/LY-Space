@@ -447,7 +447,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 - **模型顺序**（`use-config-store.ts`、`app-config-modal.tsx`、`config-file.ts`）：偏好设置新增模型排序列表，支持拖动和上下箭头调整；顺序持久化到配置并同步到图片、视频、文本、音频及画布节点的模型选择器。导入配置时会清理失效项、去重并把新模型追加到末尾，删除模型后不会保留失效项。
 - **批量图片主图状态**（`canvas-node.tsx`、`project.tsx`）：批量图片子节点根据根节点的 `primaryImageId` 渲染主图状态；当前主图的星标保持填充高亮并显示「当前主图」，切换主图后旧星标熄灭、新星标点亮。
-- **验证边界**：本版本新增人工验收项已记录在 `pending-test.mdx`，包含排序持久化、导入导出、模型增删同步及批量主图星标切换/重开画布检查；发布后的 CI 与 Release 产物核验待本次发版完成后补录。
+- **验证与发布核验**：本版本新增人工验收项已记录在 `pending-test.mdx`，包含排序持久化、导入导出、模型增删同步及批量主图星标切换/重开画布检查。发布提交/tag 为 `8162ab9` / `v0.8.4`；桌面发布工作流 `37603315800`、Docs Docker 工作流 `37603315703`、功能插件工作流 `37603315773`、官方插件工作流 `37603315977` 均成功。正式 Release 为 `https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.8.4`，非 draft、非 prerelease；远端 `LY-Space-Setup-0.8.4.exe`（92,588,046 字节，SHA-256 `a7a54da3b273c4977a35eb075cb3cd16c48fe39634a7b3409bd737cfcc0421e6`）、blockmap（98,048 字节，SHA-256 `4b1f610502dc864fd43563ea2df6b4aa0ae45b1da000b51623e881770f504863`）和 `latest.yml`（344 字节，SHA-256 `b48568e4738dfee582bb3e66fb286454f14eed77345aa9afd800642702e024dd`）均已上传。`latest.yml` 的 version 为 `0.8.4`，path、size 与 EXE 一致，SHA-512 为 `8q2M2uyxSKc7LygJ1HbCGHwhBpjS8uGSiNaRdT/j4dNBcRQDbxN/PfW+4/+g1D+Dtt6GOT1MbITISCErbZgAWg==`；安装包由 CI 构建并发布，本地未另行下载。真实账号模型权限和桌面人工交互仍按 `pending-test.mdx` 核实。
 
 ### 3.23 v0.4.7 变更要点
 

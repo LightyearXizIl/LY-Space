@@ -1,6 +1,6 @@
 import { App, Button, Form, Input, Modal, Progress, Select, Switch, Tabs } from "antd";
-import { Cloud, Download, FolderOpen, Pencil, Plus, RefreshCw, RotateCcw, Trash2, Upload, Wifi } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronUp, Cloud, Download, FolderOpen, GripVertical, Pencil, Plus, RefreshCw, RotateCcw, Trash2, Upload, Wifi } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useDraftInput } from "@/hooks/use-draft-input";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -14,7 +14,7 @@ import { exportAppConfig, importAppConfig } from "@/services/config-file";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import { createModelChannel, modelOptionsFromChannels, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { createModelChannel, modelOptionLabel, modelOptionsForConfig, modelOptionsFromChannels, normalizeModelOptionValue, normalizeModelOrder, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { logAppEvent } from "@/services/app-logger";
 
 type ModelGroup = {
@@ -325,6 +325,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                         </Form.Item>
                                     ))}
                                 </div>
+                                <ModelOrderSettings config={config} onChange={(modelOrder) => updateConfig("modelOrder", modelOrder)} />
                                 <div className="mb-2 text-sm font-semibold">生成偏好</div>
                                 <div className="grid gap-4 md:grid-cols-4">
                                     <Form.Item label="画布默认生图张数" extra="新建画布生图和配置节点默认使用，单个节点仍可单独覆盖。" className="mb-4">
@@ -492,10 +493,13 @@ export function AppConfigModal() {
 }
 
 function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
+    const models = modelOptionsFromChannels(channels);
+    const modelOrder = normalizeModelOrder(config.modelOrder, models);
     const next: AiConfig = {
         ...config,
         channels,
-        models: modelOptionsFromChannels(channels),
+        models: modelOrder,
+        modelOrder,
         baseUrl: channels[0]?.baseUrl || config.baseUrl,
         apiKey: channels[0]?.apiKey || config.apiKey,
         apiFormat: channels[0]?.apiFormat || config.apiFormat,
@@ -507,6 +511,74 @@ function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
         textModel: pickDefaultModel(next, "text", config.textModel),
         audioModel: pickDefaultModel(next, "audio", config.audioModel),
     };
+}
+
+function ModelOrderSettings({ config, onChange }: { config: AiConfig; onChange: (modelOrder: string[]) => void }) {
+    const models = useMemo(() => selectableModelsByCapability(config), [config]);
+    const [draggingModel, setDraggingModel] = useState<string | null>(null);
+
+    const moveModel = (model: string, direction: -1 | 1) => {
+        const index = models.indexOf(model);
+        const targetIndex = index + direction;
+        if (index < 0 || targetIndex < 0 || targetIndex >= models.length) return;
+        const next = [...models];
+        [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
+        onChange(normalizeModelOrder(next, modelOptionsForConfig(config)));
+    };
+
+    const dropModel = (targetModel: string) => {
+        if (!draggingModel || draggingModel === targetModel) return;
+        const next = [...models];
+        const sourceIndex = next.indexOf(draggingModel);
+        const targetIndex = next.indexOf(targetModel);
+        if (sourceIndex < 0 || targetIndex < 0) return;
+        next.splice(sourceIndex, 1);
+        next.splice(targetIndex, 0, draggingModel);
+        onChange(normalizeModelOrder(next, modelOptionsForConfig(config)));
+        setDraggingModel(null);
+    };
+
+    return (
+        <section className="mb-5 rounded-lg border border-stone-200 p-3 dark:border-stone-800">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                    <div className="text-sm font-semibold">模型排序</div>
+                    <div className="mt-1 text-xs text-stone-500">拖动模型或使用箭头调整顺序，排序会同步到所有模型选择器。</div>
+                </div>
+                <span className="text-xs text-stone-500">{models.length} 个可用模型</span>
+            </div>
+            {models.length ? (
+                <div className="mt-3 space-y-1.5" aria-label="模型排序列表">
+                    {models.map((model, index) => (
+                        <div
+                            key={model}
+                            draggable
+                            onDragStart={(event) => {
+                                setDraggingModel(model);
+                                event.dataTransfer.effectAllowed = "move";
+                                event.dataTransfer.setData("text/plain", model);
+                            }}
+                            onDragOver={(event) => event.preventDefault()}
+                            onDrop={(event) => {
+                                event.preventDefault();
+                                dropModel(model);
+                            }}
+                            onDragEnd={() => setDraggingModel(null)}
+                            className={`flex items-center gap-2 rounded-md border px-2.5 py-2 transition ${draggingModel === model ? "border-stone-400 bg-stone-100 opacity-60 dark:border-stone-600 dark:bg-stone-900/60" : "border-stone-200 dark:border-stone-800"}`}
+                        >
+                            <GripVertical className="size-4 shrink-0 cursor-grab text-stone-400" aria-hidden="true" />
+                            <span className="w-6 shrink-0 text-center text-xs text-stone-400">{index + 1}</span>
+                            <span className="min-w-0 flex-1 truncate text-sm" title={modelOptionLabel(config, model)}>{modelOptionLabel(config, model)}</span>
+                            <Button type="text" size="small" disabled={index === 0} icon={<ChevronUp className="size-4" />} aria-label={`将 ${modelOptionLabel(config, model)} 上移`} onClick={() => moveModel(model, -1)} />
+                            <Button type="text" size="small" disabled={index === models.length - 1} icon={<ChevronDown className="size-4" />} aria-label={`将 ${modelOptionLabel(config, model)} 下移`} onClick={() => moveModel(model, 1)} />
+                        </div>
+                    ))}
+                </div>
+            ) : (
+                <div className="mt-3 rounded-md border border-dashed border-stone-300 px-3 py-4 text-center text-xs text-stone-500 dark:border-stone-700">请先在渠道中添加并启用模型。</div>
+            )}
+        </section>
+    );
 }
 
 function pickDefaultModel(config: AiConfig, capability: ModelCapability, current: string) {

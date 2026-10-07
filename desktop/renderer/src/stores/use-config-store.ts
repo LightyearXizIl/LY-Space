@@ -70,6 +70,8 @@ export type AiConfig = {
     reasoningEffort: ReasoningEffort;
     arkThinkingMode: ArkThinkingMode;
     models: string[];
+    /** 用户在偏好设置中调整后的模型选择顺序。值使用 channelId::model 编码。 */
+    modelOrder: string[];
     quality: string;
     imageResolution: "1k" | "2k" | "4k" | "8k";
     size: string;
@@ -196,6 +198,7 @@ export const defaultConfig: AiConfig = {
     reasoningEffort: "auto",
     arkThinkingMode: "auto",
     models: GRSAI_DEFAULT_MODELS.map((model) => `default::${model.name}`),
+    modelOrder: GRSAI_DEFAULT_MODELS.map((model) => `default::${model.name}`),
     quality: "auto",
     imageResolution: "1k",
     size: "auto",
@@ -258,8 +261,9 @@ export function resolveModelForCapability(config: AiConfig, currentModel: string
 }
 
 export function selectableModelsByCapability(config: AiConfig, capability?: ModelCapability) {
+    const models = modelOptionsForConfig(config);
     if (!capability) {
-        return config.models.filter((model) => {
+        return models.filter((model) => {
             const decoded = decodeChannelModel(model);
             if (modelCapabilityOf(config, model) === "unknown") return false;
             if (!decoded) return true;
@@ -267,9 +271,11 @@ export function selectableModelsByCapability(config: AiConfig, capability?: Mode
             return !channel || channel.enabled !== false;
         });
     }
-    return config.channels
-        .filter((channel) => channel.enabled !== false)
-        .flatMap((channel) => channel.models.filter((model) => model.capability === capability).map((model) => encodeChannelModel(channel.id, model.name)));
+    return models.filter((model) => {
+        const decoded = decodeChannelModel(model);
+        const channel = decoded ? config.channels.find((item) => item.id === decoded.channelId) : undefined;
+        return modelMatchesCapability(config, model, capability) && (!channel || channel.enabled !== false);
+    });
 }
 
 /** The user script (if any) attached to a model; empty string means use the system default call. */
@@ -286,13 +292,11 @@ export function imageModelFeatures(config: AiConfig, value: string): ImageModelF
 }
 
 export function selectableImageModelsByFeature(config: AiConfig, feature: ImageModelFeature) {
-    return config.channels
-        .filter((channel) => channel.enabled !== false)
-        .flatMap((channel) =>
-            channel.models
-                .filter((model) => model.capability === "image" && imageModelFeatures(config, encodeChannelModel(channel.id, model.name)).includes(feature))
-                .map((model) => encodeChannelModel(channel.id, model.name)),
-        );
+    return modelOptionsForConfig(config).filter((value) => {
+        const decoded = decodeChannelModel(value);
+        const channel = decoded ? config.channels.find((item) => item.id === decoded.channelId) : undefined;
+        return modelMatchesCapability(config, value, "image") && (!channel || channel.enabled !== false) && imageModelFeatures(config, value).includes(feature);
+    });
 }
 
 function isAiConfigReady(config: AiConfig, model: string) {
@@ -314,6 +318,7 @@ export const useConfigStore = create<ConfigStore>()(
                     config: {
                         ...state.config,
                         [key]: value,
+                        ...(key === "modelOrder" ? { models: value as AiConfig["models"] } : {}),
                     },
                 }));
             },
@@ -341,7 +346,7 @@ export const useConfigStore = create<ConfigStore>()(
                 const config = { ...defaultConfig, ...persistedConfig };
                 if (!Array.isArray(persistedConfig.channels)) config.channels = [];
                 const channels = normalizeChannels(config);
-                const models = modelOptionsFromChannels(channels);
+                const modelOrder = normalizeModelOrder(persistedConfig.modelOrder, modelOptionsFromChannels(channels));
                 return {
                     ...current,
                     webdav: { ...defaultWebdavSyncConfig, ...persistedWebdav },
@@ -350,7 +355,8 @@ export const useConfigStore = create<ConfigStore>()(
                         channelMode: "local",
                         apiFormat: normalizeApiFormat(config.apiFormat),
                         channels,
-                        models,
+                        models: modelOrder,
+                        modelOrder,
                         imageModel: normalizeModelOptionValue(config.imageModel || config.model, channels),
                         videoModel: normalizeModelOptionValue(config.videoModel, channels),
                         textModel: normalizeModelOptionValue(config.textModel || config.model, channels),
@@ -471,6 +477,28 @@ export function modelOptionLabel(config: AiConfig, value: string) {
 
 export function modelOptionsFromChannels(channels: ModelChannel[]) {
     return uniqueModelOptions(channels.flatMap((channel) => channel.models.map((model) => encodeChannelModel(channel.id, model.name))));
+}
+
+export function normalizeModelOrder(order: unknown, models: string[]) {
+    const available = new Set(models);
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const value of Array.isArray(order) ? order : []) {
+        if (typeof value !== "string" || !available.has(value) || seen.has(value)) continue;
+        seen.add(value);
+        normalized.push(value);
+    }
+    models.forEach((model) => {
+        if (seen.has(model)) return;
+        seen.add(model);
+        normalized.push(model);
+    });
+    return normalized;
+}
+
+export function modelOptionsForConfig(config: AiConfig) {
+    const models = modelOptionsFromChannels(config.channels);
+    return normalizeModelOrder(config.modelOrder, models.length ? models : config.models);
 }
 
 export function normalizeModelOptionValue(value: string | undefined, channels: ModelChannel[]) {

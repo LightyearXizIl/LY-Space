@@ -3374,6 +3374,7 @@ function InfiniteCanvasPage() {
                             batchOpening={openingBatchIds.has(node.id)}
                             batchRecovering={collapsingBatchIds.has(node.id)}
                             batchMotion={batchMotionById.get(node.id)}
+                            isBatchPrimary={Boolean(node.metadata?.batchRootId && nodeById.get(node.metadata.batchRootId)?.metadata?.primaryImageId === node.id)}
                             showImageInfo={showImageInfo}
                             mentionReferences={mentionReferencesByNodeId.get(node.id) || EMPTY_REFERENCES}
                             pluginHost={pluginHost}

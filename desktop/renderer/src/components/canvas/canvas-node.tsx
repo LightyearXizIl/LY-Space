@@ -42,6 +42,7 @@ type CanvasNodeProps = {
     batchOpening?: boolean;
     batchRecovering?: boolean;
     batchMotion?: { x: number; y: number; index: number };
+    isBatchPrimary?: boolean;
     onMouseDown: (event: React.MouseEvent, nodeId: string) => void;
     onSelectCapture?: (event: React.MouseEvent, nodeId: string) => void;
     onHoverStart: (nodeId: string) => void;
@@ -71,6 +72,7 @@ type NodeContentRendererProps = {
     batchExpanded: boolean;
     batchOpening: boolean;
     batchRecovering: boolean;
+    isBatchPrimary: boolean;
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
     pluginContext?: CanvasNodeContext | null;
     onContentChange: (nodeId: string, content: string) => void;
@@ -106,6 +108,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     batchOpening = false,
     batchRecovering = false,
     batchMotion,
+    isBatchPrimary = false,
     onMouseDown,
     onSelectCapture,
     onHoverStart,
@@ -416,6 +419,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         batchExpanded={batchExpanded}
                         batchOpening={batchOpening}
                         batchRecovering={batchRecovering}
+                        isBatchPrimary={isBatchPrimary}
                         renderNodeContent={renderNodeContent}
                         pluginContext={pluginContext}
                         mentionReferences={mentionReferences}
@@ -624,6 +628,7 @@ function ImageNodeContent(props: NodeContentRendererProps) {
             batchExpanded={props.batchExpanded}
             batchOpening={props.batchOpening}
             batchRecovering={props.batchRecovering}
+            isBatchPrimary={props.isBatchPrimary}
             onToggleBatch={props.onToggleBatch}
             onSetBatchPrimary={props.onSetBatchPrimary}
         />
@@ -685,6 +690,7 @@ function ImageContent({
     batchExpanded,
     batchOpening,
     batchRecovering,
+    isBatchPrimary,
     onToggleBatch,
     onSetBatchPrimary,
 }: {
@@ -694,6 +700,7 @@ function ImageContent({
     batchExpanded: boolean;
     batchOpening: boolean;
     batchRecovering: boolean;
+    isBatchPrimary: boolean;
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
 }) {
@@ -787,8 +794,10 @@ function ImageContent({
             {isBatchChild ? (
                 <button
                     type="button"
-                    className="absolute right-3 top-3 z-30 flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-medium opacity-0 shadow-[0_8px_20px_rgba(68,64,60,.13)] backdrop-blur-md transition group-hover/batch:opacity-100 hover:scale-[1.02]"
+                    className={`absolute right-3 top-3 z-30 flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-medium shadow-[0_8px_20px_rgba(68,64,60,.13)] backdrop-blur-md transition hover:scale-[1.02] ${isBatchPrimary ? "opacity-100" : "opacity-0 group-hover/batch:opacity-100"}`}
                     style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                    aria-label={isBatchPrimary ? "当前主图" : "设为主图"}
+                    aria-pressed={isBatchPrimary}
                     onClick={(event) => {
                         event.stopPropagation();
                         onSetBatchPrimary?.();
@@ -796,8 +805,8 @@ function ImageContent({
                     onMouseDown={(event) => event.stopPropagation()}
                     onPointerDown={(event) => event.stopPropagation()}
                 >
-                    <Star className="size-3.5 text-[#2f80ff]" />
-                    设为主图
+                    <Star className={`size-3.5 transition-[fill,filter] duration-150 ${isBatchPrimary ? "text-[#2f80ff] drop-shadow-[0_0_5px_rgba(47,128,255,.75)]" : "text-[#2f80ff]"}`} fill={isBatchPrimary ? "currentColor" : "none"} />
+                    {isBatchPrimary ? "当前主图" : "设为主图"}
                 </button>
             ) : null}
         </BatchFrame>

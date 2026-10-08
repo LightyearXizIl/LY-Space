@@ -71,6 +71,7 @@ export function sanitizeConfig(value: unknown) {
     if (!channels.length) throw new Error("配置中没有有效模型");
     const merged = { ...defaultConfig, ...source, channels: channels.map((item) => item.channel) } as AiConfig;
     merged.apiFormat = apiFormats.has(source.apiFormat as ApiCallFormat) ? source.apiFormat as ApiCallFormat : defaultConfig.apiFormat;
+    merged.grsaiAccountToken = text(source.grsaiAccountToken);
     merged.channelMode = source.channelMode === "remote" ? "remote" : "local";
     merged.models = Array.isArray(source.models) ? source.models.filter((item): item is string => typeof item === "string") : [];
     merged.modelOrder = normalizeModelOrder(source.modelOrder, modelOptionsFromChannels(merged.channels));

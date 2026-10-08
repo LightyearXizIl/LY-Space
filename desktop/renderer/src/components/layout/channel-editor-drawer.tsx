@@ -1,10 +1,11 @@
-import { Button, Drawer, Input, Segmented, Select, Space } from "antd";
+import { App, Button, Drawer, Input, Segmented, Select, Space } from "antd";
 import { ExternalLink, ListPlus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AGNES_BASE_URL, ARK_AGENT_PLAN_BASE_URL, ARK_STANDARD_BASE_URL, defaultBaseUrlForApiFormat, GRSAI_DOMESTIC_BASE_URL, GRSAI_GLOBAL_BASE_URL, isArkAgentPlanBaseUrl, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ChannelModelCapability, type ImageModelFeature, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
+import { fetchGrsaiApiKeyCredits } from "@/services/api/grsai";
 
 const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
     { label: "OpenAI", value: "openai" },
@@ -32,9 +33,15 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
     const [draft, setDraft] = useState<ModelChannel | null>(channel);
     const [selectOpen, setSelectOpen] = useState(false);
     const [scriptTarget, setScriptTarget] = useState<ScriptTarget | null>(null);
+    const [checkingCredits, setCheckingCredits] = useState(false);
+    const [credits, setCredits] = useState<number | null>(null);
+    const { message } = App.useApp();
 
     useEffect(() => {
-        if (open && channel) setDraft(channel);
+        if (open && channel) {
+            setDraft(channel);
+            setCredits(null);
+        }
     }, [open, channel]);
 
     if (!draft) return null;
@@ -69,6 +76,17 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
     const save = () => {
         onSave({ ...draft, name: draft.name.trim() || "未命名渠道", models: normalizeChannelModels(draft.models) });
         onClose();
+    };
+
+    const checkCredits = async () => {
+        setCheckingCredits(true);
+        try {
+            setCredits(await fetchGrsaiApiKeyCredits(draft.baseUrl, draft.apiKey));
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "GRS AI 积分查询失败");
+        } finally {
+            setCheckingCredits(false);
+        }
     };
 
     return (
@@ -126,6 +144,12 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                 <label className="block md:col-span-2">
                     <span className="mb-1 block text-sm font-medium">API Key</span>
                     <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder="sk-..." />
+                    {draft.apiFormat === "grsai" ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-500">
+                            <Button size="small" loading={checkingCredits} onClick={() => void checkCredits()}>查询 APIKey 积分</Button>
+                            {credits !== null ? <span>当前余额：{credits}</span> : null}
+                        </div>
+                    ) : null}
                 </label>
             </div>
 

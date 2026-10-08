@@ -35,6 +35,14 @@ export async function getMediaBlob(storageKey: string) {
     return store.getItem<Blob>(storageKey);
 }
 
+export async function mediaToDataUrl(item: { url?: string; storageKey?: string }) {
+    const url = item.url || (item.storageKey ? await resolveMediaUrl(item.storageKey) : "");
+    if (!url || url.startsWith("data:")) return url;
+    const blob = item.storageKey ? await getMediaBlob(item.storageKey) : await (await fetch(url)).blob();
+    if (!blob) return url;
+    return blobToDataUrl(blob);
+}
+
 export async function setMediaBlob(storageKey: string, blob: Blob) {
     await trackWrite(store.setItem(storageKey, blob));
     const url = URL.createObjectURL(blob);
@@ -91,5 +99,14 @@ function readAudioMeta(url: string) {
         audio.onloadedmetadata = done;
         audio.onerror = done;
         audio.src = url;
+    });
+}
+
+function blobToDataUrl(blob: Blob) {
+    return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+        reader.onerror = () => reject(reader.error || new Error("媒体无法转换为 Base64"));
+        reader.readAsDataURL(blob);
     });
 }

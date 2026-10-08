@@ -593,7 +593,7 @@ export default function VideoPage() {
                                 </div>
                             </div>
 
-                            <ReferenceImageUploader references={references} setReferences={setReferences} limit={imageReferenceLimit} requiresPublicUrl={(requestConfig.apiFormat === "agnes" || isGrsaiH3) && !resolveModelScript(effectiveConfig, model)} onOpenSettings={() => openConfigDialog(true)} />
+                            <ReferenceImageUploader references={references} setReferences={setReferences} limit={imageReferenceLimit} requiresPublicUrl={requestConfig.apiFormat === "agnes" && !resolveModelScript(effectiveConfig, model)} onOpenSettings={() => openConfigDialog(true)} />
 
                             <div className="min-w-0">
                                 <div className="mb-2 flex items-center justify-between gap-3">

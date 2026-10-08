@@ -47,6 +47,8 @@ export type AiConfig = {
     baseUrl: string;
     apiKey: string;
     apiFormat: ApiCallFormat;
+    /** GRS AI 账户积分接口使用的账户 Token，可选。 */
+    grsaiAccountToken: string;
     channels: ModelChannel[];
     model: string;
     imageModel: string;
@@ -159,6 +161,7 @@ export const defaultConfig: AiConfig = {
     baseUrl: OPENAI_BASE_URL,
     apiKey: "",
     apiFormat: "openai",
+    grsaiAccountToken: "",
     // 默认渠道 OpenAI：不包含任何 key（apiKey 留空），由用户自行填写
     channels: [
         {

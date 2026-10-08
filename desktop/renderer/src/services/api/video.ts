@@ -1,7 +1,7 @@
 import axios from "axios";
 import { nanoid } from "nanoid";
 
-import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
+import { getMediaBlob, mediaToDataUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { saveGeneratedBlob } from "@/services/desktop-storage";
 import { hostReferenceAudio, hostReferenceImage, hostReferenceVideo } from "@/services/image-hosting";
 import { imageToDataUrl, imageToFile } from "@/services/image-storage";
@@ -143,11 +143,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     }
     if (requestConfig.apiFormat === "grsai" && isGrsaiMinimaxH3Model(selectedModel)) {
         if (videoReferences.length) throw new Error("GRS AI minimax-h3 暂不支持参考视频，请移除参考视频后重试");
-        const [publicReferences, publicAudioReferences] = await Promise.all([
-            ensurePublicReferenceUrlsForRequest(references, options, "GRS AI"),
-            ensurePublicAudioReferenceUrlsForRequest(audioReferences, options, "GRS AI"),
-        ]);
-        return createGrsaiVideoTask(requestConfig, selectedModel, prompt, publicReferences, publicAudioReferences, options);
+        return createGrsaiVideoTask(requestConfig, selectedModel, prompt, references, audioReferences, options);
     }
     if (videoReferences.length || audioReferences.length) {
         throw new Error("当前视频接口不支持参考视频或参考音频，请切换到 Seedance 2.0 / 火山 Agent Plan 模型，或移除参考资产");
@@ -339,23 +335,26 @@ export function buildGrsaiVideoRequestBody(config: AiConfig, model: string, prom
     };
 }
 
-function grsaiPublicImageUrl(image: ReferenceImage) {
-    const url = image.url || image.dataUrl;
-    if (!/^https:\/\//i.test(url)) throw new Error("GRS AI 视频只接受公网 HTTPS 参考图片 URL，请先配置 OSS 或改用公网图片 URL");
-    return url;
+async function grsaiImageInput(image: ReferenceImage) {
+    if (!image.storageKey && /^https:\/\//i.test(image.url || "")) return image.url;
+    const dataUrl = await imageToDataUrl(image);
+    if (!dataUrl) throw new Error("GRS AI 视频参考图片无法读取");
+    return dataUrl;
 }
 
-function grsaiPublicAudioUrl(audio: ReferenceAudio) {
-    if (!/^https:\/\//i.test(audio.url)) throw new Error("GRS AI 视频只接受公网 HTTPS 参考音频 URL，请先配置 OSS 或改用公网音频 URL");
-    return audio.url;
+async function grsaiAudioInput(audio: ReferenceAudio) {
+    if (!audio.storageKey && /^https:\/\//i.test(audio.url || "")) return audio.url;
+    const dataUrl = await mediaToDataUrl(audio);
+    if (!dataUrl) throw new Error("GRS AI 视频参考音频无法读取");
+    return dataUrl;
 }
 
 async function createGrsaiVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
     if (references.length > 9) throw new Error("GRS AI minimax-h3 最多支持 9 张参考图");
     if (audioReferences.length > 3) throw new Error("GRS AI minimax-h3 最多支持 3 个参考音频");
     if (references.length + audioReferences.length > 12) throw new Error("GRS AI minimax-h3 参考素材总数不能超过 12 个");
-    const images = references.slice(0, 9).map(grsaiPublicImageUrl);
-    const audios = audioReferences.slice(0, 3).map(grsaiPublicAudioUrl);
+    const images = await Promise.all(references.slice(0, 9).map(grsaiImageInput));
+    const audios = await Promise.all(audioReferences.slice(0, 3).map(grsaiAudioInput));
     try {
         const created = (await axios.post<GrsaiVideoTask>(aiApiUrl(config, "/api/generate"), buildGrsaiVideoRequestBody(config, model, prompt, images, audios), {
             headers: aiHeaders(config, "application/json"),

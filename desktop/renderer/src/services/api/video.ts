@@ -336,7 +336,8 @@ export function buildGrsaiVideoRequestBody(config: AiConfig, model: string, prom
 }
 
 async function grsaiImageInput(image: ReferenceImage) {
-    if (!image.storageKey && /^https:\/\//i.test(image.url || "")) return image.url;
+    const remoteUrl = image.url || "";
+    if (!image.storageKey && /^https:\/\//i.test(remoteUrl)) return remoteUrl;
     const dataUrl = await imageToDataUrl(image);
     if (!dataUrl) throw new Error("GRS AI 视频参考图片无法读取");
     return dataUrl;

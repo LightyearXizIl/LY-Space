@@ -794,8 +794,8 @@ function ImageContent({
             {isBatchChild ? (
                 <button
                     type="button"
-                    className={`absolute right-3 top-3 z-30 flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-medium shadow-[0_8px_20px_rgba(68,64,60,.13)] backdrop-blur-md transition hover:scale-[1.02] ${isBatchPrimary ? "opacity-100" : "opacity-0 group-hover/batch:opacity-100"}`}
-                    style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                    className={`absolute right-3 top-3 z-30 flex h-9 items-center rounded-xl border text-xs font-medium transition-all duration-300 ease-out ${isBatchPrimary ? "border-transparent bg-transparent px-0 opacity-100 shadow-none" : "px-2.5 opacity-0 shadow-[0_8px_20px_rgba(68,64,60,.13)] backdrop-blur-md group-hover/batch:opacity-100 hover:scale-[1.02]"}`}
+                    style={isBatchPrimary ? { color: theme.node.text } : { background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
                     aria-label={isBatchPrimary ? "当前主图" : "设为主图"}
                     aria-pressed={isBatchPrimary}
                     onClick={(event) => {
@@ -805,8 +805,10 @@ function ImageContent({
                     onMouseDown={(event) => event.stopPropagation()}
                     onPointerDown={(event) => event.stopPropagation()}
                 >
-                    <Star className={`size-3.5 transition-[fill,filter] duration-150 ${isBatchPrimary ? "text-[#2f80ff] drop-shadow-[0_0_5px_rgba(47,128,255,.75)]" : "text-[#2f80ff]"}`} fill={isBatchPrimary ? "currentColor" : "none"} />
-                    {isBatchPrimary ? "当前主图" : "设为主图"}
+                    <Star className={`size-3.5 shrink-0 transition-all duration-300 ${isBatchPrimary ? "scale-110 text-[#2f80ff] drop-shadow-[0_0_6px_rgba(47,128,255,.8)]" : "text-[#2f80ff]"}`} fill={isBatchPrimary ? "currentColor" : "none"} />
+                    <span className={`grid min-w-0 overflow-hidden transition-all duration-300 ease-out ${isBatchPrimary ? "ml-0 grid-cols-[0fr] opacity-0" : "ml-1.5 grid-cols-[1fr] opacity-100"}`}>
+                        <span className="overflow-hidden whitespace-nowrap">设为主图</span>
+                    </span>
                 </button>
             ) : null}
         </BatchFrame>

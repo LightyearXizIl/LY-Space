@@ -31,6 +31,36 @@ const MODEL_CATALOG_CATEGORIES: ModelCatalogCategory[] = ["text", "vision", "ima
 const MODEL_CLASSIFICATION_SOURCES: ModelClassificationSource[] = ["upstream", "preset", "inferred", "manual"];
 const CHANNEL_MODEL_CAPABILITIES: ChannelModelCapability[] = ["image", "video", "text", "audio", "unknown"];
 
+/**
+ * 余额查询方式：
+ * - auto：自动依次尝试该协议已知的余额端点，命中即用（推荐）。
+ * - grsai：GRS AI 专用（POST /client/openapi/getAPIKeyCredits）。
+ * - wallet：钱包类接口（星流 /v1/wallet 等）。
+ * - openai-billing：OpenAI 账单类接口（dashboard/billing/credit_grants 等，one-api/new-api 系）。
+ * - custom：使用自定义路径与方法。
+ */
+export type BalanceQueryMode = "auto" | "grsai" | "wallet" | "openai-billing" | "custom";
+
+/** 渠道余额查询配置：用渠道自身的 API Key 查询中转站的余额/积分。 */
+export type ChannelBalanceQuery = {
+    /** 是否启用余额查询。 */
+    enabled: boolean;
+    /** 查询方式，默认 auto（自动探测）。 */
+    mode: BalanceQueryMode;
+    /** 自定义方式的请求方法，默认 GET。 */
+    method?: "GET" | "POST";
+    /** 自定义方式的鉴权位置：header 走 Bearer，body 写入 bodyKey 字段，默认 header。 */
+    authMode?: "header" | "body";
+    /** 自定义方式写入请求体的字段名，默认 apiKey。 */
+    bodyKey?: string;
+    /** 自定义方式相对 Base URL 的查询路径（经 buildApiUrl 自动补 /v1）。 */
+    path: string;
+    /** 金额字段名或点路径（例如 data.balance）；留空时按端点内置字段与常见字段自动识别。 */
+    field?: string;
+    /** 刷新间隔（秒），默认 60，最小 10，最大 3600。 */
+    intervalSec?: number;
+};
+
 export type ModelChannel = {
     id: string;
     name: string;
@@ -38,6 +68,8 @@ export type ModelChannel = {
     apiKey: string;
     apiFormat: ApiCallFormat;
     models: ChannelModel[];
+    /** 余额查询配置；缺省或未启用时顶栏不显示余额。 */
+    balanceQuery?: ChannelBalanceQuery;
     /** 是否启用；缺省视为启用（兼容旧数据）。禁用后其模型从选择器中隐藏，请求解析回退到其他启用渠道。 */
     enabled?: boolean;
 };
@@ -47,8 +79,6 @@ export type AiConfig = {
     baseUrl: string;
     apiKey: string;
     apiFormat: ApiCallFormat;
-    /** GRS AI 账户积分接口使用的账户 Token，可选。 */
-    grsaiAccountToken: string;
     channels: ModelChannel[];
     model: string;
     imageModel: string;
@@ -161,7 +191,6 @@ export const defaultConfig: AiConfig = {
     baseUrl: OPENAI_BASE_URL,
     apiKey: "",
     apiFormat: "openai",
-    grsaiAccountToken: "",
     // 默认渠道 OpenAI：不包含任何 key（apiKey 留空），由用户自行填写
     channels: [
         {
@@ -452,6 +481,28 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
     return result;
 }
 
+/** 相对路径，经 buildApiUrl 拼接会自动补 /v1（星流为 /v1/wallet，故此处填 /wallet）。 */
+export const DEFAULT_BALANCE_PATH = "/wallet";
+export const DEFAULT_BALANCE_INTERVAL_SEC = 60;
+export const DEFAULT_BALANCE_MODE: BalanceQueryMode = "auto";
+
+const BALANCE_QUERY_MODES: BalanceQueryMode[] = ["auto", "grsai", "wallet", "openai-billing", "custom"];
+
+export function createBalanceQuery(value?: Partial<ChannelBalanceQuery>): ChannelBalanceQuery {
+    const intervalSec = Number(value?.intervalSec);
+    const mode = value?.mode && BALANCE_QUERY_MODES.includes(value.mode) ? value.mode : DEFAULT_BALANCE_MODE;
+    return {
+        enabled: value?.enabled === true,
+        mode,
+        ...(value?.method === "POST" ? { method: "POST" as const } : {}),
+        ...(value?.authMode === "body" ? { authMode: "body" as const } : {}),
+        ...(value?.bodyKey?.trim() ? { bodyKey: value.bodyKey.trim() } : {}),
+        path: value?.path?.trim() || DEFAULT_BALANCE_PATH,
+        ...(value?.field?.trim() ? { field: value.field.trim() } : {}),
+        intervalSec: Number.isFinite(intervalSec) ? Math.min(3600, Math.max(10, Math.round(intervalSec))) : DEFAULT_BALANCE_INTERVAL_SEC,
+    };
+}
+
 export function createModelChannel(channel?: Partial<ModelChannel>): ModelChannel {
     const apiFormat = normalizeApiFormat(channel?.apiFormat);
     return {
@@ -461,6 +512,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         apiKey: channel?.apiKey || "",
         apiFormat,
         models: normalizeChannelModels(channel?.models),
+        balanceQuery: createBalanceQuery(channel?.balanceQuery),
         enabled: channel?.enabled !== false,
     };
 }

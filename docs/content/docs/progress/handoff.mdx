@@ -9,8 +9,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；本次发布版本为 `v0.8.6`）。
-- **本次发布状态**：`v0.8.6` 已由 GitHub Actions `37757254033` 构建并正式发布；真实 GRS AI 收费调用与桌面交互仍需人工验收。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；本次发布版本为 `v0.8.7`）。
+- **本次发布状态**：`v0.8.7` 已推 tag 触发 GitHub Actions `publish-desktop.yml` 构建发布（CI 结果见 GitHub Actions）；渠道余额查询与主图星标精简仍需人工验收。
 - **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；通用 AI 接口仍可由渲染进程直连，方舟请求在桌面端通过受限主进程 HTTPS 代理；文档站是独立 Next.js 项目（`docs/`，bun）
@@ -27,7 +27,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：源码与最新已核验 Release 均为 v0.8.6。
+- **当前版本**：源码与最新已核验 Release 均为 v0.8.7。
 
 ## 2. 数据存储
 
@@ -44,6 +44,27 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **历史教训**：NSIS `CopyFiles "$INSTDIR\目录\*.*"` 不会递归复制子目录，旧 `customRemoveFiles` 随后执行 `RMDir /r` 会丢失嵌套数据。不得再把用户数据放回安装目录，也不得用通配符复制冒充递归备份。
 
 ## 3. 关键链路与已修复的坑
+
+### v0.8.7：渠道余额查询与画布顶栏显示
+
+- **背景**：原 GRS AI 的 APIKey 积分与账户积分查询（`services/api/grsai.ts`、渠道编辑器按钮、偏好设置账户 Token）被判定做法不对，**已整体移除**；改由通用的「渠道余额查询」承载。
+- **数据模型**（`stores/use-config-store.ts`）：`ModelChannel.balanceQuery?: { enabled, mode, method?, authMode?, bodyKey?, path, field?, intervalSec? }`，由 `createBalanceQuery` 归一化。`mode` 取 `auto | grsai | wallet | openai-billing | custom`，默认 `auto`。**新增渠道字段必须经 `createModelChannel` 透传**（persist merge 与导入导出都走它，漏了会丢字段）；`services/config-file.ts` 的 `sanitizeChannel` 走 `createBalanceQuery`，无需单独改。
+- **查询服务**（`services/api/balance.ts`）：内置端点表 `PROBES`，`auto` 模式按「本渠道协议优先 → 其余兜底」顺序依次尝试，命中即写入内存缓存 `probeCache`（按渠道 id），后续轮询直接走缓存端点。已内置：
+  - `grsai-apikey-credits`：**POST** `{base}/client/openapi/getAPIKeyCredits`，body `{apiKey}`，**控制面地址**（去掉 Base 末尾 `/v1`，不自动补 `/v1`），字段 `data.credits`。**已用真实 Key 实测**：返回 `{"code":0,"data":{"credits":0,...},"msg":"success"}`，`credits: 0` 是有效值。
+  - `openai-credit-grants` / `openai-subscription`：GET `/dashboard/billing/credit_grants`、`/dashboard/billing/subscription`（经 `buildApiUrl` 补 `/v1`），字段 `total_available` / `hard_limit_usd`，面向 one-api/new-api 系。**未实测**。
+  - `wallet` / `credits`：GET `/wallet`、`/credits`（星流类）。
+- **URL 规则**（易错点）：非控制面端点一律交给 `buildApiUrl(baseUrl, path)` 拼接，`path` 必须是相对路径（星流填 `/wallet` → `/v1/wallet`）；**填 `/v1/wallet` 会变成 `/v1/v1/wallet`**。GRS 控制面反过来要去掉 `/v1`。
+- **取值规则**：优先用户 `field` → 端点内置字段 → 常见字段自动识别（在顶层与 `data` / `data.data` / `result` 中找 `balance / remaining / available / total_available / credits / credit / quota / amount / hard_limit_usd / total_granted`）。**`0` 是合法余额，必须按命中返回**，不能当"未找到"。币种未识别时不臆造符号（只显示数字）。
+- **错误聚合**：逐个端点尝试，任一返回 401/403 即判定「API Key 无效或无权限」；否则汇总为「未找到可用的余额接口（已尝试 N 个端点）」并给出最近失败原因。**消息与日志均不含 API Key**。
+- **顶栏徽标**（`components/layout/channel-balance-badge.tsx`）：插在 `CanvasTopBar` 右侧 `UserStatusActions` 之前（原红框位置）。按 `resolveModelChannel(config, config.model)` 取当前渠道，定时轮询 + 点击刷新；`depKey` 已含 `mode/method/authMode/bodyKey/path/field`，改配置会自动重查；未启用余额查询时不渲染，遵循顶栏极简扁平风格（无边框、无底色、仅轻微 hover）。
+- **配置入口**：渠道编辑器「余额查询」区块（开关 / **查询方式下拉** / 金额字段 / 刷新间隔 / 测试查询）；仅在 `mode === custom` 时才显示 路径、请求方法、鉴权位置、请求体字段名。
+- **验证边界**：GRS AI 已端到端实测通过；星流 `/v1/wallet` 返回结构**仍未验证**（无 Key、前端未引用、无 OpenAPI）；one-api/new-api 的 `dashboard/billing/*` 依据社区通用规范实现，**同样未实测**。火山方舟（官方 AK/SK 签名计费）与 Agnes **预计无 API Key 余额接口**，失败时静默、不影响其它功能。字段结构不符时只需改「金额字段」，无需改代码。
+- **星流接口备忘**：`/v1/models`、`/v1/chat/completions`、`/v1/images/generations`、`/v1/videos/generations`（复数）、`/v1/wallet`、`/v1/usage` 均走 API Key；`/api/v1/*`（`auth/me`、`keys`、`usage`、`subscriptions/*`）走网页登录 Token（`INVALID_TOKEN`）；`/dashboard/billing/*` 返回 200 但只是 SPA 兜底 HTML，不是接口。
+
+### v0.8.7：图片组「当前主图」星标精简
+
+- **改动**（`components/canvas/canvas-node.tsx` `isBatchChild` 徽标）：主图态不再显示「当前主图」文字与矩形底板，只在图片右上角保留发光星标。点亮时文字用 `grid-template-columns: 1fr → 0fr`（内层 `overflow-hidden`）折叠收起，配合按钮 `border/bg/shadow → 透明` 的过渡，形成「星星向右推进并擦除文字、停在右上角」的效果；星标 `fill` + `drop-shadow` + `scale-110` 表现点亮。
+- **坑**：**不要给该按钮加 `overflow-hidden`**——会裁掉星标 `drop-shadow` 的发光；文字显隐交给内层折叠容器裁剪即可。反向（取消主图）按同一过渡展开，无残影。
 
 ### v0.8.6：GRS AI H3 本地素材与积分查询
 

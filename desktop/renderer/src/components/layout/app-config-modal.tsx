@@ -12,7 +12,6 @@ import { OssSettingsPanel } from "@/components/layout/oss-settings-panel";
 import { FeaturePluginCenter } from "@/components/layout/feature-plugin-center";
 import { exportAppConfig, importAppConfig } from "@/services/config-file";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
-import { fetchGrsaiAccountCredits } from "@/services/api/grsai";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import { createModelChannel, modelOptionsFromChannels, normalizeModelOptionValue, normalizeModelOrder, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
@@ -70,8 +69,6 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const [webdavDomainProgress, setWebdavDomainProgress] = useState(createWebdavDomainProgress);
     const [storageSettings, setStorageSettings] = useState<StorageSettings | null>(null);
     const [savingStorage, setSavingStorage] = useState(false);
-    const [checkingGrsaiCredits, setCheckingGrsaiCredits] = useState(false);
-    const [grsaiCredits, setGrsaiCredits] = useState<number | null>(null);
     const config = useConfigStore((state) => state.config);
     const webdav = useConfigStore((state) => state.webdav);
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -85,13 +82,11 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const audioSpeedDraft = useDraftInput(config.audioSpeed);
     const audioInstructionsDraft = useDraftInput(config.audioInstructions);
     const systemPromptDraft = useDraftInput(config.systemPrompt);
-    const grsaiAccountTokenDraft = useDraftInput(config.grsaiAccountToken);
     const webdavUrlDraft = useDraftInput(webdav.url);
     const webdavDirectoryDraft = useDraftInput(webdav.directory);
     const webdavUsernameDraft = useDraftInput(webdav.username);
     const webdavPasswordDraft = useDraftInput(webdav.password);
     const editingChannel = config.channels.find((channel) => channel.id === editingChannelId) || editingDraft;
-    const grsaiChannel = config.channels.find((channel) => channel.apiFormat === "grsai" && channel.enabled !== false);
     useEffect(() => setActiveTab(initialTab), [initialTab]);
     useEffect(() => {
         if (!window.lySpaceDesktop) return;
@@ -221,21 +216,6 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
             message.error(error instanceof Error ? error.message : "WebDAV 连接测试失败");
         } finally {
             setTestingWebdav(false);
-        }
-    };
-
-    const checkGrsaiAccountCredits = async () => {
-        if (!grsaiChannel) {
-            message.error("请先配置一个 GRS AI 渠道");
-            return;
-        }
-        setCheckingGrsaiCredits(true);
-        try {
-            setGrsaiCredits(await fetchGrsaiAccountCredits(grsaiChannel.baseUrl, grsaiAccountTokenDraft.value));
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "GRS AI 账户积分查询失败");
-        } finally {
-            setCheckingGrsaiCredits(false);
         }
     };
 
@@ -380,14 +360,6 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                 </Form.Item>
                                 <Form.Item label="系统提示词" className="mb-0">
                                     <Input.TextArea rows={4} value={systemPromptDraft.value} placeholder="例如：你是一位擅长电影感写实摄影的视觉导演。" onChange={systemPromptDraft.onChange} onBlur={() => updateConfig("systemPrompt", systemPromptDraft.value)} />
-                                </Form.Item>
-                                <div className="mt-6 mb-2 text-sm font-semibold">GRS AI 账户</div>
-                                <Form.Item label="账户 Token" extra="用于查询账户积分余额，可选；APIKey 积分请在对应 GRS AI 渠道中查询。" className="mb-0">
-                                    <div className="flex gap-2">
-                                        <Input.Password className="min-w-0 flex-1" value={grsaiAccountTokenDraft.value} placeholder="账户 Token" onChange={grsaiAccountTokenDraft.onChange} onBlur={() => updateConfig("grsaiAccountToken", grsaiAccountTokenDraft.value)} />
-                                        <Button loading={checkingGrsaiCredits} onClick={() => void checkGrsaiAccountCredits()}>查询账户积分</Button>
-                                    </div>
-                                    {grsaiCredits !== null ? <div className="mt-2 text-xs text-stone-500">当前账户余额：{grsaiCredits}</div> : null}
                                 </Form.Item>
                             </Form>
                         ),

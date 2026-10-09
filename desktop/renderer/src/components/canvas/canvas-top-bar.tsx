@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { BookOpen, Download, Home, Images, Menu, PanelLeftClose, PanelLeftOpen, Plus, Redo2, Trash2, Undo2, Upload } from "lucide-react";
 import { Dropdown, Modal, Tooltip } from "antd";
 
+import { ChannelBalanceBadge } from "@/components/layout/channel-balance-badge";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { isImeComposing } from "@/lib/keyboard-event";
@@ -140,6 +141,7 @@ export const CanvasTopBar = memo(function CanvasTopBar({
                 </div>
 
                 <div className="pointer-events-auto flex items-center gap-1.5">
+                    <ChannelBalanceBadge />
                     <UserStatusActions variant="canvas" onOpenShortcuts={() => setShortcutsOpen(true)} onOpenPlugins={onOpenPlugins} />
                 </div>
             </div>

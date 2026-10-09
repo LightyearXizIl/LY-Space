@@ -1,6 +1,6 @@
 import { saveAs } from "file-saver";
 
-import { useConfigStore, defaultConfig, defaultWebdavSyncConfig, normalizeChannelModels, normalizeModelOrder, modelOptionsFromChannels, type AiConfig, type ApiCallFormat, type ArkThinkingMode, type ChannelModel, type ChannelModelCapability, type ModelCatalogCategory, type ModelClassificationSource, type ModelChannel, type WebdavSyncConfig } from "@/stores/use-config-store";
+import { useConfigStore, defaultConfig, defaultWebdavSyncConfig, normalizeChannelModels, normalizeModelOrder, modelOptionsFromChannels, createBalanceQuery, type AiConfig, type ApiCallFormat, type ArkThinkingMode, type ChannelBalanceQuery, type ChannelModel, type ChannelModelCapability, type ModelCatalogCategory, type ModelClassificationSource, type ModelChannel, type WebdavSyncConfig } from "@/stores/use-config-store";
 import { usePromptSourceStore, type PromptSourceSchedule } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 
@@ -59,7 +59,7 @@ function sanitizeChannel(value: unknown): { channel: ModelChannel; skippedScript
     const models = source.models.map(sanitizeModel).filter((item): item is NonNullable<ReturnType<typeof sanitizeModel>> => Boolean(item));
     if (!models.length) return null;
     return {
-        channel: { id: text(source.id).trim() || crypto.randomUUID(), name: text(source.name).trim() || "导入渠道", baseUrl: text(source.baseUrl).trim(), apiKey: text(source.apiKey), apiFormat: source.apiFormat as ApiCallFormat, models: normalizeChannelModels(models.map((item) => item.model)), enabled: source.enabled !== false },
+        channel: { id: text(source.id).trim() || crypto.randomUUID(), name: text(source.name).trim() || "导入渠道", baseUrl: text(source.baseUrl).trim(), apiKey: text(source.apiKey), apiFormat: source.apiFormat as ApiCallFormat, models: normalizeChannelModels(models.map((item) => item.model)), balanceQuery: createBalanceQuery(source.balanceQuery as Partial<ChannelBalanceQuery> | undefined), enabled: source.enabled !== false },
         skippedScripts: models.filter((item) => item.skippedScript).length,
     };
 }
@@ -71,7 +71,6 @@ export function sanitizeConfig(value: unknown) {
     if (!channels.length) throw new Error("配置中没有有效模型");
     const merged = { ...defaultConfig, ...source, channels: channels.map((item) => item.channel) } as AiConfig;
     merged.apiFormat = apiFormats.has(source.apiFormat as ApiCallFormat) ? source.apiFormat as ApiCallFormat : defaultConfig.apiFormat;
-    merged.grsaiAccountToken = text(source.grsaiAccountToken);
     merged.channelMode = source.channelMode === "remote" ? "remote" : "local";
     merged.models = Array.isArray(source.models) ? source.models.filter((item): item is string => typeof item === "string") : [];
     merged.modelOrder = normalizeModelOrder(source.modelOrder, modelOptionsFromChannels(merged.channels));

@@ -10,7 +10,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 ## 0. 给 ZCode 的快速上手
 
 - **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；本次发布版本为 `v0.8.7`）。
-- **本次发布状态**：`v0.8.7` 已推 tag 触发 GitHub Actions `publish-desktop.yml` 构建发布（CI 结果见 GitHub Actions）；渠道余额查询与主图星标精简仍需人工验收。
+- **本次发布状态**：`v0.8.7` 已由 GitHub Actions `37880831478` 构建并正式发布（Release 含 `LY-Space-Setup-0.8.7.exe` / `.blockmap` / `latest.yml`，说明取自 CHANGELOG）；渠道余额查询与主图星标精简仍需人工验收。
 - **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；通用 AI 接口仍可由渲染进程直连，方舟请求在桌面端通过受限主进程 HTTPS 代理；文档站是独立 Next.js 项目（`docs/`，bun）

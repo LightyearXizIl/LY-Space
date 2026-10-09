@@ -12,10 +12,8 @@ import { FeaturePluginHost } from "@/components/layout/feature-plugin-host";
 export function ClientRootInit({ children }: { children: ReactNode }) {
     const { message } = App.useApp();
     const handledConfigParams = useRef(false);
-    const handledDesktopInit = useRef(false);
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const config = useConfigStore((state) => state.config);
-    const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
 
     usePromptSourceScheduler();
 
@@ -74,15 +72,8 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         );
         if (baseUrl) updateConfig("baseUrl", baseUrl);
         if (apiKey) updateConfig("apiKey", apiKey);
-        openConfigDialog(false);
         message.success("已导入本地直连配置");
-    }, [config.channels, message, openConfigDialog, updateConfig]);
-
-    useEffect(() => {
-        if (handledDesktopInit.current || !window.lySpaceDesktop) return;
-        handledDesktopInit.current = true;
-        if (!config.channels.some((channel) => channel.apiKey.trim())) openConfigDialog(false, "channels");
-    }, [config.channels, openConfigDialog]);
+    }, [config.channels, message, updateConfig]);
 
     return (
         <>

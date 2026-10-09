@@ -124,8 +124,11 @@ function copyDirectoryExact(source, target) {
 
 function replaceDirectoryFromSnapshot({ source, target, expected, backupRoot, label }) {
     if (!expected?.length) return false;
+    const targetManifest = fs.existsSync(target) ? directoryManifest(target) : [];
+    // 用户当前目录只要已有文件，就不能被陈旧升级快照覆盖。
+    // 空目录仍允许完成首次恢复；快照损坏时也必须保留已有用户数据。
+    if (targetManifest.length) return false;
     assertManifest(source, expected, `${label}快照`);
-    if (fs.existsSync(target) && sameManifest(directoryManifest(target), expected)) return false;
     const parent = path.dirname(target);
     const stage = `${target}.migrating-${MIGRATION_VERSION}-${process.pid}`;
     fs.mkdirSync(parent, { recursive: true });
@@ -209,23 +212,28 @@ function restoreBridgeBackup({ userData, localAppData, documents, storageConfigF
     try {
         const cacheTarget = current.dataCache?.restoreTarget || defaultCacheRoot;
         const resultTarget = current.result?.restoreTarget || defaultResultRoot;
+        const cacheTargetManifest = fs.existsSync(cacheTarget) ? directoryManifest(cacheTarget) : [];
+        const resultTargetManifest = fs.existsSync(resultTarget) ? directoryManifest(resultTarget) : [];
         const cacheMigrated = (useDefaultCache || current.dataCache?.restoreTarget) && current.dataCache
-            ? replaceDirectoryFromSnapshot({ source: path.join(bridge.backupRoot, current.dataCache.directory), target: cacheTarget, expected: current.dataCache.files, backupRoot: bridge.backupRoot, label: "Data cache" })
+            ? (cacheTargetManifest.length ? false : replaceDirectoryFromSnapshot({ source: path.join(bridge.backupRoot, current.dataCache.directory), target: cacheTarget, expected: current.dataCache.files, backupRoot: bridge.backupRoot, label: "Data cache" }))
             : false;
         const resultMigrated = (useDefaultResult || current.result?.restoreTarget) && current.result
-            ? replaceDirectoryFromSnapshot({ source: path.join(bridge.backupRoot, current.result.directory), target: resultTarget, expected: current.result.files, backupRoot: bridge.backupRoot, label: "Result" })
+            ? (resultTargetManifest.length ? false : replaceDirectoryFromSnapshot({ source: path.join(bridge.backupRoot, current.result.directory), target: resultTarget, expected: current.result.files, backupRoot: bridge.backupRoot, label: "Result" }))
             : false;
+        const preservedExisting = [];
+        if (cacheTargetManifest.length) preservedExisting.push("Data cache");
+        if (resultTargetManifest.length) preservedExisting.push("Result");
         let settingsChanged = false;
-        if (cacheMigrated && isOldDefault(saved.cacheRoot, bridge.manifest.installDir, "Data cache")) {
+        if ((cacheMigrated || cacheTargetManifest.length) && isOldDefault(saved.cacheRoot, bridge.manifest.installDir, "Data cache")) {
             saved.cacheRoot = cacheTarget;
             settingsChanged = true;
         }
-        if (resultMigrated && isOldDefault(saved.resultRoot, bridge.manifest.installDir, "Result")) {
+        if ((resultMigrated || resultTargetManifest.length) && isOldDefault(saved.resultRoot, bridge.manifest.installDir, "Result")) {
             saved.resultRoot = resultTarget;
             settingsChanged = true;
         }
         if (settingsChanged) writeJsonAtomic(storageConfigFile, saved);
-        writeJsonAtomic(stateFile, { version: MIGRATION_VERSION, status: "completed", backupRoot: bridge.backupRoot, cacheMigrated, resultMigrated, completedAt: new Date().toISOString() });
+        writeJsonAtomic(stateFile, { version: MIGRATION_VERSION, status: "completed", backupRoot: bridge.backupRoot, cacheMigrated, resultMigrated, preservedExisting, completedAt: new Date().toISOString() });
         return { migrated: cacheMigrated || resultMigrated, installDir: bridge.manifest.installDir, backupRoot: bridge.backupRoot };
     } catch (error) {
         writeJsonAtomic(stateFile, { version: MIGRATION_VERSION, status: "failed", backupRoot: bridge.backupRoot, error: error instanceof Error ? error.message : String(error), failedAt: new Date().toISOString() });

@@ -12,6 +12,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；本次发布版本为 `v0.8.7`）。
 - **本次发布状态**：`v0.8.7` 已由 GitHub Actions `37880831478` 构建并正式发布（Release 含 `LY-Space-Setup-0.8.7.exe` / `.blockmap` / `latest.yml`，说明取自 CHANGELOG）；渠道余额查询与主图星标精简仍需人工验收。
 - **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
+- **修复状态**：源码已加固 `restoreBridgeBackup`：目标目录存在文件时永不被升级快照覆盖，并记录已保留现有数据的迁移状态；v0.8.7 已安装包仍需替换为包含该修复的版本后才生效。另一台电脑的现场根因仍待日志确认。接手时若遇到「渠道全空但画布还在」，先看第 3 节「渠道配置丢失排查与恢复」。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；通用 AI 接口仍可由渲染进程直连，方舟请求在桌面端通过受限主进程 HTTPS 代理；文档站是独立 Next.js 项目（`docs/`，bun）
 - **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`
@@ -36,6 +37,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 | 生成结果文件 | `文档\LY Space\Result\`（Picture/Video/text/Audio 四文件夹） | 生成后立即自动落盘 |
 | 数据缓存（IndexedDB/Local Storage） | `%APPDATA%\LY Space\Data cache\` | 画布、设置、素材、生成记录与媒体 Blob；`sessionData` 指向它 |
 | 存储配置 | `%APPDATA%\LY Space\app-data\storage-settings.json` | 用户可改 resultRoot/cacheRoot |
+| AI 渠道配置 | `%APPDATA%\LY Space\Data cache\Local Storage\leveldb\` | 键 `infinite-canvas:ai_config_store`，值 UTF-16LE，真实结构 `state.config.channels`；丢失排查见第 3 节「渠道配置丢失排查与恢复」 |
 | 上次下载目录 | `%APPDATA%\LY Space\app-data\last-save-directory.txt` | 下载对话框默认沿用上次目录 |
 
 - **存储策略（v0.4.7 起）**：默认用户数据与程序文件彻底分离；用户自定义过的结果/缓存目录保持不变，换目录安装不覆盖用户设置。
@@ -50,7 +52,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **背景**：原 GRS AI 的 APIKey 积分与账户积分查询（`services/api/grsai.ts`、渠道编辑器按钮、偏好设置账户 Token）被判定做法不对，**已整体移除**；改由通用的「渠道余额查询」承载。
 - **数据模型**（`stores/use-config-store.ts`）：`ModelChannel.balanceQuery?: { enabled, mode, method?, authMode?, bodyKey?, path, field?, intervalSec? }`，由 `createBalanceQuery` 归一化。`mode` 取 `auto | grsai | wallet | openai-billing | custom`，默认 `auto`。**新增渠道字段必须经 `createModelChannel` 透传**（persist merge 与导入导出都走它，漏了会丢字段）；`services/config-file.ts` 的 `sanitizeChannel` 走 `createBalanceQuery`，无需单独改。
 - **查询服务**（`services/api/balance.ts`）：内置端点表 `PROBES`，`auto` 模式按「本渠道协议优先 → 其余兜底」顺序依次尝试，命中即写入内存缓存 `probeCache`（按渠道 id），后续轮询直接走缓存端点。已内置：
-  - `grsai-apikey-credits`：**POST** `{base}/client/openapi/getAPIKeyCredits`，body `{apiKey}`，**控制面地址**（去掉 Base 末尾 `/v1`，不自动补 `/v1`），字段 `data.credits`。**已用真实 Key 实测**：返回 `{"code":0,"data":{"credits":0,...},"msg":"success"}`，`credits: 0` 是有效值。
+  - `grsai-account-credits`：优先 **GET** `{base}/client/common/getCredits?apikey={apiKey}`，**控制面地址**（去掉 Base 末尾 `/v1`，不自动补 `/v1`），按 `data.credits`、`credits`、`data.balance`、`balance`、`data.remaining`、`remaining` 读取账户积分；该路径来自 GRS 官方旧版 API 文档，国内节点的真实返回仍待用用户 Key 核实。
+  - `grsai-apikey-credits`：账户积分接口失败后回退 **POST** `{base}/client/openapi/getAPIKeyCredits`，body `{apiKey}`，同样使用控制面地址，字段 `data.credits`。`credits: 0` 是合法值，不能当成“未找到字段”。
   - `openai-credit-grants` / `openai-subscription`：GET `/dashboard/billing/credit_grants`、`/dashboard/billing/subscription`（经 `buildApiUrl` 补 `/v1`），字段 `total_available` / `hard_limit_usd`，面向 one-api/new-api 系。**未实测**。
   - `wallet` / `credits`：GET `/wallet`、`/credits`（星流类）。
 - **URL 规则**（易错点）：非控制面端点一律交给 `buildApiUrl(baseUrl, path)` 拼接，`path` 必须是相对路径（星流填 `/wallet` → `/v1/wallet`）；**填 `/v1/wallet` 会变成 `/v1/v1/wallet`**。GRS 控制面反过来要去掉 `/v1`。
@@ -58,13 +61,30 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **错误聚合**：逐个端点尝试，任一返回 401/403 即判定「API Key 无效或无权限」；否则汇总为「未找到可用的余额接口（已尝试 N 个端点）」并给出最近失败原因。**消息与日志均不含 API Key**。
 - **顶栏徽标**（`components/layout/channel-balance-badge.tsx`）：插在 `CanvasTopBar` 右侧 `UserStatusActions` 之前（原红框位置）。按 `resolveModelChannel(config, config.model)` 取当前渠道，定时轮询 + 点击刷新；`depKey` 已含 `mode/method/authMode/bodyKey/path/field`，改配置会自动重查；未启用余额查询时不渲染，遵循顶栏极简扁平风格（无边框、无底色、仅轻微 hover）。
 - **配置入口**：渠道编辑器「余额查询」区块（开关 / **查询方式下拉** / 金额字段 / 刷新间隔 / 测试查询）；仅在 `mode === custom` 时才显示 路径、请求方法、鉴权位置、请求体字段名。
-- **验证边界**：GRS AI 已端到端实测通过；星流 `/v1/wallet` 返回结构**仍未验证**（无 Key、前端未引用、无 OpenAPI）；one-api/new-api 的 `dashboard/billing/*` 依据社区通用规范实现，**同样未实测**。火山方舟（官方 AK/SK 签名计费）与 Agnes **预计无 API Key 余额接口**，失败时静默、不影响其它功能。字段结构不符时只需改「金额字段」，无需改代码。
+- **验证边界**：GRS AI 的账户积分新路径和 API Key 回退路径已加入自动化测试，但国内节点的真实返回仍需用户用自己的 Key 验收；星流 `/v1/wallet` 返回结构**仍未验证**（无 Key、前端未引用、无 OpenAPI）；one-api/new-api 的 `dashboard/billing/*` 依据社区通用规范实现，**同样未实测**。火山方舟（官方 AK/SK 签名计费）与 Agnes **预计无 API Key 余额接口**，失败时静默、不影响其它功能。字段结构不符时只需改「金额字段」，无需改代码。
 - **星流接口备忘**：`/v1/models`、`/v1/chat/completions`、`/v1/images/generations`、`/v1/videos/generations`（复数）、`/v1/wallet`、`/v1/usage` 均走 API Key；`/api/v1/*`（`auth/me`、`keys`、`usage`、`subscriptions/*`）走网页登录 Token（`INVALID_TOKEN`）；`/dashboard/billing/*` 返回 200 但只是 SPA 兜底 HTML，不是接口。
 
 ### v0.8.7：图片组「当前主图」星标精简
 
 - **改动**（`components/canvas/canvas-node.tsx` `isBatchChild` 徽标）：主图态不再显示「当前主图」文字与矩形底板，只在图片右上角保留发光星标。点亮时文字用 `grid-template-columns: 1fr → 0fr`（内层 `overflow-hidden`）折叠收起，配合按钮 `border/bg/shadow → 透明` 的过渡，形成「星星向右推进并擦除文字、停在右上角」的效果；星标 `fill` + `drop-shadow` + `scale-110` 表现点亮。
 - **坑**：**不要给该按钮加 `overflow-hidden`**——会裁掉星标 `drop-shadow` 的发光；文字显隐交给内层折叠容器裁剪即可。反向（取消主图）按同一过渡展开，无残影。
+
+### 渠道配置丢失排查与恢复（2026-10-09，v0.8.7 后追加，源码已加固）
+
+- **现象**：另一台电脑（已配好渠道 + 应用内自动更新）升级后配置页**渠道全部为空**，画布等用户数据仍在。目前**只是疑似**由下述「升级桥」造成，**根因尚未坐实**。
+- **渠道配置存放位置**：`%APPDATA%\LY Space\Data cache\Local Storage\leveldb\*.log|*.ldb`（**不是** IndexedDB）。键为 ASCII 的 `infinite-canvas:ai_config_store`，**值是 UTF-16LE 编码的 JSON**，真实结构是 `state.config.channels`（不是 `state.channels`）。运行中的应用会独占活动文件，取证必须用 `FileShare.ReadWrite` 共享读。
+- **升级桥机制**（`desktop/storage-migration.cjs` 的 `restoreBridgeBackup`，由 `main.cjs` 的 `configureStorageBeforeReady()` 在窗口创建前调用）：
+  1. 读 `%LOCALAPPDATA%\LY Space\Backups\latest.json` → `backupRoot` → `manifest.json`，仅当 `version === "v0.4.7"` 且 `status === "ready"` 才生效；
+  2. 读 `%APPDATA%\LY Space\app-data\migration-v0.4.7.json`，**只有 `status === "completed"` 才跳过**，文件不存在或为 `failed` 等其他值都会继续；
+  3. 继续时用快照的 `current-install\Data cache` **整体替换** `%APPDATA%\LY Space\Data cache`（`replaceDirectoryFromSnapshot`，目标清单与快照一致时才跳过）。**Data cache 里就有渠道配置**，所以这一步等价于「渠道被回退成旧快照的样子」。
+- **陈旧快照从哪来**：`desktop/build/backup-user-data.ps1` 在 `$INSTDIR\Data cache` 与 `$INSTDIR\Result` **都不存在**时直接 `exit 0`（第 90 行），**不会刷新 `latest.json`**。用户数据自 v0.4.7 起已分离到 `%APPDATA%`，安装目录通常没有这两个目录，于是 `latest.json` 长期指向**很久以前**的一次备份；此时只有 `migration-v0.4.7.json` 的 `completed` 标记在挡着——两处只要有一处不成立，启动就会用旧快照盖掉当前 Data cache。
+- **恢复路径（按优先级）**：
+  1. `%LOCALAPPDATA%\LY Space\Backups\<backupRoot>\replaced-destinations\Data cache\...`：被替换前的原目录会被整份归档在此（`storage-migration.cjs` 第 140 行），**这是找回「丢掉的渠道」最直接的来源**；
+  2. 跑离线取证脚本 `ly-space-config-rescue.ps1`（工作区根 `E:\Vibe coding\LY Space\`，**未纳入仓库**）：共享读扫描 `Data cache\Local Storage\leveldb`、storage-settings 里自定义的 `cacheRoot`、以及 `Backups` 下**所有** `.log/.ldb`（含 `replaced-destinations`），按渠道数排序取最优，在桌面生成可导入的 `infinite-canvas-config-recovered.json`；
+  3. 用另一台正常电脑导出的配置走「配置 → 导入配置」。导入文件需满足 `app === "infinite-canvas"`、`version === 1`、`promptSources` 为真值（`promptSources.sources` 传 `null` 可避免覆盖原有提示词来源）。
+- **待坐实根因**：需那台机器提供 `%APPDATA%\LY Space\app-data\storage-settings.json`、`app-data\migration-v0.4.7.json`（是否存在、`status` 值）、`%LOCALAPPDATA%\LY Space\Backups\latest.json`、`Backups\upgrade-backup-error.log` 四份材料。
+- **防复发加固（源码已实施）**：`restoreBridgeBackup` 在恢复前检查缓存和结果目录；目标目录存在文件时直接保留并写入完成状态，只有不存在或为空时才恢复快照。回归覆盖迁移状态缺失、`failed`、空目录恢复和重复启动；仍需在实际升级环境安装包含该修复的版本进行人工验收。
+- **坑**：`.ps1` 必须带 UTF-8 BOM（PowerShell 5.1 否则按 ANSI 解码，中文乱码甚至触发语法错误），见 3.27；本机沙箱策略可能禁止直接执行 `.ps1`，验证逻辑时改用内联命令或等价实现。
 
 ### v0.8.6：GRS AI H3 本地素材与积分查询
 
@@ -524,6 +544,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - `docs/content/docs/progress/pending-test.mdx`：Agnes 中国站（`api.agnes-ai.cn`）视频生成实测（平台维护中）、参考图托管链路、OSS 配置
 - **精修工作台待验收**：3.32 参考图重构已随 v0.5.6 发布，人工验收清单见 `pending-test.mdx` 顶部（空状态/上传/缩放平移/原图对比/四页签/撤销重做/导出发送/多分辨率与主题）；验收通过前不得更新 features.mdx。
 - 用户当前重点：画布中文输入法未提交修复的保护与人工验收、精修工作台参考图重构、画布交互体验（框选/连线/指针）、窗口与主题适配
+- **渠道配置丢失（待用户配合）**：那台机器的 4 份取证材料未提供，现场根因未坐实；源码已加入 `restoreBridgeBackup` 防复发保护，仍需安装包含该修复的版本后人工验收（均见第 3 节「渠道配置丢失排查与恢复」）
 
 ## 7. 用户偏好
 

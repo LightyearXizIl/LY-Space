@@ -59,18 +59,55 @@ test("双快照完整复制并把当前安装数据恢复到稳定目录", () =>
         assert.ok(sameManifest(bridge.manifest.snapshots.currentInstall.dataCache.files, expectedCache));
         assert.ok(sameManifest(bridge.manifest.snapshots.currentInstall.result.files, expectedResult));
         assert.ok(sameManifest(bridge.manifest.snapshots.legacyUserData.files, expectedLegacy));
+        fs.rmSync(path.join(data.userData, "Data cache"), { recursive: true, force: true });
+        fs.rmSync(path.join(data.documents, "LY Space", "Result"), { recursive: true, force: true });
 
         const restored = restoreBridgeBackup(data);
         assert.equal(restored.migrated, true);
         assert.ok(sameManifest(directoryManifest(path.join(data.userData, "Data cache")), expectedCache));
         assert.ok(sameManifest(directoryManifest(path.join(data.documents, "LY Space", "Result")), expectedResult));
         assert.equal(fs.readFileSync(path.join(data.userData, "app-data", "nested", "sentinel.bin"), "utf8"), "应用数据嵌套哨兵");
-        assert.equal(fs.readFileSync(path.join(bridge.backupRoot, "replaced-destinations", "Data cache", "stale.txt"), "utf8"), "旧目标缓存");
-        assert.equal(fs.readFileSync(path.join(bridge.backupRoot, "replaced-destinations", "Result", "old.txt"), "utf8"), "旧目标结果");
 
         const second = restoreBridgeBackup(data);
         assert.equal(second.migrated, false);
         assert.ok(sameManifest(directoryManifest(path.join(data.userData, "Data cache")), expectedCache));
+    } finally {
+        fs.rmSync(data.root, { recursive: true, force: true });
+    }
+});
+
+test("非空目标目录始终保留，不因缺失或失败状态再次覆盖", () => {
+    const data = fixture();
+    try {
+        const bridge = runBackup(data);
+        const currentConfig = path.join(data.userData, "Data cache", "Local Storage", "leveldb", "CURRENT-USER-DATA");
+        write(data.storageConfigFile, JSON.stringify({
+            cacheRoot: path.join(data.installDir, "Data cache"),
+            resultRoot: path.join(data.installDir, "Result"),
+        }));
+        write(currentConfig, "用户后来添加的渠道 API");
+        const stateFile = path.join(data.userData, "app-data", "migration-v0.4.7.json");
+        const beforeCache = directoryManifest(path.join(data.userData, "Data cache"));
+        const beforeResult = directoryManifest(path.join(data.documents, "LY Space", "Result"));
+
+        const restored = restoreBridgeBackup(data);
+        assert.equal(restored.migrated, false);
+        assert.ok(sameManifest(directoryManifest(path.join(data.userData, "Data cache")), beforeCache));
+        assert.ok(sameManifest(directoryManifest(path.join(data.documents, "LY Space", "Result")), beforeResult));
+        const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+        assert.equal(state.status, "completed");
+        assert.deepEqual(state.preservedExisting, ["Data cache", "Result"]);
+        assert.equal(fs.readFileSync(currentConfig, "utf8"), "用户后来添加的渠道 API");
+        const saved = JSON.parse(fs.readFileSync(data.storageConfigFile, "utf8"));
+        assert.equal(saved.cacheRoot, path.join(data.userData, "Data cache"));
+        assert.equal(saved.resultRoot, path.join(data.documents, "LY Space", "Result"));
+
+        write(currentConfig, "用户重新确认后的渠道 API");
+        write(stateFile, JSON.stringify({ version: "v0.4.7", status: "failed" }));
+        const second = restoreBridgeBackup(data);
+        assert.equal(second.migrated, false);
+        assert.equal(fs.readFileSync(currentConfig, "utf8"), "用户重新确认后的渠道 API");
+        assert.ok(bridge);
     } finally {
         fs.rmSync(data.root, { recursive: true, force: true });
     }
@@ -108,6 +145,8 @@ test("旧默认目录恢复完成后才原子写入新的稳定目录", () => {
             keep: "保留其他配置",
         }));
         runBackup(data);
+        fs.rmSync(path.join(data.userData, "Data cache"), { recursive: true, force: true });
+        fs.rmSync(path.join(data.documents, "LY Space", "Result"), { recursive: true, force: true });
 
         restoreBridgeBackup(data);
         const saved = JSON.parse(fs.readFileSync(data.storageConfigFile, "utf8"));
@@ -167,8 +206,9 @@ test("快照损坏时拒绝恢复并保留原目标", () => {
         const bridge = runBackup(data);
         const snapshotFile = path.join(bridge.backupRoot, "current-install", "Data cache", "Local Storage", "leveldb", "000003.log");
         write(snapshotFile, "已损坏");
+        fs.rmSync(path.join(data.userData, "Data cache"), { recursive: true, force: true });
         assert.throws(() => restoreBridgeBackup(data), /快照.*校验失败/);
-        assert.equal(fs.readFileSync(path.join(data.userData, "Data cache", "stale.txt"), "utf8"), "旧目标缓存");
+        assert.equal(fs.readFileSync(path.join(data.documents, "LY Space", "Result", "old.txt"), "utf8"), "旧目标结果");
     } finally {
         fs.rmSync(data.root, { recursive: true, force: true });
     }
@@ -179,6 +219,8 @@ test("恢复复制中断时保留原目标且修复后可以重试", () => {
     const originalCopyFileSync = fs.copyFileSync;
     try {
         runBackup(data);
+        fs.rmSync(path.join(data.userData, "Data cache"), { recursive: true, force: true });
+        fs.rmSync(path.join(data.documents, "LY Space", "Result"), { recursive: true, force: true });
         let injected = false;
         fs.copyFileSync = (...args) => {
             if (!injected) {
@@ -188,7 +230,7 @@ test("恢复复制中断时保留原目标且修复后可以重试", () => {
             return originalCopyFileSync(...args);
         };
         assert.throws(() => restoreBridgeBackup(data), /模拟复制失败/);
-        assert.equal(fs.readFileSync(path.join(data.userData, "Data cache", "stale.txt"), "utf8"), "旧目标缓存");
+        assert.equal(fs.existsSync(path.join(data.userData, "Data cache")), false);
 
         fs.copyFileSync = originalCopyFileSync;
         const retried = restoreBridgeBackup(data);

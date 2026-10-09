@@ -20,10 +20,12 @@ type BalanceProbe = {
     method: "GET" | "POST";
     /** 相对 Base URL 的路径；经 buildApiUrl 会自动补 /v1。 */
     path: string;
-    /** 鉴权位置：header 走 Bearer；body 把 API Key 写进 bodyKey 字段。 */
-    auth: "header" | "body";
+    /** 鉴权位置：header 走 Bearer；body 写入 bodyKey；query 写入 queryKey。 */
+    auth: "header" | "body" | "query";
     /** auth=body 时写入请求体的字段名。 */
     bodyKey?: string;
+    /** auth=query 时写入 URL 查询参数的字段名。 */
+    queryKey?: string;
     /** true 表示使用控制面地址（去掉 Base 末尾的 /v1），不自动补 /v1。 */
     controlPlane?: boolean;
     /** 优先尝试的金额字段（点路径）。 */
@@ -34,10 +36,11 @@ type BalanceProbe = {
 
 /**
  * 已知中转站的余额端点。auto 模式按「本渠道协议优先 → 其余兜底」的顺序依次尝试。
- * 各站接口形态差异很大：GRS 是 POST + body 带 key 的控制面接口；星流是 GET + Bearer；
+ * 各站接口形态差异很大：GRS 同时提供 API Key 积分和账户积分接口；星流是 GET + Bearer；
  * one-api/new-api 系沿用 OpenAI 账单端点。新增站点只需在此追加一条。
  */
 const PROBES: BalanceProbe[] = [
+    { id: "grsai-account-credits", label: "GRS AI · 账户积分", method: "GET", path: "/client/common/getCredits", auth: "query", queryKey: "apikey", controlPlane: true, fields: ["data.credits", "credits", "data.balance", "balance", "data.remaining", "remaining"], formats: ["grsai"] },
     { id: "grsai-apikey-credits", label: "GRS AI · APIKey 积分", method: "POST", path: "/client/openapi/getAPIKeyCredits", auth: "body", bodyKey: "apiKey", controlPlane: true, fields: ["data.credits", "credits"], formats: ["grsai"] },
     { id: "openai-credit-grants", label: "OpenAI 账单 · 授信额度", method: "GET", path: "/dashboard/billing/credit_grants", auth: "header", fields: ["total_available", "data.total_available", "total_granted"], formats: ["openai"] },
     { id: "openai-subscription", label: "OpenAI 账单 · 订阅额度", method: "GET", path: "/dashboard/billing/subscription", auth: "header", fields: ["hard_limit_usd", "data.hard_limit_usd", "system_hard_limit_usd"], formats: ["openai"] },
@@ -118,7 +121,13 @@ function probeUrl(channel: ModelChannel, probe: BalanceProbe) {
     if (probe.controlPlane) {
         const base = channel.baseUrl.trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
         if (!base) throw new Error("请先配置渠道接口地址");
-        return `${base}${probe.path}`;
+        const url = `${base}${probe.path}`;
+        if (probe.auth === "query") {
+            const key = channel.apiKey.trim();
+            if (!key) throw new Error("请先填写该渠道的 API Key");
+            return `${url}?${encodeURIComponent(probe.queryKey || "apiKey")}=${encodeURIComponent(key)}`;
+        }
+        return url;
     }
     return resolveBalanceUrl(channel.baseUrl, probe.path);
 }
@@ -160,7 +169,7 @@ async function runProbe(channel: ModelChannel, probe: BalanceProbe, query: Chann
     if (probe.auth === "body") {
         body = { [probe.bodyKey || "apiKey"]: channel.apiKey.trim() };
         headers["Content-Type"] = "application/json";
-    } else {
+    } else if (probe.auth === "header") {
         headers.Authorization = `Bearer ${channel.apiKey.trim()}`;
     }
     const response =

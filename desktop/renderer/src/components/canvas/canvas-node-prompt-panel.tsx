@@ -5,7 +5,7 @@ import { Button, Modal, Tooltip } from "antd";
 import { ModelPicker } from "@/components/model-picker";
 import { CanvasCameraPopover } from "./canvas-camera-popover";
 import { usePromptOptimizer } from "@/hooks/use-prompt-optimizer";
-import { defaultConfig, resolveModelForCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, normalizeImageQuality, resolveModelForCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
@@ -176,7 +176,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         textModel: node.metadata?.textModel || globalConfig.textModel || defaultConfig.textModel,
         reasoningEffort: node.metadata?.reasoningEffort || globalConfig.reasoningEffort || defaultConfig.reasoningEffort,
         arkThinkingMode: node.metadata?.arkThinkingMode || globalConfig.arkThinkingMode || defaultConfig.arkThinkingMode,
-        quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
+        quality: normalizeImageQuality(node.metadata?.quality || globalConfig.quality || defaultConfig.quality),
         imageResolution: node.metadata?.imageResolution || globalConfig.imageResolution || defaultConfig.imageResolution,
         size: node.metadata?.size || globalConfig.size || defaultConfig.size,
         background: node.metadata?.background ?? globalConfig.background ?? defaultConfig.background,

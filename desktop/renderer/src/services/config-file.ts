@@ -1,6 +1,6 @@
 import { saveAs } from "file-saver";
 
-import { useConfigStore, defaultConfig, defaultWebdavSyncConfig, normalizeChannelModels, normalizeModelOrder, modelOptionsFromChannels, createBalanceQuery, type AiConfig, type ApiCallFormat, type ArkThinkingMode, type ChannelBalanceQuery, type ChannelModel, type ChannelModelCapability, type ModelCatalogCategory, type ModelClassificationSource, type ModelChannel, type WebdavSyncConfig } from "@/stores/use-config-store";
+import { useConfigStore, defaultConfig, defaultWebdavSyncConfig, normalizeChannelModels, normalizeImageQuality, normalizeModelGroupOrder, normalizeModelOrder, modelOptionsFromChannels, createBalanceQuery, type AiConfig, type ApiCallFormat, type ArkThinkingMode, type ChannelBalanceQuery, type ChannelModel, type ChannelModelCapability, type ModelCatalogCategory, type ModelClassificationSource, type ModelChannel, type WebdavSyncConfig } from "@/stores/use-config-store";
 import { usePromptSourceStore, type PromptSourceSchedule } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 
@@ -75,6 +75,8 @@ export function sanitizeConfig(value: unknown) {
     merged.models = Array.isArray(source.models) ? source.models.filter((item): item is string => typeof item === "string") : [];
     merged.modelOrder = normalizeModelOrder(source.modelOrder, modelOptionsFromChannels(merged.channels));
     merged.models = merged.modelOrder;
+    merged.modelGroupOrder = normalizeModelGroupOrder(source.modelGroupOrder, merged.channels.map((channel) => channel.id));
+    merged.quality = normalizeImageQuality(source.quality);
     merged.imageResolution = imageResolutions.has(source.imageResolution as AiConfig["imageResolution"]) ? source.imageResolution as AiConfig["imageResolution"] : defaultConfig.imageResolution;
     merged.reasoningEffort = reasoningEfforts.has(source.reasoningEffort as AiConfig["reasoningEffort"]) ? source.reasoningEffort as AiConfig["reasoningEffort"] : defaultConfig.reasoningEffort;
     merged.arkThinkingMode = arkThinkingModes.has(source.arkThinkingMode as ArkThinkingMode) ? source.arkThinkingMode as ArkThinkingMode : defaultConfig.arkThinkingMode;

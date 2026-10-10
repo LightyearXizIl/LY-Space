@@ -1,9 +1,9 @@
-import { Fragment, useEffect, useId, useMemo, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useState, type DragEvent } from "react";
 import { ChevronDown, ChevronUp, Cpu, GripVertical } from "lucide-react";
 
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { decodeChannelModel, modelOptionLabel, modelOptionName, modelOptionsForConfig, normalizeModelOrder, selectableModelsByCapability, useConfigStore, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { decodeChannelModel, modelOptionLabel, modelOptionName, modelOptionsForConfig, normalizeModelGroupOrder, normalizeModelOrder, selectableModelsByCapability, useConfigStore, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 
 type ModelPickerProps = {
     config: AiConfig;
@@ -27,7 +27,10 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     const pickerId = useId();
     const [open, setOpen] = useState(false);
     const [draggingModel, setDraggingModel] = useState<{ groupKey: string; model: string } | null>(null);
+    const [draggingGroup, setDraggingGroup] = useState<string | null>(null);
+    const [dragOver, setDragOver] = useState<{ kind: "model" | "group"; key: string; position: "before" | "after" } | null>(null);
     const reorderModels = useConfigStore((state) => state.reorderModels);
+    const reorderModelGroups = useConfigStore((state) => state.reorderModelGroups);
     const options = useMemo(() => Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...selectableModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))), [capability, config, value]);
     const groups = useMemo(() => groupModelOptions(config, options), [config, options]);
     const current = value || "";
@@ -52,7 +55,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
     };
 
     const dropModel = (groupKey: string, targetModel: string) => {
-        if (!draggingModel || draggingModel.groupKey !== groupKey || draggingModel.model === targetModel) return;
+        if (!draggingModel || draggingModel.groupKey !== groupKey || draggingModel.model === targetModel || !dragOver || dragOver.kind !== "model") return;
         const group = groups.find((item) => item.key === groupKey);
         if (!group) return;
         const next = [...group.models];
@@ -60,9 +63,46 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
         const targetIndex = next.indexOf(targetModel);
         if (sourceIndex < 0 || targetIndex < 0) return;
         next.splice(sourceIndex, 1);
-        next.splice(targetIndex, 0, draggingModel.model);
+        const adjustedTargetIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+        next.splice(adjustedTargetIndex + (dragOver.position === "after" ? 1 : 0), 0, draggingModel.model);
         commitGroupOrder(groupKey, next);
         setDraggingModel(null);
+        setDragOver(null);
+    };
+
+    const commitVisibleGroupOrder = (nextVisibleGroups: string[]) => {
+        const allGroups = config.channels.map((channel) => channel.id);
+        const visibleGroups = new Set(groups.map((group) => group.key));
+        const hiddenGroups = normalizeModelGroupOrder(config.modelGroupOrder, allGroups).filter((group) => !visibleGroups.has(group));
+        reorderModelGroups(normalizeModelGroupOrder([...nextVisibleGroups, ...hiddenGroups], allGroups));
+    };
+
+    const moveGroup = (groupKey: string, direction: -1 | 1) => {
+        const index = groups.findIndex((group) => group.key === groupKey);
+        const targetIndex = index + direction;
+        if (index < 0 || targetIndex < 0 || targetIndex >= groups.length) return;
+        const next = groups.map((group) => group.key);
+        [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
+        commitVisibleGroupOrder(next.filter((group) => config.channels.some((channel) => channel.id === group)));
+    };
+
+    const dropGroup = (targetGroup: string) => {
+        if (!draggingGroup || draggingGroup === targetGroup || !dragOver || dragOver.kind !== "group") return;
+        const next = groups.map((group) => group.key);
+        const sourceIndex = next.indexOf(draggingGroup);
+        const targetIndex = next.indexOf(targetGroup);
+        if (sourceIndex < 0 || targetIndex < 0) return;
+        next.splice(sourceIndex, 1);
+        const adjustedTargetIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+        next.splice(adjustedTargetIndex + (dragOver.position === "after" ? 1 : 0), 0, draggingGroup);
+        commitVisibleGroupOrder(next.filter((group) => config.channels.some((channel) => channel.id === group)));
+        setDraggingGroup(null);
+        setDragOver(null);
+    };
+
+    const updateDragPosition = (event: DragEvent<HTMLElement>, kind: "model" | "group", key: string) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        setDragOver({ kind, key, position: event.clientY < rect.top + rect.height / 2 ? "before" : "after" });
     };
 
     useEffect(() => {
@@ -115,9 +155,42 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                             <Fragment key={group.key}>
                                 {groupIndex ? <SelectSeparator /> : null}
                                 <SelectGroup>
-                                    <SelectLabel className="flex items-center justify-between px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground">
-                                        <span>{group.label}</span>
-                                        <span className="font-normal opacity-70">{group.models.length}</span>
+                                    <SelectLabel
+                                        draggable={sortable}
+                                        className={cn("group relative flex items-center justify-between px-2 pb-1 pt-2 text-[11px] font-medium text-muted-foreground", sortable && draggingGroup === group.key && "opacity-50")}
+                                        onDragStart={(event) => {
+                                            if (!sortable) return;
+                                            setDraggingGroup(group.key);
+                                            event.dataTransfer.effectAllowed = "move";
+                                            event.dataTransfer.setData("text/plain", group.key);
+                                        }}
+                                        onDragOver={(event) => {
+                                            if (!sortable || !draggingGroup || draggingGroup === group.key) return;
+                                            event.preventDefault();
+                                            event.dataTransfer.dropEffect = "move";
+                                            updateDragPosition(event, "group", group.key);
+                                        }}
+                                        onDrop={(event) => {
+                                            event.preventDefault();
+                                            if (sortable) dropGroup(group.key);
+                                        }}
+                                        onDragEnd={() => {
+                                            setDraggingGroup(null);
+                                            setDragOver(null);
+                                        }}
+                                    >
+                                        {sortable && dragOver?.kind === "group" && dragOver.key === group.key && dragOver.position === "before" ? <span className="pointer-events-none absolute inset-x-1 top-0 h-0.5 rounded-full bg-primary" /> : null}
+                                        <span className="flex min-w-0 items-center gap-1.5"><GripVertical className={cn("size-3.5", sortable ? "cursor-grab" : "opacity-0")} aria-hidden="true" />{group.label}</span>
+                                        <span className="flex items-center gap-0.5 font-normal opacity-70">
+                                            <span>{group.models.length}</span>
+                                            {sortable ? (
+                                                <>
+                                                    <button type="button" className="rounded p-0.5 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-30" disabled={groupIndex === 0} aria-label={`将 ${group.label} 上移`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.preventDefault(); event.stopPropagation(); moveGroup(group.key, -1); }}><ChevronUp className="size-3.5" /></button>
+                                                    <button type="button" className="rounded p-0.5 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-30" disabled={groupIndex === groups.length - 1} aria-label={`将 ${group.label} 下移`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.preventDefault(); event.stopPropagation(); moveGroup(group.key, 1); }}><ChevronDown className="size-3.5" /></button>
+                                                </>
+                                            ) : null}
+                                        </span>
+                                        {sortable && dragOver?.kind === "group" && dragOver.key === group.key && dragOver.position === "after" ? <span className="pointer-events-none absolute inset-x-1 bottom-0 h-0.5 rounded-full bg-primary" /> : null}
                                     </SelectLabel>
                                     {group.models.map((model, modelIndex) => (
                                         <SelectItem
@@ -125,7 +198,13 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                                             value={model}
                                             textValue={modelOptionLabel(config, model)}
                                             draggable={sortable}
-                                            className={cn("group", sortable && draggingModel?.model === model && "opacity-50")}
+                                            className={cn("group relative", sortable && draggingModel?.model === model && "opacity-50")}
+                                            onSelect={(event) => {
+                                                if (!sortable) return;
+                                                event.preventDefault();
+                                                onChange(model);
+                                                setOpen(false);
+                                            }}
                                             onDragStart={(event) => {
                                                 if (!sortable) return;
                                                 setDraggingModel({ groupKey: group.key, model });
@@ -133,29 +212,36 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                                                 event.dataTransfer.setData("text/plain", model);
                                             }}
                                             onDragOver={(event) => {
-                                            if (sortable && draggingModel?.groupKey === group.key) {
+                                                if (sortable && draggingModel?.groupKey === group.key) {
                                                     event.preventDefault();
                                                     event.dataTransfer.dropEffect = "move";
+                                                    updateDragPosition(event, "model", model);
                                                 }
                                             }}
                                             onDrop={(event) => {
                                                 event.preventDefault();
-                                            if (sortable) dropModel(group.key, model);
+                                                if (sortable) dropModel(group.key, model);
                                             }}
-                                            onDragEnd={() => sortable && setDraggingModel(null)}
+                                            onDragEnd={() => {
+                                                if (!sortable) return;
+                                                setDraggingModel(null);
+                                                setDragOver(null);
+                                            }}
                                         >
+                                            {sortable && dragOver?.kind === "model" && dragOver.key === model && dragOver.position === "before" ? <span className="pointer-events-none absolute inset-x-1 top-0 z-10 h-0.5 rounded-full bg-primary" /> : null}
                                             <ModelLabel config={config} model={model} />
                                             {sortable ? (
                                                 <span className="ml-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                                                     <GripVertical className="mr-0.5 size-3.5 cursor-grab text-muted-foreground" aria-hidden="true" />
-                                                    <button type="button" className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-30" disabled={modelIndex === 0} aria-label={`将 ${modelOptionLabel(config, model)} 上移`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.stopPropagation(); moveModel(group.key, model, -1); }}>
+                                                    <button type="button" className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-30" disabled={modelIndex === 0} aria-label={`将 ${modelOptionLabel(config, model)} 上移`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.preventDefault(); event.stopPropagation(); moveModel(group.key, model, -1); }}>
                                                         <ChevronUp className="size-3.5" />
                                                     </button>
-                                                    <button type="button" className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-30" disabled={modelIndex === group.models.length - 1} aria-label={`将 ${modelOptionLabel(config, model)} 下移`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.stopPropagation(); moveModel(group.key, model, 1); }}>
+                                                    <button type="button" className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-30" disabled={modelIndex === group.models.length - 1} aria-label={`将 ${modelOptionLabel(config, model)} 下移`} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.preventDefault(); event.stopPropagation(); moveModel(group.key, model, 1); }}>
                                                         <ChevronDown className="size-3.5" />
                                                     </button>
                                                 </span>
                                             ) : null}
+                                            {sortable && dragOver?.kind === "model" && dragOver.key === model && dragOver.position === "after" ? <span className="pointer-events-none absolute inset-x-1 bottom-0 z-10 h-0.5 rounded-full bg-primary" /> : null}
                                         </SelectItem>
                                     ))}
                                 </SelectGroup>
@@ -182,7 +268,7 @@ function groupModelOptions(config: AiConfig, options: string[]): ModelPickerGrou
         group.models.push(model);
         groups.set(key, group);
     });
-    const channelOrder = new Map(config.channels.map((channel, index) => [channel.id, index]));
+    const channelOrder = new Map(normalizeModelGroupOrder(config.modelGroupOrder, config.channels.map((channel) => channel.id)).map((key, index) => [key, index]));
     return [...groups.values()].sort((a, b) => (channelOrder.get(a.key) ?? Number.MAX_SAFE_INTEGER) - (channelOrder.get(b.key) ?? Number.MAX_SAFE_INTEGER));
 }
 

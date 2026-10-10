@@ -14,7 +14,7 @@ import { exportAppConfig, importAppConfig } from "@/services/config-file";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import { createModelChannel, modelOptionsFromChannels, normalizeModelOptionValue, normalizeModelOrder, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { createModelChannel, grsaiSupportedImageResolutions, highestSupportedImageResolution, modelOptionsFromChannels, normalizeModelGroupOrder, normalizeImageQuality, normalizeModelOptionValue, normalizeModelOrder, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { logAppEvent } from "@/services/app-logger";
 
 type ModelGroup = {
@@ -37,6 +37,14 @@ const modelGroups: ModelGroup[] = [
     { capability: "text", modelKey: "textModel", defaultLabel: "默认文本模型" },
     { capability: "audio", modelKey: "audioModel", defaultLabel: "默认音频模型" },
 ];
+
+const imageResolutionOptions = [
+    { value: "1k", label: "1K" },
+    { value: "2k", label: "2K" },
+    { value: "4k", label: "4K" },
+    { value: "8k", label: "8K" },
+] as const;
+const imageQualityOptions = ["low", "medium", "high", "xhigh", "max"].map((value) => ({ value, label: value }));
 
 const webdavDomainKeys: AppSyncDomainKey[] = ["canvas", "assets", "image-workbench", "video-workbench"];
 const webdavDomainLabels: Record<AppSyncDomainKey, string> = {
@@ -170,6 +178,12 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     };
 
     const updateChannels = (channels: ModelChannel[]) => saveConfig(withChannels(config, channels));
+    const updateDefaultImageModel = (model: string) => {
+        updateConfig("imageModel", model);
+        const requestConfig = resolveModelRequestConfig(config, model);
+        const supported = requestConfig.apiFormat === "grsai" ? grsaiSupportedImageResolutions(requestConfig.model) : imageResolutionOptions.map((item) => item.value);
+        if (!supported.includes(config.imageResolution)) updateConfig("imageResolution", highestSupportedImageResolution(supported));
+    };
 
     const addChannel = () => {
         const channel = createModelChannel({ name: `渠道 ${config.channels.length + 1}` });
@@ -321,12 +335,12 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                 <div className="mb-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                                     {modelGroups.map((group) => (
                                         <Form.Item key={group.modelKey} label={group.defaultLabel} className="mb-0">
-                                            <ModelPicker config={config} value={config[group.modelKey]} onChange={(model) => updateConfig(group.modelKey, model)} capability={group.capability} sortable fullWidth />
+                                            <ModelPicker config={config} value={config[group.modelKey]} onChange={(model) => group.capability === "image" ? updateDefaultImageModel(model) : updateConfig(group.modelKey, model)} capability={group.capability} sortable fullWidth />
                                         </Form.Item>
                                     ))}
                                 </div>
                                 <div className="mb-2 text-sm font-semibold">生成偏好</div>
-                                <div className="grid gap-4 md:grid-cols-4">
+                                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                                     <Form.Item label="画布默认生图张数" extra="新建画布生图和配置节点默认使用，单个节点仍可单独覆盖。" className="mb-4">
                                         <Input
                                             type="number"
@@ -353,6 +367,16 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                             onChange={audioSpeedDraft.onChange}
                                             onBlur={() => updateConfig("audioSpeed", normalizeAudioSpeedValue(audioSpeedDraft.value))}
                                         />
+                                    </Form.Item>
+                                    <Form.Item label="默认图片分辨率" className="mb-4">
+                                        <Select
+                                            value={config.imageResolution}
+                                            options={imageResolutionOptions.map((option) => ({ ...option, disabled: !supportedImageResolutions(config, config.imageModel).includes(option.value) }))}
+                                            onChange={(value) => updateConfig("imageResolution", value)}
+                                        />
+                                    </Form.Item>
+                                    <Form.Item label="默认图片质量" className="mb-4">
+                                        <Select value={normalizeImageQuality(config.quality)} options={imageQualityOptions} onChange={(value) => updateConfig("quality", value)} />
                                     </Form.Item>
                                 </div>
                                 <Form.Item label="默认音频指令" className="mb-4">
@@ -499,6 +523,7 @@ function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
         channels,
         models: modelOrder,
         modelOrder,
+        modelGroupOrder: normalizeModelGroupOrder(config.modelGroupOrder, channels.map((channel) => channel.id)),
         baseUrl: channels[0]?.baseUrl || config.baseUrl,
         apiKey: channels[0]?.apiKey || config.apiKey,
         apiFormat: channels[0]?.apiFormat || config.apiFormat,
@@ -510,6 +535,11 @@ function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
         textModel: pickDefaultModel(next, "text", config.textModel),
         audioModel: pickDefaultModel(next, "audio", config.audioModel),
     };
+}
+
+function supportedImageResolutions(config: AiConfig, model: string) {
+    const requestConfig = resolveModelRequestConfig(config, model || config.model);
+    return requestConfig.apiFormat === "grsai" ? grsaiSupportedImageResolutions(requestConfig.model) : imageResolutionOptions.map((item) => item.value);
 }
 
 function pickDefaultModel(config: AiConfig, capability: ModelCapability, current: string) {

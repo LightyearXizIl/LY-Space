@@ -6,13 +6,13 @@ import { saveAs } from "file-saver";
 
 import { CameraTrigger } from "@/components/camera-trigger";
 import { ReferenceImageUploader } from "@/components/reference-image-uploader";
-import { ImageSettingsPanel } from "@/components/image-settings-panel";
+import { ImageSettingsPanel, imageQualityLabel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { buildCameraPrompt, formatCameraSelection, normalizeCameraSelection, type CameraSelection } from "@/lib/camera";
-import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionLabel, normalizeImageQuality, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration, getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
@@ -712,7 +712,7 @@ export default function ImagePage() {
 
                             <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
                                 <span className="truncate text-stone-500 dark:text-stone-400">
-                                    {modelOptionLabel(effectiveConfig, model)} · {effectiveConfig.size} · {effectiveConfig.quality}
+                                    {modelOptionLabel(effectiveConfig, model)} · {effectiveConfig.size} · {imageQualityLabel(effectiveConfig.quality)}
                                 </span>
                                 <Button size="small" type="text" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
                                     调整
@@ -993,7 +993,7 @@ function LogDetail({ log, storageSettings }: { log: GenerationLog; storageSettin
             <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
                 <LogDetailInfo label="模型" value={log.model} />
                 <LogDetailInfo label="尺寸" value={log.size} />
-                <LogDetailInfo label="质量" value={log.quality} />
+                <LogDetailInfo label="质量" value={imageQualityLabel(log.quality)} />
                 <LogDetailInfo label="分辨率" value={log.config?.imageResolution || "自动"} />
                 <LogDetailInfo label="张数" value={`${log.imageCount} 张`} />
                 <LogDetailInfo label="时间" value={log.time} />
@@ -1085,7 +1085,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         cancelCount: log.cancelCount || 0,
         imageCount: log.imageCount || log.successCount || 0,
         size: log.size || config.size || "",
-        quality: log.quality || config.quality || "",
+        quality: normalizeImageQuality(log.quality || config.quality),
         status: log.status || "成功",
         images,
         thumbnails: images.map((image) => image.dataUrl).filter(Boolean),
@@ -1105,7 +1105,7 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
     return {
         model: log.config?.model || log.model || "",
         imageModel: log.config?.imageModel || log.model || "",
-        quality: log.config?.quality || log.quality || "",
+        quality: normalizeImageQuality(log.config?.quality || log.quality),
         imageResolution: log.config?.imageResolution || "1k",
         size: log.config?.size || log.size || "",
         count: log.config?.count || String(log.imageCount || log.successCount || 1),

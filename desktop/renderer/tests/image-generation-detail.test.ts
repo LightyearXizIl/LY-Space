@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildTransientGenerationLog, createTransientGenerationBatch, findTransientGenerationLog, updateTransientGenerationSlot, type GeneratedImage, type GenerationLogConfig } from "@/pages/image/generation-detail";
 
 const image = (id: string): GeneratedImage => ({ id, dataUrl: `data:image/png;base64,${id}`, durationMs: 10, width: 1, height: 1, bytes: 1 });
-const config: GenerationLogConfig = { model: "test", imageModel: "test", quality: "standard", imageResolution: "1k", size: "1:1", count: "2", background: "" };
+const config: GenerationLogConfig = { model: "test", imageModel: "test", quality: "medium", imageResolution: "1k", size: "1:1", count: "2", background: "" };
 
 describe("生图进行中详情", () => {
     it("同批第一张成功时立即返回进行中详情", () => {

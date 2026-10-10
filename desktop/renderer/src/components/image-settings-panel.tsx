@@ -2,13 +2,14 @@ import { type ReactNode, useEffect, useState } from "react";
 import { ConfigProvider, Switch } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { grsaiSupportedImageResolutions, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { grsaiSupportedImageResolutions, highestSupportedImageResolution, normalizeImageQuality, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 const qualityOptions = [
-    { value: "auto", label: "自动" },
-    { value: "high", label: "高" },
-    { value: "medium", label: "中" },
-    { value: "low", label: "低" },
+    { value: "low", label: "low" },
+    { value: "medium", label: "medium" },
+    { value: "high", label: "high" },
+    { value: "xhigh", label: "xhigh" },
+    { value: "max", label: "max" },
 ];
 const resolutionOptions = [
     { value: "1k", label: "1K", edge: 1024 },
@@ -44,7 +45,7 @@ type ImageSettingsPanelProps = {
 
 export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
     const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
-    const quality = config.quality || "auto";
+    const quality = normalizeImageQuality(config.quality);
     const resolution = config.imageResolution || "1k";
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
@@ -67,7 +68,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     };
 
     useEffect(() => {
-        if (!supportedResolutions.includes(resolution)) onConfigChange("imageResolution", supportedResolutions[0]);
+        if (!supportedResolutions.includes(resolution)) onConfigChange("imageResolution", highestSupportedImageResolution(supportedResolutions));
     }, [resolution, supportedResolutions, onConfigChange]);
 
     return (
@@ -94,7 +95,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </div>
                 {!isArk ? <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>质量</SettingTitle>
-                    <div className="grid grid-cols-4 gap-2.5">
+                    <div className="grid grid-cols-5 gap-2.5">
                         {qualityOptions.map((item) => (
                             <OptionPill key={item.value} selected={quality === item.value} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
                                 {item.label}
@@ -189,7 +190,7 @@ export function ImageSettingsTheme({ theme, children }: { theme: CanvasTheme; ch
 }
 
 export function imageQualityLabel(value: string) {
-    return ({ auto: "自动", high: "高", medium: "中", low: "低" } as Record<string, string>)[value] || value;
+    return normalizeImageQuality(value);
 }
 
 export function imageResolutionLabel(value: string) {

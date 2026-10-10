@@ -122,7 +122,8 @@ const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1"
 
 function normalizeQuality(quality: string) {
     const value = quality.trim().toLowerCase();
-    return ["auto", "low", "medium", "high"].includes(value) ? value : undefined;
+    if (value === "auto") return "medium";
+    return ["low", "medium", "high", "xhigh", "max"].includes(value) ? value : undefined;
 }
 
 function normalizeImageResolution(value: string | undefined) {
@@ -332,7 +333,7 @@ export function grsaiRequestBody(config: AiConfig, prompt: string, images: strin
         images,
         aspectRatio,
         ...(isGptImage ? {} : { imageSize: grsaiImageSize(config.imageResolution) }),
-        ...(isGptImage25 ? { quality: quality || "auto", ...(background ? { background } : {}) } : {}),
+        ...(isGptImage25 ? { quality: quality || "medium", ...(background ? { background } : {}) } : {}),
         replyType: "json",
     };
 }

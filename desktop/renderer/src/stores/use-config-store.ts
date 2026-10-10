@@ -12,6 +12,7 @@ export type ModelCatalogCategory = "text" | "vision" | "image" | "video" | "audi
 export type ModelClassificationSource = "upstream" | "preset" | "inferred" | "manual";
 export type ImageModelFeature = "image-edit" | "mask-edit" | "generative-upscale" | "dedicated-super-resolution";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
+export type ImageQuality = "low" | "medium" | "high" | "xhigh" | "max";
 /** 火山方舟 Responses API 的思考开关；与 OpenAI reasoning.effort 不可混用。 */
 export type ArkThinkingMode = "auto" | "enabled" | "disabled";
 
@@ -104,7 +105,9 @@ export type AiConfig = {
     models: string[];
     /** 用户在默认模型下拉框中调整后的模型选择顺序。值使用 channelId::model 编码。 */
     modelOrder: string[];
-    quality: string;
+    /** 用户在模型下拉框中调整后的渠道分组顺序。值为渠道 id。 */
+    modelGroupOrder: string[];
+    quality: ImageQuality;
     imageResolution: "1k" | "2k" | "4k" | "8k";
     size: string;
     background: string;
@@ -179,11 +182,19 @@ export const GRSAI_DEFAULT_MODELS: ChannelModel[] = [
 
 export function grsaiSupportedImageResolutions(model: string) {
     const normalized = model.trim().toLowerCase();
-    if (["gpt-image-2.5", "gpt-image-2", "nano-banana-2-cl", "nano-banana-pro-cl"].includes(normalized)) return ["1k"];
+    if (["gpt-image-2.5", "nano-banana-2-cl", "nano-banana-pro-cl"].includes(normalized)) return ["1k"];
+    if (["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"].includes(normalized)) return ["1k", "2k", "4k"];
+    if (["gpt-image-2", "gpt-image-2-vip"].includes(normalized)) return ["1k", "2k", "4k"];
     if (normalized === "nano-banana-2-2k-cl") return ["2k"];
     if (normalized === "nano-banana-2-4k-cl" || normalized === "nano-banana-pro-4k-vip") return ["4k"];
     if (normalized === "nano-banana-pro-vip") return ["1k", "2k"];
     return ["1k", "2k", "4k"];
+}
+
+export function highestSupportedImageResolution(resolutions: string[]): AiConfig["imageResolution"] {
+    const rank = new Map([["1k", 1], ["2k", 2], ["4k", 3], ["8k", 4]]);
+    const highest = [...resolutions].sort((a, b) => (rank.get(b) || 0) - (rank.get(a) || 0))[0];
+    return highest === "2k" || highest === "4k" || highest === "8k" ? highest : "1k";
 }
 
 export const defaultConfig: AiConfig = {
@@ -231,7 +242,8 @@ export const defaultConfig: AiConfig = {
     arkThinkingMode: "auto",
     models: GRSAI_DEFAULT_MODELS.map((model) => `default::${model.name}`),
     modelOrder: GRSAI_DEFAULT_MODELS.map((model) => `default::${model.name}`),
-    quality: "auto",
+    modelGroupOrder: ["default"],
+    quality: "medium",
     imageResolution: "1k",
     size: "auto",
     background: "",
@@ -256,6 +268,7 @@ type ConfigStore = {
     shouldPromptContinue: boolean;
     updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
     reorderModels: (models: string[]) => void;
+    reorderModelGroups: (groups: string[]) => void;
     updateWebdavConfig: <K extends keyof WebdavSyncConfig>(key: K, value: WebdavSyncConfig[K]) => void;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
     openConfigDialog: (shouldPromptContinue?: boolean, tab?: ConfigTabKey) => void;
@@ -352,6 +365,7 @@ export const useConfigStore = create<ConfigStore>()(
                         ...state.config,
                         [key]: value,
                         ...(key === "modelOrder" ? { models: value as AiConfig["models"] } : {}),
+                        ...(key === "quality" ? { quality: normalizeImageQuality(value) } : {}),
                     },
                 }));
             },
@@ -365,6 +379,15 @@ export const useConfigStore = create<ConfigStore>()(
                     const modelOrder = allModels.map((model) => selected.has(model) ? ordered[index++] : model);
                     return { config: { ...state.config, models: modelOrder, modelOrder } };
                 });
+            },
+            reorderModelGroups: (groups) => {
+                logAppEvent({ category: "operation", message: "调整模型分组顺序" });
+                set((state) => ({
+                    config: {
+                        ...state.config,
+                        modelGroupOrder: normalizeModelGroupOrder(groups, state.config.channels.map((channel) => channel.id)),
+                    },
+                }));
             },
             updateWebdavConfig: (key, value) => {
                 logAppEvent({ category: "operation", message: "更新 WebDAV 配置", details: { field: key } });
@@ -391,6 +414,7 @@ export const useConfigStore = create<ConfigStore>()(
                 if (!Array.isArray(persistedConfig.channels)) config.channels = [];
                 const channels = normalizeChannels(config);
                 const modelOrder = normalizeModelOrder(persistedConfig.modelOrder, modelOptionsFromChannels(channels));
+                const modelGroupOrder = normalizeModelGroupOrder(persistedConfig.modelGroupOrder, channels.map((channel) => channel.id));
                 return {
                     ...current,
                     webdav: { ...defaultWebdavSyncConfig, ...persistedWebdav },
@@ -401,6 +425,7 @@ export const useConfigStore = create<ConfigStore>()(
                         channels,
                         models: modelOrder,
                         modelOrder,
+                        modelGroupOrder,
                         imageModel: normalizeModelOptionValue(config.imageModel || config.model, channels),
                         videoModel: normalizeModelOptionValue(config.videoModel, channels),
                         textModel: normalizeModelOptionValue(config.textModel || config.model, channels),
@@ -421,6 +446,7 @@ export const useConfigStore = create<ConfigStore>()(
                         videoNumInferenceSteps: config.videoNumInferenceSteps || "",
                         canvasImageCount: config.canvasImageCount || "3",
                         imageResolution: normalizeImageResolution(config.imageResolution, config.quality, config.size),
+                        quality: normalizeImageQuality(config.quality),
                         imageWatermark: config.imageWatermark === "false" ? "false" : "true",
                     },
                 };
@@ -434,7 +460,12 @@ function normalizeImageResolution(value: unknown, quality: string, size: string)
     const oldPreset = String(size || "").toLowerCase();
     if (oldPreset === "2048x2048" || oldPreset === "2048x1152" || oldPreset === "1152x2048") return "2k";
     if (oldPreset === "3840x2160" || oldPreset === "2160x3840") return "4k";
-    return quality === "high" ? "4k" : quality === "medium" ? "2k" : "1k";
+    return quality === "high" || quality === "xhigh" || quality === "max" ? "4k" : quality === "medium" ? "2k" : "1k";
+}
+
+export function normalizeImageQuality(value: unknown): ImageQuality {
+    if (value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max") return value;
+    return "medium";
 }
 
 export function useEffectiveConfig() {
@@ -559,6 +590,23 @@ export function normalizeModelOrder(order: unknown, models: string[]) {
         if (seen.has(model)) return;
         seen.add(model);
         normalized.push(model);
+    });
+    return normalized;
+}
+
+export function normalizeModelGroupOrder(order: unknown, groups: string[]) {
+    const available = new Set(groups);
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const value of Array.isArray(order) ? order : []) {
+        if (typeof value !== "string" || !available.has(value) || seen.has(value)) continue;
+        seen.add(value);
+        normalized.push(value);
+    }
+    groups.forEach((group) => {
+        if (seen.has(group)) return;
+        seen.add(group);
+        normalized.push(group);
     });
     return normalized;
 }

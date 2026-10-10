@@ -44,13 +44,17 @@ describe("GRS AI 默认图片模型请求体", () => {
 
     it("GPT Image 2.5 标准版只允许 1K，扩展版最高 4K", () => {
         expect(() => grsaiRequestBody(config("gpt-image-2.5", "1:1", "2k"), "测试", [])).toThrow("仅支持 1K");
-        expect(grsaiRequestBody(config("gpt-image-2.5-sunburst", "1:1", "4k"), "测试", [])).toMatchObject({ aspectRatio: "2880x2880", quality: "auto" });
+        expect(grsaiRequestBody(config("gpt-image-2.5-sunburst", "1:1", "4k"), "测试", [])).toMatchObject({ aspectRatio: "2880x2880", quality: "medium" });
         expect(() => grsaiRequestBody(config("gpt-image-2.5-flare", "16:9", "8k"), "测试", [])).toThrow("1K / 2K / 4K");
     });
 
     it("GPT Image 2.5 将比例转换为像素并提交质量和透明背景", () => {
         const body = grsaiRequestBody({ ...config("gpt-image-2.5-sunburst", "1:1"), quality: "high", background: "transparent" }, "测试", []);
         expect(body).toMatchObject({ aspectRatio: "1024x1024", quality: "high", background: "transparent" });
+    });
+
+    it.each(["low", "medium", "high", "xhigh", "max"])("GPT Image 2.5 透传 %s 质量档位", (quality) => {
+        expect(grsaiRequestBody({ ...config("gpt-image-2.5-sunburst"), quality: quality as AiConfig["quality"] }, "测试", [])).toMatchObject({ quality });
     });
 
     it("GPT Image 2.5 的宽屏 1K 与非方形 4K 保持在服务端像素范围内", () => {

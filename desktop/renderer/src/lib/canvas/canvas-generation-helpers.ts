@@ -1,4 +1,4 @@
-import { defaultConfig, resolveModelForCapability, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, normalizeImageQuality, resolveModelForCapability, type AiConfig } from "@/stores/use-config-store";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { imageMetadata, referenceUrl } from "@/lib/canvas/canvas-node-factory";
@@ -101,7 +101,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         model: resolveModelForCapability(config, node?.metadata?.model, mode),
         reasoningEffort: node?.metadata?.reasoningEffort || config.reasoningEffort || defaultConfig.reasoningEffort,
         arkThinkingMode: node?.metadata?.arkThinkingMode || config.arkThinkingMode || defaultConfig.arkThinkingMode,
-        quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
+        quality: normalizeImageQuality(node?.metadata?.quality || config.quality || defaultConfig.quality),
         imageResolution: node?.metadata?.imageResolution || config.imageResolution || defaultConfig.imageResolution,
         size: node?.metadata?.size || config.size || defaultConfig.size,
         background: node?.metadata?.background ?? config.background ?? defaultConfig.background,

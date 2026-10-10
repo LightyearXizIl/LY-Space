@@ -10,9 +10,9 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 ## 0. 给 ZCode 的快速上手
 
 - **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；本次发布版本为 `v0.8.7`）。
-- **本次发布状态**：`v0.8.7` 已由 GitHub Actions `37880831478` 构建并正式发布（Release 含 `LY-Space-Setup-0.8.7.exe` / `.blockmap` / `latest.yml`，说明取自 CHANGELOG）；渠道余额查询与主图星标精简仍需人工验收。
+- **本次发布状态**：按用户要求同版本重发 `v0.8.7`，tag 从 `79fd0b7` 移至 `61e986600a7ca0be518994b3a0ab8f9e80451cc6`；GitHub Actions `37935607186` 成功，已覆盖正式 Release 三份资产。此前 `37880831478` 是旧包构建，不再代表当前发布物；同版本安装必须核对资产哈希，不能只看界面的 `v0.8.7`。
 - **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
-- **修复状态**：源码已加固 `restoreBridgeBackup`：目标目录存在文件时永不被升级快照覆盖，并记录已保留现有数据的迁移状态；v0.8.7 已安装包仍需替换为包含该修复的版本后才生效。另一台电脑的现场根因仍待日志确认。接手时若遇到「渠道全空但画布还在」，先看第 3 节「渠道配置丢失排查与恢复」。
+- **紧急现场状态**：迁移保护、取消自动设置弹窗和 GRS 积分查询修改已随重发包发布，但用户随后仍反馈只剩默认 OpenAI 渠道。本机已提取含 3 个渠道/3 个密钥的恢复文件并尝试写回；**实际界面恢复、重启保留和本次丢失根因尚未验证**。不要沿用此前“恢复完成且重启不会消失”的结论，先看第 3 节「本机恢复操作与证据边界」。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
 - **技术栈**：Electron（`desktop/main.cjs` + `desktop/preload.cjs`）+ Vite + React 19 + TS + antd 6 + Tailwind 4 + Zustand；通用 AI 接口仍可由渲染进程直连，方舟请求在桌面端通过受限主进程 HTTPS 代理；文档站是独立 Next.js 项目（`docs/`，bun）
 - **启动/检查**：`pnpm --dir desktop run check`（类型检查）；`pnpm --dir desktop run pack:win`（打包到 `release/`）；文档站 `cd docs && bun run dev`
@@ -47,6 +47,14 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 3. 关键链路与已修复的坑
 
+### v0.8.7 同版本重新发布
+
+- **发布内容**：`restoreBridgeBackup` 保护已有缓存/结果目录；`ClientRootInit` 移除缺少 Key 及 URL 导入后的自动设置弹窗；GRS 优先尝试 GET 积分路径，失败后回退原 POST 路径。版本号仍为 `0.8.7`，Unreleased 已归入该版本记录。
+- **远程证据**：[CI 37935607186](https://github.com/LightyearXizIl/LY-Space/actions/runs/37935607186) 对应提交 `61e9866`，版本校验、Windows 构建、包校验、上传、回下载比对与正式发布均成功。[Release](https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.8.7) 非草稿、非预发布，三份资产均为 uploaded。
+- **当前资产**：`LY-Space-Setup-0.8.7.exe` 为 92,592,161 字节，SHA-256 `b881a03ccacaa0a8ff0882a6e663ea1c027abd6ada6197a6684bdc75c7004e6e`；blockmap 为 98,053 字节，SHA-256 `df35dd54106566f1d30b8f0ccfac6387115d658e4807dcdd5bfc16e32e41652d`；`latest.yml` 为 344 字节，SHA-256 `b5132d13dc85546d2d021cbabe2b3a581de6b9665521b809ec9ac04986632a76`。这里记录的是 GitHub 资产摘要与 CI 校验，本机安装文件与该包的一致性未核实。
+- **自动化边界**：此前桌面 Node 测试 39/39、迁移专项 11/11、余额专项 2/2 通过；类型检查、主进程语法和差异检查通过。完整 renderer 测试为 123/124，唯一失败是原有 `grsai-image.test.ts` 的 GPT 标准模型 2K 用例与源码 1K 限制冲突，未修改。发布 CI 不运行完整测试，不能把 CI 成功写成所有测试通过。
+- **升级验收边界**：此次没有完成实际安装前后 `Data cache`、Result 四类目录、`app-data` 全量嵌套哨兵/哈希验收；后续再发涉及存储的版本必须补齐。用户已装旧 `0.8.7` 时不能依赖版本号判断是否更新成功。
+
 ### v0.8.7：渠道余额查询与画布顶栏显示
 
 - **背景**：原 GRS AI 的 APIKey 积分与账户积分查询（`services/api/grsai.ts`、渠道编辑器按钮、偏好设置账户 Token）被判定做法不对，**已整体移除**；改由通用的「渠道余额查询」承载。
@@ -73,7 +81,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 - **现象**：另一台电脑（已配好渠道 + 应用内自动更新）升级后配置页**渠道全部为空**，画布等用户数据仍在。目前**只是疑似**由下述「升级桥」造成，**根因尚未坐实**。
 - **渠道配置存放位置**：`%APPDATA%\LY Space\Data cache\Local Storage\leveldb\*.log|*.ldb`（**不是** IndexedDB）。键为 ASCII 的 `infinite-canvas:ai_config_store`，**值是 UTF-16LE 编码的 JSON**，真实结构是 `state.config.channels`（不是 `state.channels`）。运行中的应用会独占活动文件，取证必须用 `FileShare.ReadWrite` 共享读。
-- **升级桥机制**（`desktop/storage-migration.cjs` 的 `restoreBridgeBackup`，由 `main.cjs` 的 `configureStorageBeforeReady()` 在窗口创建前调用）：
+- **加固前的升级桥机制（历史风险，非当前非空目录行为）**（`desktop/storage-migration.cjs` 的 `restoreBridgeBackup`，由 `main.cjs` 的 `configureStorageBeforeReady()` 在窗口创建前调用）：
   1. 读 `%LOCALAPPDATA%\LY Space\Backups\latest.json` → `backupRoot` → `manifest.json`，仅当 `version === "v0.4.7"` 且 `status === "ready"` 才生效；
   2. 读 `%APPDATA%\LY Space\app-data\migration-v0.4.7.json`，**只有 `status === "completed"` 才跳过**，文件不存在或为 `failed` 等其他值都会继续；
   3. 继续时用快照的 `current-install\Data cache` **整体替换** `%APPDATA%\LY Space\Data cache`（`replaceDirectoryFromSnapshot`，目标清单与快照一致时才跳过）。**Data cache 里就有渠道配置**，所以这一步等价于「渠道被回退成旧快照的样子」。
@@ -83,8 +91,18 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   2. 跑离线取证脚本 `ly-space-config-rescue.ps1`（工作区根 `E:\Vibe coding\LY Space\`，**未纳入仓库**）：共享读扫描 `Data cache\Local Storage\leveldb`、storage-settings 里自定义的 `cacheRoot`、以及 `Backups` 下**所有** `.log/.ldb`（含 `replaced-destinations`），按渠道数排序取最优，在桌面生成可导入的 `infinite-canvas-config-recovered.json`；
   3. 用另一台正常电脑导出的配置走「配置 → 导入配置」。导入文件需满足 `app === "infinite-canvas"`、`version === 1`、`promptSources` 为真值（`promptSources.sources` 传 `null` 可避免覆盖原有提示词来源）。
 - **待坐实根因**：需那台机器提供 `%APPDATA%\LY Space\app-data\storage-settings.json`、`app-data\migration-v0.4.7.json`（是否存在、`status` 值）、`%LOCALAPPDATA%\LY Space\Backups\latest.json`、`Backups\upgrade-backup-error.log` 四份材料。
-- **防复发加固（源码已实施）**：`restoreBridgeBackup` 在恢复前检查缓存和结果目录；目标目录存在文件时直接保留并写入完成状态，只有不存在或为空时才恢复快照。回归覆盖迁移状态缺失、`failed`、空目录恢复和重复启动；仍需在实际升级环境安装包含该修复的版本进行人工验收。
+- **防复发加固（已随重发包发布）**：`restoreBridgeBackup` 在恢复前检查缓存和结果目录；目标目录存在文件时直接保留并写入完成状态，只有不存在或为空时才恢复快照。规则是“非空 Data cache 永不被升级快照覆盖”，不得混合 LevelDB。回归覆盖迁移状态缺失、`failed`、空目录恢复和重复调用；真实环境仍出现渠道缺失，不能据此认定问题已彻底解决。
 - **坑**：`.ps1` 必须带 UTF-8 BOM（PowerShell 5.1 否则按 ANSI 解码，中文乱码甚至触发语法错误），见 3.27；本机沙箱策略可能禁止直接执行 `.ps1`，验证逻辑时改用内联命令或等价实现。
+
+### 本机恢复操作与证据边界（16054 用户）
+
+- **区别于另一台电脑**：本次实际检查的是 `C:\Users\16054`，运行程序为 `E:\Software\LY Space\LY Space.exe`。截图只有默认 OpenAI 渠道，只能证明界面未显示原渠道，不能单凭截图断言旧快照覆盖。
+- **迁移证据**：本机 `storage-settings.json` 指向 `%APPDATA%\LY Space\Data cache`；`migration-v0.4.7.json` 为 `completed`，完成时间仍为 `2026-08-18T12:04:07.276Z`，`cacheMigrated`/`resultMigrated` 均为 false。`latest.json` 指向 `v0.4.7-20260818-200348-1f788896`。这些证据未证明此次执行了旧快照恢复，需要继续核对实际安装源码、存储 origin、配置读取/写回和启动时序。
+- **已找回的候选**：离线脚本在 `000027.log` 找到包含 GRS AI、Agnes AI、火山方舟的配置，3 个渠道均有 Key。文件为 `C:\Users\16054\Desktop\infinite-canvas-config-recovered.json`。脚本按渠道数/密钥数选候选，未验证 LevelDB 当前生效记录或最新序列；“候选最完整”不等于“最新配置”。
+- **已保留副本**：`C:\Users\16054\AppData\Local\LY Space\Backups\manual-recovery-20261009-212822\current-leveldb`，同级另有恢复 JSON。复制时应用仍在运行，未完成逐文件一致性校验，不能把它当成已验证的完整一致性备份。恢复文件与副本含密钥，不打印正文、不上传、不提交 Git。
+- **实际执行经过**：修正工作区外 `ly-space-config-rescue.ps1` 的 `Sort-Object` 语法；桌面 UI 自动化不可用，未通过界面导入。随后强制结束应用，创建 `%TEMP%\ly-space-restore-tool\restore.cjs`，尝试用隐藏 Electron 窗口在 `lyspace://app/index.html` 写 localStorage，并两次重启正式程序。该辅助进程未返回预期的写后读取结果；之后只是再次全目录扫描到历史候选，**不能据此证明写入生效或重启后保留**。此前聊天中“已恢复完成”的结论超出了证据，接手时应纠正。
+- **恢复副作用待核对**：辅助脚本使用恢复 JSON 中的空 WebDAV 设置覆盖同一配置状态；若写入生效，可能清空原 WebDAV。后续恢复应保留现有其他设置，先做一致性备份，优先正常保存退出；不要重复强杀或直接拼接 LevelDB。也不要把反复扫描历史记录作为验收。
+- **下一步**：先确认正式程序配置界面及当前 origin 实际读取的渠道数/名称（不输出 Key），必要时使用桌面恢复文件导入；再正常退出并重开，从实际配置读取结果和界面核实。同步检查已装 `storage-migration.cjs` 与重发提交一致性，定位为何现有配置未加载。根因确认前不承诺已根治；本轮仅更新交接文档，没有再次操作软件或用户数据。
 
 ### v0.8.6：GRS AI H3 本地素材与积分查询
 
@@ -544,7 +562,8 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - `docs/content/docs/progress/pending-test.mdx`：Agnes 中国站（`api.agnes-ai.cn`）视频生成实测（平台维护中）、参考图托管链路、OSS 配置
 - **精修工作台待验收**：3.32 参考图重构已随 v0.5.6 发布，人工验收清单见 `pending-test.mdx` 顶部（空状态/上传/缩放平移/原图对比/四页签/撤销重做/导出发送/多分辨率与主题）；验收通过前不得更新 features.mdx。
 - 用户当前重点：画布中文输入法未提交修复的保护与人工验收、精修工作台参考图重构、画布交互体验（框选/连线/指针）、窗口与主题适配
-- **渠道配置丢失（待用户配合）**：那台机器的 4 份取证材料未提供，现场根因未坐实；源码已加入 `restoreBridgeBackup` 防复发保护，仍需安装包含该修复的版本后人工验收（均见第 3 节「渠道配置丢失排查与恢复」）
+- **当前首要事项：渠道配置丢失**：本机已提取 3 个渠道的恢复文件，但实际加载与重启保留未证实；迁移状态为 completed，不能沿用旧快照覆盖的单一推断。另一台机器的取证与本机须分别记录，见第 3 节两处恢复说明。
+- **GRS 积分待验收**：新 GET 路径仅用测试 Key 得到 `apikey not found`，说明路由响应，不能证明用户余额正确；真实账户余额尚未核对。源码仍会缓存命中的回退端点，若复现显示 0，需确认实际命中接口与返回字段。
 
 ## 7. 用户偏好
 

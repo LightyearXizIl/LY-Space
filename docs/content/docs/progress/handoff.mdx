@@ -9,7 +9,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 
 ## 0. 给 ZCode 的快速上手
 
-- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；本次发布版本为 `v0.8.7`）。
+- **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；本次发布版本为 `v0.8.8`）。
 - **本次发布状态**：按用户要求同版本重发 `v0.8.7`，tag 从 `79fd0b7` 移至 `61e986600a7ca0be518994b3a0ab8f9e80451cc6`；GitHub Actions `37935607186` 成功，已覆盖正式 Release 三份资产。此前 `37880831478` 是旧包构建，不再代表当前发布物；同版本安装必须核对资产哈希，不能只看界面的 `v0.8.7`。
 - **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
 - **紧急现场状态**：迁移保护、取消自动设置弹窗和 GRS 积分查询修改已随重发包发布，但用户随后仍反馈只剩默认 OpenAI 渠道。本机已提取含 3 个渠道/3 个密钥的恢复文件并尝试写回；**实际界面恢复、重启保留和本次丢失根因尚未验证**。不要沿用此前“恢复完成且重启不会消失”的结论，先看第 3 节「本机恢复操作与证据边界」。
@@ -46,6 +46,13 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 - **历史教训**：NSIS `CopyFiles "$INSTDIR\目录\*.*"` 不会递归复制子目录，旧 `customRemoveFiles` 随后执行 `RMDir /r` 会丢失嵌套数据。不得再把用户数据放回安装目录，也不得用通配符复制冒充递归备份。
 
 ## 3. 关键链路与已修复的坑
+
+### v0.8.8 模型排序、质量与分辨率修复
+
+- **发布内容**：模型下拉支持模型与渠道分组拖拽排序、插入横杠和箭头排序；图片质量统一为 `low` / `medium` / `high` / `xhigh` / `max`；生成偏好新增默认图片分辨率和质量；GRS AI GPT Image 2、GPT Image 2 VIP、GPT Image 2.5 Sunburst 和 Flare 支持 1K / 2K / 4K，切换受限模型时自动回退到最高支持分辨率。
+- **远程证据**：[CI 38033055282](https://github.com/LightyearXizIl/LY-Space/actions/runs/38033055282) 对应提交 `f082c0d`，版本校验、Windows 构建、包校验、资产上传、回下载比对与正式发布均成功。[Release v0.8.8](https://github.com/LightyearXizIl/LY-Space/releases/tag/v0.8.8) 已发布且非草稿、非预发布。
+- **当前资产**：`LY-Space-Setup-0.8.8.exe` 为 92,593,327 字节，blockmap 为 97,938 字节，`latest.yml` 为 344 字节；CI 已校验安装包本地构建文件、远程下载文件和 `latest.yml` 的大小与 SHA-512 一致。
+- **本地验证**：renderer 类型检查通过，全量测试 24 个文件 / 133 个测试通过；本次 GRS AI 真实账号生成未执行，真实接口能力仍需人工确认。
 
 ### v0.8.7 同版本重新发布
 

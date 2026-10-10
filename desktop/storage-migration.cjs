@@ -47,6 +47,27 @@ function directoryManifest(directory) {
     return files.sort((left, right) => left.path.localeCompare(right.path));
 }
 
+function directoryHasEntries(directory) {
+    if (!fs.existsSync(directory)) return false;
+    const stat = fs.lstatSync(directory);
+    if (!stat.isDirectory()) return true;
+    return fs.readdirSync(directory).length > 0;
+}
+
+function migrationLogFile(userData) {
+    return path.join(userData, "app-data", "storage-migration.log");
+}
+
+function writeMigrationLog(userData, event, details = {}) {
+    try {
+        const file = migrationLogFile(userData);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.appendFileSync(file, `${JSON.stringify({ time: new Date().toISOString(), event, ...details })}\n`, "utf8");
+    } catch {
+        // 诊断日志不能阻止用户数据保护流程。
+    }
+}
+
 function sameManifest(left, right) {
     const normalize = (items) => (items || [])
         .map((item) => ({ path: String(item.path), length: Number(item.length), sha256: String(item.sha256).toLowerCase() }))
@@ -124,10 +145,10 @@ function copyDirectoryExact(source, target) {
 
 function replaceDirectoryFromSnapshot({ source, target, expected, backupRoot, label }) {
     if (!expected?.length) return false;
-    const targetManifest = fs.existsSync(target) ? directoryManifest(target) : [];
-    // 用户当前目录只要已有文件，就不能被陈旧升级快照覆盖。
+    const targetHasEntries = directoryHasEntries(target);
+    // 用户当前目录只要已有任何内容，就不能被陈旧升级快照覆盖。
     // 空目录仍允许完成首次恢复；快照损坏时也必须保留已有用户数据。
-    if (targetManifest.length) return false;
+    if (targetHasEntries) return false;
     assertManifest(source, expected, `${label}快照`);
     const parent = path.dirname(target);
     const stage = `${target}.migrating-${MIGRATION_VERSION}-${process.pid}`;
@@ -172,12 +193,27 @@ function loadBridgeBackup(localAppData) {
     const base = path.join(localAppData, "LY Space", "Backups");
     const latestFile = path.join(base, "latest.json");
     if (!fs.existsSync(latestFile)) return null;
-    const latest = readJson(latestFile);
-    const backupRoot = assertChildPath(String(latest.backupRoot || ""), base, "升级备份");
-    const manifestFile = path.join(backupRoot, "manifest.json");
-    const manifest = readJson(manifestFile);
-    if (manifest.version !== MIGRATION_VERSION || manifest.status !== "ready") return null;
-    return { backupRoot, manifestFile, manifest };
+    try {
+        const latest = readJson(latestFile);
+        if (latest.status === "retired") return null;
+        const backupRoot = assertChildPath(String(latest.backupRoot || ""), base, "升级备份");
+        const manifestFile = path.join(backupRoot, "manifest.json");
+        const manifest = readJson(manifestFile);
+        if (manifest.version !== MIGRATION_VERSION || manifest.status !== "ready" || typeof manifest.installDir !== "string") return null;
+        const current = manifest.snapshots?.currentInstall;
+        const snapshots = [current?.dataCache, current?.result];
+        const legacy = manifest.snapshots?.legacyUserData;
+        if (!current || !legacy || snapshots.some((snapshot) => !snapshot || typeof snapshot.directory !== "string" || !Array.isArray(snapshot.files)) || typeof legacy.directory !== "string" || !Array.isArray(legacy.files)) return null;
+        for (const [index, snapshot] of snapshots.entries()) {
+            const snapshotRoot = assertChildPath(path.join(backupRoot, snapshot.directory), backupRoot, `升级备份快照${index + 1}`);
+            if (!fs.existsSync(snapshotRoot) || !fs.statSync(snapshotRoot).isDirectory()) return null;
+        }
+        const legacyRoot = assertChildPath(path.join(backupRoot, legacy.directory), backupRoot, "升级备份旧用户数据");
+        if (!fs.existsSync(legacyRoot) || !fs.statSync(legacyRoot).isDirectory()) return null;
+        return { backupRoot, manifestFile, manifest };
+    } catch {
+        return null;
+    }
 }
 
 function isOldDefault(value, installDir, folder) {
@@ -185,16 +221,53 @@ function isOldDefault(value, installDir, folder) {
 }
 
 function restoreBridgeBackup({ userData, localAppData, documents, storageConfigFile }) {
+    const stateFile = path.join(userData, "app-data", "migration-v0.4.7.json");
+    let state = null;
+    if (fs.existsSync(stateFile)) {
+        try {
+            state = readJson(stateFile);
+        } catch (error) {
+            writeMigrationLog(userData, "migration-state-invalid", { error: error instanceof Error ? error.message : String(error) });
+            return { migrated: false, installDir: "", backupRoot: "", storageStatus: "needs-recovery", recoveryReason: "invalid-migration-state" };
+        }
+    }
+    if (state && (typeof state !== "object" || Array.isArray(state) || state.version !== MIGRATION_VERSION || !["completed", "failed"].includes(state.status))) {
+        writeMigrationLog(userData, "migration-state-invalid", { error: "unsupported-migration-state" });
+        return { migrated: false, installDir: "", backupRoot: "", storageStatus: "needs-recovery", recoveryReason: "unsupported-migration-state" };
+    }
+    const defaultCacheRoot = path.join(userData, "Data cache");
+    const defaultResultRoot = path.join(documents, "LY Space", "Result");
     const bridge = loadBridgeBackup(localAppData);
-    if (!bridge) return { migrated: false, installDir: "", backupRoot: "" };
+    if (state?.status === "failed") {
+        writeMigrationLog(userData, "migration-blocked", { reason: "previous-failure" });
+        return { migrated: false, installDir: "", backupRoot: "", storageStatus: "needs-recovery", recoveryReason: "previous-failure" };
+    }
+    if (!bridge) {
+        const hasStorageConfig = fs.existsSync(storageConfigFile);
+        let configuredRoots = [];
+        if (hasStorageConfig) {
+            try {
+                const saved = readJson(storageConfigFile);
+                if (!saved || typeof saved !== "object" || Array.isArray(saved)) throw new Error("storage-settings-not-object");
+                configuredRoots = [saved.cacheRoot, saved.resultRoot].filter((value) => typeof value === "string" && value);
+            } catch (error) {
+                writeMigrationLog(userData, "storage-settings-invalid", { error: error instanceof Error ? error.message : String(error) });
+                return { migrated: false, installDir: "", backupRoot: "", storageStatus: "needs-recovery", recoveryReason: "invalid-storage-settings" };
+            }
+        }
+        const hasExistingData = [defaultCacheRoot, defaultResultRoot, ...configuredRoots].some((directory) => directoryHasEntries(directory));
+        const hasCompletedMigration = state?.status === "completed";
+        const storageStatus = hasCompletedMigration || hasExistingData ? "ready" : hasStorageConfig ? "needs-recovery" : "first-run";
+        writeMigrationLog(userData, "migration-skipped", { reason: storageStatus === "needs-recovery" ? "no-valid-backup" : "no-ready-backup", storageStatus });
+        return { migrated: false, installDir: "", backupRoot: "", storageStatus, recoveryReason: storageStatus === "needs-recovery" ? "no-valid-backup" : "" };
+    }
     const releaseLock = acquireMigrationLock(userData);
     try {
-    const stateFile = path.join(userData, "app-data", "migration-v0.4.7.json");
-    if (fs.existsSync(stateFile)) {
-        const state = readJson(stateFile);
+    if (state) {
         // v0.4.7 的目录迁移只应执行一次。每次覆盖安装都会产生新的升级备份，不能因为 latest.json 改变再次用旧安装目录替换已分离的用户缓存。
         if (state.status === "completed") {
-            return { migrated: false, installDir: bridge.manifest.installDir, backupRoot: bridge.backupRoot };
+            writeMigrationLog(userData, "migration-skipped", { reason: "already-completed", backupRoot: bridge.backupRoot });
+            return { migrated: false, installDir: bridge.manifest.installDir, backupRoot: bridge.backupRoot, storageStatus: "ready" };
         }
     }
 
@@ -203,8 +276,6 @@ function restoreBridgeBackup({ userData, localAppData, documents, storageConfigF
         saved = readJson(storageConfigFile);
         if (!saved || typeof saved !== "object" || Array.isArray(saved)) throw new Error(`存储配置格式无效，未修改任何用户路径：${storageConfigFile}`);
     }
-    const defaultCacheRoot = path.join(userData, "Data cache");
-    const defaultResultRoot = path.join(documents, "LY Space", "Result");
     const useDefaultCache = !saved.cacheRoot || isOldDefault(saved.cacheRoot, bridge.manifest.installDir, "Data cache");
     const useDefaultResult = !saved.resultRoot || isOldDefault(saved.resultRoot, bridge.manifest.installDir, "Result");
     const current = bridge.manifest.snapshots?.currentInstall || {};
@@ -212,31 +283,33 @@ function restoreBridgeBackup({ userData, localAppData, documents, storageConfigF
     try {
         const cacheTarget = current.dataCache?.restoreTarget || defaultCacheRoot;
         const resultTarget = current.result?.restoreTarget || defaultResultRoot;
-        const cacheTargetManifest = fs.existsSync(cacheTarget) ? directoryManifest(cacheTarget) : [];
-        const resultTargetManifest = fs.existsSync(resultTarget) ? directoryManifest(resultTarget) : [];
+        const cacheTargetHasEntries = directoryHasEntries(cacheTarget);
+        const resultTargetHasEntries = directoryHasEntries(resultTarget);
         const cacheMigrated = (useDefaultCache || current.dataCache?.restoreTarget) && current.dataCache
-            ? (cacheTargetManifest.length ? false : replaceDirectoryFromSnapshot({ source: path.join(bridge.backupRoot, current.dataCache.directory), target: cacheTarget, expected: current.dataCache.files, backupRoot: bridge.backupRoot, label: "Data cache" }))
+            ? (cacheTargetHasEntries ? false : replaceDirectoryFromSnapshot({ source: path.join(bridge.backupRoot, current.dataCache.directory), target: cacheTarget, expected: current.dataCache.files, backupRoot: bridge.backupRoot, label: "Data cache" }))
             : false;
         const resultMigrated = (useDefaultResult || current.result?.restoreTarget) && current.result
-            ? (resultTargetManifest.length ? false : replaceDirectoryFromSnapshot({ source: path.join(bridge.backupRoot, current.result.directory), target: resultTarget, expected: current.result.files, backupRoot: bridge.backupRoot, label: "Result" }))
+            ? (resultTargetHasEntries ? false : replaceDirectoryFromSnapshot({ source: path.join(bridge.backupRoot, current.result.directory), target: resultTarget, expected: current.result.files, backupRoot: bridge.backupRoot, label: "Result" }))
             : false;
         const preservedExisting = [];
-        if (cacheTargetManifest.length) preservedExisting.push("Data cache");
-        if (resultTargetManifest.length) preservedExisting.push("Result");
+        if (cacheTargetHasEntries) preservedExisting.push("Data cache");
+        if (resultTargetHasEntries) preservedExisting.push("Result");
         let settingsChanged = false;
-        if ((cacheMigrated || cacheTargetManifest.length) && isOldDefault(saved.cacheRoot, bridge.manifest.installDir, "Data cache")) {
+        if ((cacheMigrated || cacheTargetHasEntries) && isOldDefault(saved.cacheRoot, bridge.manifest.installDir, "Data cache")) {
             saved.cacheRoot = cacheTarget;
             settingsChanged = true;
         }
-        if ((resultMigrated || resultTargetManifest.length) && isOldDefault(saved.resultRoot, bridge.manifest.installDir, "Result")) {
+        if ((resultMigrated || resultTargetHasEntries) && isOldDefault(saved.resultRoot, bridge.manifest.installDir, "Result")) {
             saved.resultRoot = resultTarget;
             settingsChanged = true;
         }
         if (settingsChanged) writeJsonAtomic(storageConfigFile, saved);
         writeJsonAtomic(stateFile, { version: MIGRATION_VERSION, status: "completed", backupRoot: bridge.backupRoot, cacheMigrated, resultMigrated, preservedExisting, completedAt: new Date().toISOString() });
-        return { migrated: cacheMigrated || resultMigrated, installDir: bridge.manifest.installDir, backupRoot: bridge.backupRoot };
+        writeMigrationLog(userData, cacheMigrated || resultMigrated ? "migration-completed" : "migration-skipped", { reason: preservedExisting.length ? "target-preserved" : "target-empty", backupRoot: bridge.backupRoot, preservedExisting });
+        return { migrated: cacheMigrated || resultMigrated, installDir: bridge.manifest.installDir, backupRoot: bridge.backupRoot, storageStatus: "ready" };
     } catch (error) {
         writeJsonAtomic(stateFile, { version: MIGRATION_VERSION, status: "failed", backupRoot: bridge.backupRoot, error: error instanceof Error ? error.message : String(error), failedAt: new Date().toISOString() });
+        writeMigrationLog(userData, "migration-failed", { error: error instanceof Error ? error.message : String(error), backupRoot: bridge.backupRoot });
         throw new Error(`用户数据恢复失败，程序未使用空白数据启动。备份位置：${bridge.backupRoot}。${error instanceof Error ? error.message : error}`);
     }
     } finally {
@@ -244,4 +317,4 @@ function restoreBridgeBackup({ userData, localAppData, documents, storageConfigF
     }
 }
 
-module.exports = { MIGRATION_VERSION, assertManifest, copyDirectoryExact, directoryManifest, loadBridgeBackup, restoreBridgeBackup, sameManifest };
+module.exports = { MIGRATION_VERSION, assertManifest, copyDirectoryExact, directoryHasEntries, directoryManifest, loadBridgeBackup, restoreBridgeBackup, sameManifest };

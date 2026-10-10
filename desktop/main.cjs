@@ -19,6 +19,7 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow = null;
 let tray = null; // 系统托盘（模块级引用防 GC）
 let storageSettings = null;
+let storageBootstrap = { status: "first-run", reason: "initial" };
 let allowWindowClose = false;
 let updateFileInfo = null; // update-available 携带的安装包信息（files[0]: url/sha512/size）
 let updateDownloadRequest = null; // 自研断点续传下载的进行中请求
@@ -41,6 +42,7 @@ let logSettings = { retentionDays: 7 };
 let lastLogPruneAt = 0;
 const CANVAS_RECOVERY_SCAN_TTL_MS = 20 * 60 * 1000;
 const canvasRecoveryScans = new Map();
+const storageRecoveryScans = new Map();
 
 function displayVersion(version) {
     const value = String(version || "").trim().replace(/^v/i, "");
@@ -598,7 +600,7 @@ function isTrustedGeneratedFile(rawPath) {
 }
 
 function configureStorageBeforeReady() {
-    restoreBridgeBackup({
+    storageBootstrap = restoreBridgeBackup({
         userData: app.getPath("userData"),
         localAppData: process.env.LOCALAPPDATA || path.dirname(app.getPath("appData")),
         documents: app.getPath("documents"),
@@ -606,7 +608,7 @@ function configureStorageBeforeReady() {
     });
     storageSettings = readStorageSettings();
     loadLastSaveDirectory();
-    if (storageSettings.pendingCacheRoot) {
+    if (storageBootstrap.storageStatus !== "needs-recovery" && storageSettings.pendingCacheRoot) {
         try {
             const nextCacheRoot = assertStoragePath(storageSettings.pendingCacheRoot, "缓存目录");
             moveCacheDirectoryExact(storageSettings.cacheRoot, nextCacheRoot);
@@ -625,7 +627,7 @@ function configureStorageBeforeReady() {
     } catch (error) {
         throw new Error(`无法访问用户配置的存储目录，程序未修改路径也不会使用空白数据启动。${error instanceof Error ? error.message : error}`);
     }
-    writeStorageSettings();
+    if (storageBootstrap.storageStatus !== "needs-recovery") writeStorageSettings();
     logSettings = readLogSettings(appLogSettingsFile());
     pruneExpiredLogs(true);
     // sessionData 包含 IndexedDB、Local Storage、Cookie 与 Chromium 会话数据，必须在 ready 前固定到用户目录。
@@ -870,6 +872,32 @@ app.whenReady().then(async () => {
         const config = request?.restoreConfiguration ? scan.catalog.configuration?.config || null : null;
         return { projects: result.merged, recovered: result.selected.length, configuration: config };
     });
+    ipcMain.handle("lyspace:storage-recovery-scan", async () => {
+        storageRecoveryScans.clear();
+        const sources = listUpgradeRecoverySources(process.env.LOCALAPPDATA || path.dirname(app.getPath("appData")));
+        const result = [];
+        for (const source of sources) {
+            try {
+                const extracted = await extractCanvasProjects(source);
+                const state = extracted?.config;
+                const config = state?.config || state;
+                if (!config || !Array.isArray(config.channels) || !config.channels.length) continue;
+                const id = crypto.randomUUID();
+                storageRecoveryScans.set(id, { config, webdav: state?.webdav || null });
+                result.push({ id, source: source.source, sourceType: source.sourceType, createdAt: source.createdAt, channels: config.channels.length });
+            } catch (error) {
+                writeAppLog({ category: "error", level: "warn", message: "设置恢复来源无法读取", details: { sourceType: source.sourceType, error: error instanceof Error ? error.message : String(error) } });
+            }
+        }
+        return result;
+    });
+    ipcMain.handle("lyspace:storage-recovery-apply", (_event, id) => {
+        const key = String(id || "");
+        const recovery = storageRecoveryScans.get(key);
+        if (!recovery) throw new Error("设置恢复来源已失效，请重新扫描");
+        storageRecoveryScans.delete(key);
+        return recovery;
+    });
     ipcMain.handle("lyspace:open-app-log-directory", () => {
         fs.mkdirSync(appLogDirectory(), { recursive: true });
         return shell.openPath(appLogDirectory());
@@ -901,6 +929,7 @@ app.whenReady().then(async () => {
     ipcMain.handle("lyspace:agent-remote-credentials", (_event, payload) => featurePluginManager.setRemoteAgentCredentials(payload));
     ipcMain.handle("lyspace:agent-clear-remote-credentials", () => featurePluginManager.clearRemoteAgentCredentials());
     ipcMain.handle("lyspace:storage-settings", () => storageInfo());
+    ipcMain.handle("lyspace:storage-status", () => ({ status: storageBootstrap.storageStatus || "ready", reason: storageBootstrap.recoveryReason || "" }));
     ipcMain.handle("lyspace:choose-storage-directory", async (_event, kind) => {
         const selected = await dialog.showOpenDialog(mainWindow, { title: kind === "cache" ? "选择缓存目录" : "选择结果保存目录", properties: ["openDirectory", "createDirectory"] });
         return selected.canceled ? "" : selected.filePaths[0] || "";

@@ -1,6 +1,6 @@
 import { saveAs } from "file-saver";
 
-import { useConfigStore, defaultConfig, defaultWebdavSyncConfig, normalizeChannelModels, normalizeImageQuality, normalizeModelGroupOrder, normalizeModelOrder, modelOptionsFromChannels, createBalanceQuery, type AiConfig, type ApiCallFormat, type ArkThinkingMode, type ChannelBalanceQuery, type ChannelModel, type ChannelModelCapability, type ModelCatalogCategory, type ModelClassificationSource, type ModelChannel, type WebdavSyncConfig } from "@/stores/use-config-store";
+import { useConfigStore, CONFIG_STORE_KEY, defaultConfig, defaultWebdavSyncConfig, normalizeChannelModels, normalizeImageQuality, normalizeModelGroupOrder, normalizeModelOrder, modelOptionsFromChannels, createBalanceQuery, type AiConfig, type ApiCallFormat, type ArkThinkingMode, type ChannelBalanceQuery, type ChannelModel, type ChannelModelCapability, type ModelCatalogCategory, type ModelClassificationSource, type ModelChannel, type WebdavSyncConfig } from "@/stores/use-config-store";
 import { usePromptSourceStore, type PromptSourceSchedule } from "@/stores/use-prompt-source-store";
 import type { PromptSource } from "@/services/api/prompt-source-presets";
 
@@ -90,6 +90,22 @@ function sanitizeWebdav(value: unknown): WebdavSyncConfig {
     return { ...defaultWebdavSyncConfig, url: text(source.url).trim(), username: text(source.username), password: text(source.password), directory: text(source.directory).trim() || defaultWebdavSyncConfig.directory, lastSyncedAt: "" };
 }
 
+function saveImportedConfig(config: AiConfig, webdav: WebdavSyncConfig) {
+    const persisted = localStorage.getItem(CONFIG_STORE_KEY);
+    if (persisted) {
+        const backupKey = `${CONFIG_STORE_KEY}:backup:${new Date().toISOString().replace(/[:.]/g, "-")}`;
+        localStorage.setItem(backupKey, persisted);
+    }
+    useConfigStore.getState().acceptConfigRecovery(config, webdav);
+}
+
+export function restoreAppConfig(value: { config?: unknown; webdav?: unknown }) {
+    const { config } = sanitizeConfig(value?.config);
+    const webdav = value?.webdav ? sanitizeWebdav(value.webdav) : defaultWebdavSyncConfig;
+    saveImportedConfig(config, webdav);
+    return config;
+}
+
 export function exportAppConfig() {
     const { config, webdav } = useConfigStore.getState();
     const { sources, schedule } = usePromptSourceStore.getState();
@@ -111,7 +127,7 @@ export async function importAppConfig(file: File) {
     const sources = Array.isArray(data.promptSources.sources) ? data.promptSources.sources : currentPromptSources.sources;
     const intervalMinutes = Number(data.promptSources.schedule?.intervalMinutes);
     const schedule = { ...currentPromptSources.schedule, intervalMinutes: Number.isFinite(intervalMinutes) && intervalMinutes >= 0 ? intervalMinutes : currentPromptSources.schedule.intervalMinutes };
-    useConfigStore.setState({ config, webdav });
+    saveImportedConfig(config, webdav);
     usePromptSourceStore.setState({ sources, schedule });
     return { skippedScripts };
 }

@@ -214,7 +214,7 @@ test("快照损坏时拒绝恢复并保留原目标", () => {
     }
 });
 
-test("恢复复制中断时保留原目标且修复后可以重试", () => {
+test("恢复复制中断时保留原目标并进入恢复状态", () => {
     const data = fixture();
     const originalCopyFileSync = fs.copyFileSync;
     try {
@@ -233,12 +233,79 @@ test("恢复复制中断时保留原目标且修复后可以重试", () => {
         assert.equal(fs.existsSync(path.join(data.userData, "Data cache")), false);
 
         fs.copyFileSync = originalCopyFileSync;
-        const retried = restoreBridgeBackup(data);
-        assert.equal(retried.migrated, true);
-        assert.equal(fs.readFileSync(path.join(data.userData, "Data cache", "IndexedDB", "重名", "sentinel.bin"), "utf8"), "IndexedDB 重名文件");
-        assert.equal(fs.readFileSync(path.join(data.userData, "Data cache", "Local Storage", "重名", "sentinel.bin"), "utf8"), "Local Storage 重名文件");
+        const blocked = restoreBridgeBackup(data);
+        assert.equal(blocked.migrated, false);
+        assert.equal(blocked.storageStatus, "needs-recovery");
+        assert.equal(fs.existsSync(path.join(data.userData, "Data cache")), false);
     } finally {
         fs.copyFileSync = originalCopyFileSync;
+        fs.rmSync(data.root, { recursive: true, force: true });
+    }
+});
+
+test("安装目录没有数据时退休旧 latest 指针并保留历史快照", () => {
+    const data = fixture();
+    try {
+        const bridge = runBackup(data);
+        assert.ok(bridge);
+        const beforeCache = directoryManifest(path.join(data.userData, "Data cache"));
+        fs.rmSync(path.join(data.installDir, "Data cache"), { recursive: true, force: true });
+        fs.rmSync(path.join(data.installDir, "Result"), { recursive: true, force: true });
+        const result = spawnSync("powershell.exe", [
+            "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", backupScript,
+            "-InstallDir", data.installDir, "-AppDataDir", data.userData, "-LocalAppDataDir", data.localAppData,
+            "-ProcessName", "LY Space Migration Test.exe",
+        ], { encoding: "utf8" });
+        assert.equal(result.status, 0, result.stderr || result.stdout);
+        const latest = JSON.parse(fs.readFileSync(path.join(data.localAppData, "LY Space", "Backups", "latest.json"), "utf8"));
+        assert.equal(latest.status, "retired");
+        assert.equal(latest.reason, "no-install-source");
+        assert.equal(fs.existsSync(bridge.backupRoot), true);
+        assert.equal(loadBridgeBackup(data.localAppData), null);
+        const restored = restoreBridgeBackup(data);
+        assert.equal(restored.migrated, false);
+        assert.equal(restored.storageStatus, "ready");
+        assert.ok(sameManifest(directoryManifest(path.join(data.userData, "Data cache")), beforeCache));
+    } finally {
+        fs.rmSync(data.root, { recursive: true, force: true });
+    }
+});
+
+test("目标目录只有子目录或锁文件时也视为已有数据", () => {
+    const data = fixture();
+    try {
+        runBackup(data);
+        fs.rmSync(path.join(data.userData, "Data cache"), { recursive: true, force: true });
+        fs.mkdirSync(path.join(data.userData, "Data cache", "IndexedDB"), { recursive: true });
+        fs.writeFileSync(path.join(data.userData, "Data cache", "LOCK"), "占用");
+        write(data.storageConfigFile, JSON.stringify({ cacheRoot: path.join(data.installDir, "Data cache"), resultRoot: path.join(data.installDir, "Result") }));
+        const before = directoryManifest(path.join(data.userData, "Data cache"));
+        const restored = restoreBridgeBackup(data);
+        assert.equal(restored.migrated, false);
+        assert.ok(sameManifest(directoryManifest(path.join(data.userData, "Data cache")), before));
+        const state = JSON.parse(fs.readFileSync(path.join(data.userData, "app-data", "migration-v0.4.7.json"), "utf8"));
+        assert.deepEqual(state.preservedExisting, ["Data cache", "Result"]);
+    } finally {
+        fs.rmSync(data.root, { recursive: true, force: true });
+    }
+});
+
+test("迁移标记缺失且没有有效备份时进入恢复状态", () => {
+    const data = fixture();
+    try {
+        fs.rmSync(path.join(data.installDir, "Data cache"), { recursive: true, force: true });
+        fs.rmSync(path.join(data.installDir, "Result"), { recursive: true, force: true });
+        fs.rmSync(path.join(data.userData, "Data cache"), { recursive: true, force: true });
+        fs.rmSync(path.join(data.documents, "LY Space", "Result"), { recursive: true, force: true });
+        write(data.storageConfigFile, JSON.stringify({ cacheRoot: path.join(data.installDir, "Data cache"), resultRoot: path.join(data.installDir, "Result") }));
+        write(path.join(data.localAppData, "LY Space", "Backups", "latest.json"), JSON.stringify({ backupRoot: path.join(data.root, "outside") }));
+
+        const restored = restoreBridgeBackup(data);
+        assert.equal(restored.migrated, false);
+        assert.equal(restored.storageStatus, "needs-recovery");
+        assert.equal(fs.existsSync(path.join(data.userData, "Data cache")), false);
+        assert.match(fs.readFileSync(path.join(data.userData, "app-data", "storage-migration.log"), "utf8"), /migration-skipped/);
+    } finally {
         fs.rmSync(data.root, { recursive: true, force: true });
     }
 });

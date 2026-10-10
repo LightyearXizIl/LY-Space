@@ -1,4 +1,4 @@
-import { App, Button, Form, Input, Modal, Progress, Select, Switch, Tabs } from "antd";
+import { Alert, App, Button, Form, Input, Modal, Progress, Select, Switch, Tabs } from "antd";
 import { Cloud, Download, FolderOpen, Pencil, Plus, RefreshCw, RotateCcw, Trash2, Upload, Wifi } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useDraftInput } from "@/hooks/use-draft-input";
@@ -10,7 +10,7 @@ import { AboutPanel } from "@/components/layout/about-panel";
 import { AppLogsPanel } from "@/components/layout/app-logs-panel";
 import { OssSettingsPanel } from "@/components/layout/oss-settings-panel";
 import { FeaturePluginCenter } from "@/components/layout/feature-plugin-center";
-import { exportAppConfig, importAppConfig } from "@/services/config-file";
+import { exportAppConfig, importAppConfig, restoreAppConfig } from "@/services/config-file";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
@@ -77,11 +77,15 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const [webdavDomainProgress, setWebdavDomainProgress] = useState(createWebdavDomainProgress);
     const [storageSettings, setStorageSettings] = useState<StorageSettings | null>(null);
     const [savingStorage, setSavingStorage] = useState(false);
+    const [storageRecoverySources, setStorageRecoverySources] = useState<StorageRecoverySource[]>([]);
+    const [storageRecoveryLoading, setStorageRecoveryLoading] = useState(false);
+    const [storageRecoveryBusy, setStorageRecoveryBusy] = useState("");
     const config = useConfigStore((state) => state.config);
     const webdav = useConfigStore((state) => state.webdav);
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const updateWebdavConfig = useConfigStore((state) => state.updateWebdavConfig);
     const shouldPromptContinue = useConfigStore((state) => state.shouldPromptContinue);
+    const configHydrationStatus = useConfigStore((state) => state.configHydrationStatus);
     const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
     const clearPromptContinue = useConfigStore((state) => state.clearPromptContinue);
     const webdavReady = Boolean(webdav.url.trim());
@@ -103,6 +107,11 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
             if (settings.lastError) message.warning(settings.lastError);
         }).catch(() => message.warning("无法读取桌面存储设置"));
     }, [message]);
+    useEffect(() => {
+        if (configHydrationStatus !== "needs-recovery" || !window.lySpaceDesktop) return;
+        setStorageRecoveryLoading(true);
+        void window.lySpaceDesktop.scanStorageRecovery().then(setStorageRecoverySources).catch(() => message.warning("无法读取可用的升级备份")).finally(() => setStorageRecoveryLoading(false));
+    }, [configHydrationStatus, message]);
 
     const chooseStorageDirectory = async (kind: "result" | "cache") => {
         if (!window.lySpaceDesktop) return;
@@ -174,6 +183,21 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
             message.error(error instanceof Error ? error.message : "配置文件读取失败");
         } finally {
             if (configInputRef.current) configInputRef.current.value = "";
+        }
+    };
+
+    const restoreStorageRecovery = async (source: StorageRecoverySource) => {
+        if (!window.lySpaceDesktop) return;
+        setStorageRecoveryBusy(source.id);
+        try {
+            const recovered = await window.lySpaceDesktop.applyStorageRecovery(source.id);
+            restoreAppConfig(recovered);
+            message.success(`已从${source.source}恢复 ${source.channels} 个渠道配置`);
+        } catch (error) {
+            logAppEvent({ category: "error", level: "error", message: "恢复升级备份配置失败", details: { error: error instanceof Error ? error.message : String(error) } });
+            message.error(error instanceof Error ? error.message : "恢复升级备份配置失败");
+        } finally {
+            setStorageRecoveryBusy("");
         }
     };
 
@@ -284,6 +308,25 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                     <input ref={configInputRef} type="file" accept="application/json,.json" className="hidden" onChange={(event) => event.target.files?.[0] && void loadConfigFile(event.target.files[0])} />
                 </div>
             </div>
+            {configHydrationStatus === "needs-recovery" ? (
+                <Alert
+                    className="mt-3"
+                    type="warning"
+                    showIcon
+                    message="当前设置需要恢复"
+                    description={(
+                        <div className="space-y-2">
+                            <div>应用已停止自动写入默认配置。请选择经过校验的升级备份，或使用上方“导入配置”。</div>
+                            {storageRecoveryLoading ? <div>正在检查可用升级备份…</div> : storageRecoverySources.length ? storageRecoverySources.map((source) => (
+                                <div key={source.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-200 px-2 py-1 dark:border-amber-800">
+                                    <span>{source.source} · {source.channels} 个渠道 · {new Date(source.createdAt).toLocaleString()}</span>
+                                    <Button size="small" type="primary" loading={storageRecoveryBusy === source.id} onClick={() => void restoreStorageRecovery(source)}>使用此备份</Button>
+                                </div>
+                            )) : <div>未找到可直接恢复的升级备份，请导入有效配置文件。</div>}
+                        </div>
+                    )}
+                />
+            ) : null}
             <Tabs
                 activeKey={activeTab}
                 onChange={(key) => setActiveTab(key as ConfigTabKey)}

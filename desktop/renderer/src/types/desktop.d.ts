@@ -14,6 +14,7 @@ declare global {
         triggeredBy: "auto" | "manual" | "";
     };
     type StorageKind = "image" | "video" | "audio" | "text";
+    type StorageBootstrapStatus = "first-run" | "ready" | "needs-recovery";
     type StorageSettings = { resultRoot: string; cacheRoot: string; defaultResultRoot: string; defaultCacheRoot: string; pendingCacheRoot?: string; lastError?: string; folders: Record<StorageKind, string> };
     type AppLogLevel = "info" | "warn" | "error";
     type AppLogCategory = "system" | "network" | "operation" | "error";
@@ -24,6 +25,7 @@ declare global {
     type CanvasRecoveryScan = { scanId: string; sources: CanvasRecoverySource[]; projects: CanvasRecoveryProject[]; configuration: { source: string; createdAt: string } | null; unreadableSources: number; diagnostics: { createdAt: string; sources: Array<Omit<CanvasRecoverySource, "id">>; unreadableSources: number; failedSources?: Array<{ sourceType: string; error: string }> } };
     type CanvasRecoveryProgress = { checked: number; total: number; unreadable: number };
     type CanvasRecoveryApplyResult = { projects: unknown[]; recovered: number; configuration: { config?: unknown; webdav?: unknown } | null };
+    type StorageRecoverySource = { id: string; source: string; sourceType: "legacy" | "current-install" | "replaced"; createdAt: string; channels: number };
     type FeaturePluginStatus = "ready" | "disabled" | "update-available" | "incompatible" | "repair";
     type FeaturePluginAsset = { path: string; url: string; size: number; sha256: string };
     type FeaturePluginManifest = { schemaVersion: 1; id: "agent-core" | "skill-manager"; name: string; description: string; version: string; minAppVersion: string; protocolVersion: string; hostApiVersion?: string; permissions: string[]; dependencies: Array<{ id: "agent-core" | "skill-manager"; range: string }>; rendererEntry: string; serviceEntry?: string; assets: FeaturePluginAsset[]; runtime?: { versionRange: string; version: string; entry: string; asset: FeaturePluginAsset; format: "file" | "tar" } | null; serviceArchive?: { schemaVersion: number; format: "tar.gz"; platform: "win32"; arch: "x64"; root: string; asset: FeaturePluginAsset; tree: { path: string; sha256: string; fileCount: number; totalBytes: number } } | null };
@@ -39,6 +41,7 @@ declare global {
             setNativeTheme: (source: "dark" | "light") => Promise<void>;
             onUpdateStateChanged: (listener: (state: AppUpdateState) => void) => () => void;
             getStorageSettings: () => Promise<StorageSettings>;
+            getStorageStatus: () => Promise<{ status: StorageBootstrapStatus; reason: string }>;
             chooseStorageDirectory: (kind: "result" | "cache") => Promise<string>;
             updateResultDirectory: (directory: string) => Promise<StorageSettings>;
             stageCacheDirectory: (directory: string) => Promise<StorageSettings>;
@@ -56,6 +59,8 @@ declare global {
             ensureCanvasSnapshot: (projects: unknown[]) => Promise<string | null>;
             scanCanvasRecovery: (projects: unknown[]) => Promise<CanvasRecoveryScan>;
             applyCanvasRecovery: (current: unknown[], request: { scanId: string; projectIds: string[]; restoreConfiguration?: boolean }) => Promise<CanvasRecoveryApplyResult>;
+            scanStorageRecovery: () => Promise<StorageRecoverySource[]>;
+            applyStorageRecovery: (id: string) => Promise<{ config: unknown; webdav: unknown }>;
             onCanvasRecoveryProgress: (listener: (progress: CanvasRecoveryProgress) => void) => () => void;
             saveFileDialog: (payload: { title?: string; defaultPath?: string; bytes: ArrayBuffer; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; path: string }>;
             saveFilesDialog: (payload: { title?: string; files: Array<{ name: string; bytes: ArrayBuffer }>; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<{ canceled: boolean; paths: string[] }>;

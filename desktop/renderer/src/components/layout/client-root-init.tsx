@@ -14,12 +14,48 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const handledConfigParams = useRef(false);
     const updateConfig = useConfigStore((state) => state.updateConfig);
     const config = useConfigStore((state) => state.config);
+    const configHydrationStatus = useConfigStore((state) => state.configHydrationStatus);
+    const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
 
     usePromptSourceScheduler();
 
     useEffect(() => {
         initializeAppLogging();
     }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+        const hydrateConfig = async () => {
+            const desktop = window.lySpaceDesktop;
+            let status: StorageBootstrapStatus = "first-run";
+            let reason = "";
+            if (desktop) {
+                try {
+                    const bootstrap = await desktop.getStorageStatus();
+                    status = bootstrap.status;
+                    reason = bootstrap.reason;
+                } catch {
+                    status = "needs-recovery";
+                    reason = "storage-status-unavailable";
+                }
+            }
+            if (cancelled) return;
+            const store = useConfigStore.getState();
+            store.prepareConfigHydration(status);
+            try {
+                await useConfigStore.persist.rehydrate();
+                if (!cancelled) store.completeConfigHydration(true);
+            } catch {
+                if (!cancelled) store.completeConfigHydration(false);
+            }
+            if (!cancelled && (status === "needs-recovery" || useConfigStore.getState().configHydrationStatus === "needs-recovery")) {
+                openConfigDialog(false, "channels");
+                message.warning(reason ? "用户设置需要恢复，请导入有效配置后再继续使用" : "未读取到有效用户设置，请导入有效配置后再继续使用");
+            }
+        };
+        void hydrateConfig();
+        return () => { cancelled = true; };
+    }, [message, openConfigDialog]);
 
     useEffect(() => {
         const showStorageError = (event: Event) => {
@@ -44,6 +80,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     }, [message]);
 
     useEffect(() => {
+        if (configHydrationStatus === "loading") return;
         if (handledConfigParams.current) return;
         const searchParams = new URLSearchParams(window.location.search);
         const baseUrl = searchParams.get("baseUrl") || searchParams.get("baseurl");
@@ -73,7 +110,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         if (baseUrl) updateConfig("baseUrl", baseUrl);
         if (apiKey) updateConfig("apiKey", apiKey);
         message.success("已导入本地直连配置");
-    }, [config.channels, message, updateConfig]);
+    }, [config.channels, configHydrationStatus, message, updateConfig]);
 
     return (
         <>

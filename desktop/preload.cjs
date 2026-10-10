@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("lySpaceDesktop", {
         return () => ipcRenderer.removeListener("lyspace:update-state-changed", handler);
     },
     getStorageSettings: () => ipcRenderer.invoke("lyspace:storage-settings"),
+    getStorageStatus: () => ipcRenderer.invoke("lyspace:storage-status"),
     chooseStorageDirectory: (kind) => ipcRenderer.invoke("lyspace:choose-storage-directory", kind),
     updateResultDirectory: (directory) => ipcRenderer.invoke("lyspace:update-result-directory", directory),
     stageCacheDirectory: (directory) => ipcRenderer.invoke("lyspace:stage-cache-directory", directory),
@@ -30,6 +31,8 @@ contextBridge.exposeInMainWorld("lySpaceDesktop", {
     ensureCanvasSnapshot: (projects) => ipcRenderer.invoke("lyspace:ensure-canvas-snapshot", projects),
     scanCanvasRecovery: (projects) => ipcRenderer.invoke("lyspace:canvas-recovery-scan", projects),
     applyCanvasRecovery: (current, request) => ipcRenderer.invoke("lyspace:canvas-recovery-apply", current, request),
+    scanStorageRecovery: () => ipcRenderer.invoke("lyspace:storage-recovery-scan"),
+    applyStorageRecovery: (id) => ipcRenderer.invoke("lyspace:storage-recovery-apply", id),
     onCanvasRecoveryProgress: (listener) => {
         const handler = (_event, progress) => listener(progress);
         ipcRenderer.on("lyspace:canvas-recovery-progress", handler);

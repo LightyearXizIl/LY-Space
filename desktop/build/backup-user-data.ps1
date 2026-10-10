@@ -65,6 +65,25 @@ function Test-Within([string]$Candidate, [string]$Parent) {
     return $candidatePath.StartsWith("$parentPath\", [StringComparison]::OrdinalIgnoreCase)
 }
 
+function Retire-LatestPointer([string]$BackupBase, [string]$Reason) {
+    New-Item -ItemType Directory -Path $BackupBase -Force | Out-Null
+    $latestFile = Join-Path $BackupBase "latest.json"
+    $previousBackupRoot = ""
+    if (Test-Path -LiteralPath $latestFile) {
+        try { $previousBackupRoot = [string]((Get-Content -LiteralPath $latestFile -Raw -Encoding UTF8 | ConvertFrom-Json).backupRoot) } catch { }
+    }
+    $utf8 = New-Object Text.UTF8Encoding($false)
+    $retired = [ordered]@{
+        status = "retired"
+        reason = $Reason
+        retiredAt = (Get-Date).ToUniversalTime().ToString("o")
+        previousBackupRoot = $previousBackupRoot
+    }
+    $latestTemp = Join-Path $BackupBase "latest.json.tmp"
+    [IO.File]::WriteAllText($latestTemp, ($retired | ConvertTo-Json -Depth 5), $utf8)
+    Move-Item -LiteralPath $latestTemp -Destination $latestFile -Force
+}
+
 $deadline = (Get-Date).AddSeconds(90)
 $expectedExe = [IO.Path]::GetFullPath((Join-Path $InstallDir $ProcessName))
 do {
@@ -87,9 +106,12 @@ $defaultCacheSource = Join-Path $InstallDir "Data cache"
 $defaultResultSource = Join-Path $InstallDir "Result"
 $cacheSource = if ($saved -and (Test-Within ([string]$saved.cacheRoot) $InstallDir)) { [string]$saved.cacheRoot } else { $defaultCacheSource }
 $resultSource = if ($saved -and (Test-Within ([string]$saved.resultRoot) $InstallDir)) { [string]$saved.resultRoot } else { $defaultResultSource }
-if (-not (Test-Path -LiteralPath $cacheSource) -and -not (Test-Path -LiteralPath $resultSource)) { exit 0 }
-
 $backupBase = Join-Path $LocalAppDataDir "LY Space\Backups"
+if (-not (Test-Path -LiteralPath $cacheSource) -and -not (Test-Path -LiteralPath $resultSource)) {
+    Retire-LatestPointer $backupBase "no-install-source"
+    exit 0
+}
+
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $backupRoot = Join-Path $backupBase "$version-$stamp-$([Guid]::NewGuid().ToString('N').Substring(0, 8))"
 New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null

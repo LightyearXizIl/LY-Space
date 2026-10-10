@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 import { logAppEvent } from "@/services/app-logger";
 import { classifyModel } from "@/lib/model-catalog";
@@ -126,6 +126,7 @@ export type WebdavSyncConfig = {
 export type ConfigTabKey = "channels" | "preferences" | "storage" | "prompt-sources" | "webdav" | "oss" | "logs" | "plugins" | "about";
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
+export type ConfigHydrationStatus = "loading" | "ready" | "needs-recovery";
 const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
@@ -134,6 +135,29 @@ export const ARK_AGENT_PLAN_BASE_URL = "https://ark.cn-beijing.volces.com/api/pl
 export const GRSAI_DOMESTIC_BASE_URL = "https://grsai.dakka.com.cn";
 export const GRSAI_GLOBAL_BASE_URL = "https://grsaiapi.com";
 export const AGNES_BASE_URL = "https://apihub.agnes-ai.com";
+let configPersistenceEnabled = false;
+let configHydrationContext: "first-run" | "existing" = "first-run";
+let lastPersistedConfigUsable = false;
+
+const guardedConfigStorage = {
+    getItem: (name: string) => localStorage.getItem(name),
+    setItem: (name: string, value: string) => {
+        if (configPersistenceEnabled) localStorage.setItem(name, value);
+    },
+    removeItem: (name: string) => {
+        if (configPersistenceEnabled) localStorage.removeItem(name);
+    },
+};
+
+function isPersistedConfigUsable(value: unknown) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const channels = (value as { channels?: unknown }).channels;
+    return Array.isArray(channels) && channels.length > 0 && channels.every((channel) => {
+        if (!channel || typeof channel !== "object" || Array.isArray(channel)) return false;
+        const item = channel as { models?: unknown; baseUrl?: unknown; apiKey?: unknown; apiFormat?: unknown };
+        return Array.isArray(item.models) && item.models.length > 0 && typeof item.baseUrl === "string" && typeof item.apiKey === "string" && typeof item.apiFormat === "string";
+    });
+}
 export const AGNES_DEFAULT_MODELS: ChannelModel[] = [
     { name: "agnes-2.0-flash", capability: "text" },
     { name: "agnes-2.5-flash", capability: "text" },
@@ -252,6 +276,23 @@ export const defaultConfig: AiConfig = {
     canvasImageCount: "3",
 };
 
+function emptyRecoveryConfig(): AiConfig {
+    return {
+        ...defaultConfig,
+        baseUrl: "",
+        apiKey: "",
+        channels: [],
+        model: "",
+        imageModel: "",
+        videoModel: "",
+        textModel: "",
+        audioModel: "",
+        models: [],
+        modelOrder: [],
+        modelGroupOrder: [],
+    };
+}
+
 export const defaultWebdavSyncConfig: WebdavSyncConfig = {
     url: "",
     username: "",
@@ -263,6 +304,7 @@ export const defaultWebdavSyncConfig: WebdavSyncConfig = {
 type ConfigStore = {
     config: AiConfig;
     webdav: WebdavSyncConfig;
+    configHydrationStatus: ConfigHydrationStatus;
     isConfigOpen: boolean;
     configTab: ConfigTabKey;
     shouldPromptContinue: boolean;
@@ -274,6 +316,9 @@ type ConfigStore = {
     openConfigDialog: (shouldPromptContinue?: boolean, tab?: ConfigTabKey) => void;
     setConfigDialogOpen: (isOpen: boolean) => void;
     clearPromptContinue: () => void;
+    prepareConfigHydration: (status: "first-run" | "ready" | "needs-recovery") => void;
+    completeConfigHydration: (success: boolean) => void;
+    acceptConfigRecovery: (config?: AiConfig, webdav?: WebdavSyncConfig) => void;
 };
 
 /** Best-effort default capability for a freshly fetched model name; user can override in the channel editor. */
@@ -355,12 +400,17 @@ export const useConfigStore = create<ConfigStore>()(
         (set, get) => ({
             config: defaultConfig,
             webdav: defaultWebdavSyncConfig,
+            configHydrationStatus: "loading",
             isConfigOpen: false,
             configTab: "channels",
             shouldPromptContinue: false,
             updateConfig: (key, value) => {
+                const recovering = get().configHydrationStatus === "needs-recovery";
+                if (get().configHydrationStatus === "loading") return;
+                if (recovering) configPersistenceEnabled = true;
                 logAppEvent({ category: "operation", message: "更新应用配置", details: { field: key } });
                 set((state) => ({
+                    configHydrationStatus: recovering ? "ready" : state.configHydrationStatus,
                     config: {
                         ...state.config,
                         [key]: value,
@@ -370,6 +420,9 @@ export const useConfigStore = create<ConfigStore>()(
                 }));
             },
             reorderModels: (models) => {
+                const recovering = get().configHydrationStatus === "needs-recovery";
+                if (get().configHydrationStatus === "loading") return;
+                if (recovering) configPersistenceEnabled = true;
                 logAppEvent({ category: "operation", message: "调整模型顺序" });
                 set((state) => {
                     const allModels = modelOptionsForConfig(state.config);
@@ -377,12 +430,16 @@ export const useConfigStore = create<ConfigStore>()(
                     const selected = new Set(ordered);
                     let index = 0;
                     const modelOrder = allModels.map((model) => selected.has(model) ? ordered[index++] : model);
-                    return { config: { ...state.config, models: modelOrder, modelOrder } };
+                    return { configHydrationStatus: recovering ? "ready" : state.configHydrationStatus, config: { ...state.config, models: modelOrder, modelOrder } };
                 });
             },
             reorderModelGroups: (groups) => {
+                const recovering = get().configHydrationStatus === "needs-recovery";
+                if (get().configHydrationStatus === "loading") return;
+                if (recovering) configPersistenceEnabled = true;
                 logAppEvent({ category: "operation", message: "调整模型分组顺序" });
                 set((state) => ({
+                    configHydrationStatus: recovering ? "ready" : state.configHydrationStatus,
                     config: {
                         ...state.config,
                         modelGroupOrder: normalizeModelGroupOrder(groups, state.config.channels.map((channel) => channel.id)),
@@ -390,8 +447,12 @@ export const useConfigStore = create<ConfigStore>()(
                 }));
             },
             updateWebdavConfig: (key, value) => {
+                const recovering = get().configHydrationStatus === "needs-recovery";
+                if (get().configHydrationStatus === "loading") return;
+                if (recovering) configPersistenceEnabled = true;
                 logAppEvent({ category: "operation", message: "更新 WebDAV 配置", details: { field: key } });
                 set((state) => ({
+                    configHydrationStatus: recovering ? "ready" : state.configHydrationStatus,
                     webdav: {
                         ...state.webdav,
                         [key]: value,
@@ -402,17 +463,35 @@ export const useConfigStore = create<ConfigStore>()(
             openConfigDialog: (shouldPromptContinue = false, configTab = "channels") => set({ isConfigOpen: true, shouldPromptContinue, configTab }),
             setConfigDialogOpen: (isConfigOpen) => set({ isConfigOpen }),
             clearPromptContinue: () => set({ shouldPromptContinue: false }),
+            prepareConfigHydration: (status) => {
+                configHydrationContext = status === "first-run" ? "first-run" : "existing";
+                configPersistenceEnabled = false;
+                lastPersistedConfigUsable = false;
+                set({ configHydrationStatus: "loading" });
+            },
+            completeConfigHydration: (success) => {
+                const needsRecovery = !success || (configHydrationContext === "existing" && !lastPersistedConfigUsable);
+                configPersistenceEnabled = !needsRecovery;
+                set(needsRecovery ? { configHydrationStatus: "needs-recovery", config: emptyRecoveryConfig() } : { configHydrationStatus: "ready" });
+            },
+            acceptConfigRecovery: (recoveredConfig, recoveredWebdav) => {
+                configPersistenceEnabled = true;
+                set({ configHydrationStatus: "ready", ...(recoveredConfig ? { config: recoveredConfig } : {}), ...(recoveredWebdav ? { webdav: recoveredWebdav } : {}) });
+            },
         }),
         {
             name: CONFIG_STORE_KEY,
+            storage: createJSONStorage(() => guardedConfigStorage),
+            skipHydration: true,
             partialize: (state) => ({ config: state.config, webdav: state.webdav }),
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<ConfigStore>;
                 const persistedConfig = (persistedState.config || {}) as Partial<AiConfig>;
                 const persistedWebdav = (persistedState.webdav || {}) as Partial<WebdavSyncConfig>;
-                const config = { ...defaultConfig, ...persistedConfig };
-                if (!Array.isArray(persistedConfig.channels)) config.channels = [];
-                const channels = normalizeChannels(config);
+                lastPersistedConfigUsable = isPersistedConfigUsable(persistedConfig);
+                const needsRecovery = configHydrationContext === "existing" && !lastPersistedConfigUsable;
+                const config = needsRecovery ? emptyRecoveryConfig() : { ...defaultConfig, ...persistedConfig };
+                const channels = needsRecovery ? [] : normalizeChannels(config);
                 const modelOrder = normalizeModelOrder(persistedConfig.modelOrder, modelOptionsFromChannels(channels));
                 const modelGroupOrder = normalizeModelGroupOrder(persistedConfig.modelGroupOrder, channels.map((channel) => channel.id));
                 return {

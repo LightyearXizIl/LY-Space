@@ -10,7 +10,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
 ## 0. 给 ZCode 的快速上手
 
 - **项目地址**：本地 `E:\Vibe coding\LY Space\LY Space-源码`；Git 远程 `https://github.com/LightyearXizIl/LY-Space.git`（main 分支；本次发布版本为 `v0.8.8`）。
-- **本次发布状态**：按用户要求同版本重发 `v0.8.7`，tag 从 `79fd0b7` 移至 `61e986600a7ca0be518994b3a0ab8f9e80451cc6`；GitHub Actions `37935607186` 成功，已覆盖正式 Release 三份资产。此前 `37880831478` 是旧包构建，不再代表当前发布物；同版本安装必须核对资产哈希，不能只看界面的 `v0.8.7`。
+- **本次发布状态**：`v0.8.8` 已正式发布；发布提交为 `f082c0d`，GitHub Actions `38033055282` 成功完成版本校验、Windows 构建、资产上传、回下载比对和正式发布。交接文档随后由 `b868f62` 更新，三份资产见第 3 节 `v0.8.8` 记录。
 - **v0.6.7 发布内容与现场状态**：画布恢复仅由用户点击触发，异步扫描期间可关闭进度对话框且不会自动重开；诊断记录已脱敏的不可读来源错误。出问题电脑目前只显示 8 月 15 日以前的项目；实际 8 个来源是否可读及是否找到后续项目，仍须以该机运行日志和诊断导出为准，不能提前承诺。
 - **紧急现场状态**：迁移保护、取消自动设置弹窗和 GRS 积分查询修改已随重发包发布，但用户随后仍反馈只剩默认 OpenAI 渠道。本机已提取含 3 个渠道/3 个密钥的恢复文件并尝试写回；**实际界面恢复、重启保留和本次丢失根因尚未验证**。不要沿用此前“恢复完成且重启不会消失”的结论，先看第 3 节「本机恢复操作与证据边界」。
 - **接手顺序**：先读 `AGENTS.md`（开发规则）→ 本文档 → `docs/content/docs/progress/todo.mdx`（待办）→ `docs/content/docs/progress/pending-test.mdx`（待测）→ `CHANGELOG.md`（版本历史）
@@ -28,7 +28,7 @@ description: 新 AI 会话接手前的快速上手指南（项目现状、关键
   - `desktop/preload.cjs` + `desktop/renderer/src/types/desktop.d.ts`：IPC 三端同步
   - `desktop/renderer/src/pages/`：image（生图）、video（视频）、canvas（画布）、refine（精修）、prompts（提示词库）、assets（我的素材）、config、home
   - `desktop/renderer/src/services/`：api/（各渠道请求）、image-storage、file-storage、desktop-storage（落盘）、oss-hosting、image-hosting（图床）、workbench-session
-- **当前版本**：源码与最新已核验 Release 均为 v0.8.7。
+- **当前版本**：源码与最新已核验 Release 均为 v0.8.8；真实 GRS AI 账号生成和桌面安装后人工验收仍按 `pending-test.mdx` 执行。
 
 ## 2. 数据存储
 

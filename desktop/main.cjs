@@ -1097,7 +1097,8 @@ app.whenReady().then(async () => {
     const proxyRequestId = (sender, requestId) => `${sender.id}:${String(requestId || "")}`;
     const proxyRequestOptions = (payload) => {
         const url = String(payload?.url || "");
-        if (!/^https:\/\//i.test(url)) throw new Error("仅支持 HTTPS 请求");
+        const localProxy = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/i.test(url);
+        if (!/^https:\/\//i.test(url) && !localProxy) throw new Error("仅支持 HTTPS 请求或本机代理请求");
         const method = String(payload?.method || "GET").toUpperCase();
         const headers = payload?.headers && typeof payload.headers === "object" ? payload.headers : {};
         const body = typeof payload?.body === "string" ? payload.body : undefined;

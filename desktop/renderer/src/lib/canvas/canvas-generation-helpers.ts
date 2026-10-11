@@ -113,6 +113,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         videoSeed: node?.metadata?.videoSeed || config.videoSeed || defaultConfig.videoSeed,
         videoNegativePrompt: node?.metadata?.videoNegativePrompt || config.videoNegativePrompt || defaultConfig.videoNegativePrompt,
         videoNumInferenceSteps: node?.metadata?.videoNumInferenceSteps || config.videoNumInferenceSteps || defaultConfig.videoNumInferenceSteps,
+        videoMode: node?.metadata?.videoMode || config.videoMode || defaultConfig.videoMode,
         audioVoice: node?.metadata?.audioVoice || config.audioVoice || defaultConfig.audioVoice,
         audioFormat: node?.metadata?.audioFormat || config.audioFormat || defaultConfig.audioFormat,
         audioSpeed: node?.metadata?.audioSpeed || config.audioSpeed || defaultConfig.audioSpeed,
@@ -122,7 +123,11 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
 }
 
 export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
-    return nodes.map((node) => (node.metadata?.status === "loading" ? { ...node, metadata: { ...node.metadata, status: "error" as const, errorDetails: "页面刷新后生成已中断，请重新生成。" } } : node));
+    return nodes.map((node) => {
+        if (node.metadata?.status !== "loading") return node;
+        if (node.type === CanvasNodeType.Video && node.metadata.videoTaskId && node.metadata.videoTaskResumable) return node;
+        return { ...node, metadata: { ...node.metadata, status: "error" as const, errorDetails: "页面刷新后生成已中断，请重新生成。" } };
+    });
 }
 
 export function isGenerationCanceled(error: unknown) {

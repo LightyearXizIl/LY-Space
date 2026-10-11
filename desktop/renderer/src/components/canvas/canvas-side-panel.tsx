@@ -1,7 +1,7 @@
 import { memo, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { App, Button, Dropdown, Empty, Input, Modal, Popconfirm, Select, Spin, Tag } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, Check, ChevronRight, Download, Eye, FileText, Image as ImageIcon, ListChecks, Music2, Plus, Search, Settings2, Square, Trash2, Type, Upload, Video } from "lucide-react";
+import { BookOpen, Check, ChevronRight, Download, Eye, FileText, Grid3X3, Image as ImageIcon, List, ListChecks, Music2, Plus, Search, Settings2, Square, Trash2, Type, Upload, Video } from "lucide-react";
 import { motion } from "motion/react";
 
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
@@ -154,6 +154,12 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, th
     const [selectMode, setSelectMode] = useState(false);
     const [checked, setChecked] = useState<Set<string>>(new Set());
     const [exporting, setExporting] = useState(false);
+    const [viewMode, setViewMode] = useState<"list" | "thumbnails">(() => (localStorage.getItem("canvas-node-view-mode") === "thumbnails" ? "thumbnails" : "list"));
+
+    const updateViewMode = (value: "list" | "thumbnails") => {
+        setViewMode(value);
+        localStorage.setItem("canvas-node-view-mode", value);
+    };
 
     const filtered = useMemo(() => {
         const query = keyword.trim().toLowerCase();
@@ -196,6 +202,10 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, th
             <div className="flex items-center gap-2 px-3 pb-2.5 pt-1">
                 <span className="text-xs font-medium opacity-60">画布元素</span>
                 {filtered.length ? <span className="text-xs opacity-35">{filtered.length}</span> : null}
+                <div className="ml-auto flex items-center rounded-md border p-0.5" style={{ borderColor: theme.toolbar.border }}>
+                    <button type="button" className="rounded p-1 opacity-70 hover:opacity-100" onClick={() => updateViewMode("list")} aria-label="列表视图" title="列表视图" style={viewMode === "list" ? { background: theme.toolbar.activeBg, color: theme.toolbar.activeText } : undefined}><List className="size-3.5" /></button>
+                    <button type="button" className="rounded p-1 opacity-70 hover:opacity-100" onClick={() => updateViewMode("thumbnails")} aria-label="缩略图视图" title="缩略图视图" style={viewMode === "thumbnails" ? { background: theme.toolbar.activeBg, color: theme.toolbar.activeText } : undefined}><Grid3X3 className="size-3.5" /></button>
+                </div>
                 <button
                     type="button"
                     onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
@@ -212,20 +222,21 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, th
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
                 {filtered.length ? (
-                    <div className="space-y-1.5">
+                    <div className={viewMode === "thumbnails" ? "grid grid-cols-2 gap-2" : "space-y-1.5"}>
                         {filtered.map((node) => {
                             const Icon = NODE_TYPE_ICON[node.type] || FileText;
                             const isImage = node.type === CanvasNodeType.Image && node.metadata?.content;
+                            const isVideo = node.type === CanvasNodeType.Video && node.metadata?.content;
                             const isChecked = checked.has(node.id);
                             const active = selectMode ? isChecked : selectedNodeIds.has(node.id);
                             return (
-                                <div key={node.id} className={cn("group flex w-full items-center rounded-lg transition", active ? "" : "hover:bg-black/5 dark:hover:bg-white/5")} style={active ? { background: theme.toolbar.activeBg } : undefined}>
-                                    <button type="button" onClick={() => (selectMode ? toggleChecked(node.id) : onFocusNode(node.id))} className="flex min-w-0 flex-1 items-center gap-3 px-2 py-2 text-left" title={selectMode ? undefined : "定位到节点"}>
+                                <div key={node.id} className={cn("group rounded-lg transition", viewMode === "list" ? "flex w-full items-center" : "min-w-0 overflow-hidden border p-1.5", active ? "" : "hover:bg-black/5 dark:hover:bg-white/5")} style={active ? { background: theme.toolbar.activeBg, borderColor: theme.toolbar.border } : undefined}>
+                                    <button type="button" onClick={() => (selectMode ? toggleChecked(node.id) : onFocusNode(node.id))} className={cn("min-w-0 text-left", viewMode === "list" ? "flex flex-1 items-center gap-3 px-2 py-2" : "block w-full")} title={selectMode ? undefined : "定位到节点"}>
                                         {selectMode ? <CheckMark checked={isChecked} theme={theme} /> : null}
-                                        <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-md">
-                                            {isImage ? <img src={node.metadata!.content} alt={node.title} className="size-full object-cover" /> : <Icon className="size-5 opacity-60" />}
+                                        <span className={viewMode === "list" ? "grid size-10 shrink-0 place-items-center overflow-hidden rounded-md" : "mb-1.5 grid aspect-square w-full place-items-center overflow-hidden rounded-md"}>
+                                            {isImage ? <img src={node.metadata!.content} alt={node.title} className="size-full object-cover transition-transform duration-200 group-hover:scale-105" /> : isVideo ? <video src={node.metadata!.content} muted preload="metadata" className="size-full object-cover" /> : <Icon className="size-5 opacity-60" />}
                                         </span>
-                                        <span className="min-w-0 flex-1 space-y-0.5">
+                                        <span className={cn("min-w-0 space-y-0.5", viewMode === "list" ? "flex-1" : "block") }>
                                             <span className="block truncate text-sm font-medium leading-snug">{node.title || getNodeDefinition(node.type)?.title || "未命名节点"}</span>
                                             <span className="block truncate text-xs leading-snug opacity-50">{nodePreviewText(node)}</span>
                                         </span>

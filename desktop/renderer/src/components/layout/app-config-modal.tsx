@@ -13,8 +13,9 @@ import { FeaturePluginCenter } from "@/components/layout/feature-plugin-center";
 import { exportAppConfig, importAppConfig, restoreAppConfig } from "@/services/config-file";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
+import { testLocalProxy } from "@/services/api/local-proxy";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import { createModelChannel, grsaiSupportedImageResolutions, highestSupportedImageResolution, modelOptionsFromChannels, normalizeModelGroupOrder, normalizeImageQuality, normalizeModelOptionValue, normalizeModelOrder, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { createModelChannel, grsaiSupportedImageResolutions, highestSupportedImageResolution, modelOptionsFromChannels, normalizeLocalProxyUrl, normalizeModelGroupOrder, normalizeImageQuality, normalizeModelOptionValue, normalizeModelOrder, resolveModelRequestConfig, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { logAppEvent } from "@/services/app-logger";
 
 type ModelGroup = {
@@ -30,6 +31,14 @@ type WebdavDomainProgress = {
     total?: number;
     status?: "active" | "success" | "exception";
 };
+
+function localProxyPort(value: string) {
+    try {
+        return new URL(normalizeLocalProxyUrl(value) || "http://127.0.0.1:23210").port || "23210";
+    } catch {
+        return "";
+    }
+}
 
 const modelGroups: ModelGroup[] = [
     { capability: "image", modelKey: "imageModel", defaultLabel: "默认生图模型" },
@@ -72,6 +81,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     // 新建渠道草稿：不点保存不写入 channels（点「新增渠道」只打开编辑抽屉，关闭/取消即丢弃）
     const [editingDraft, setEditingDraft] = useState<ModelChannel | null>(null);
     const [testingWebdav, setTestingWebdav] = useState(false);
+    const [testingProxy, setTestingProxy] = useState(false);
     const [syncingWebdav, setSyncingWebdav] = useState(false);
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
     const [webdavDomainProgress, setWebdavDomainProgress] = useState(createWebdavDomainProgress);
@@ -257,6 +267,20 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
         }
     };
 
+    const testProxy = async () => {
+        setTestingProxy(true);
+        try {
+            const proxy = await testLocalProxy(config.proxyUrl);
+            message.success(`本地代理可用：${proxy}`);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "本地代理不可用");
+        } finally {
+            setTestingProxy(false);
+        }
+    };
+
+    const proxyPort = localProxyPort(config.proxyUrl);
+
     const updateWebdavProgress = (event: AppSyncProgressEvent) => {
         setWebdavSyncStatus(event.stage);
         if (!event.domain) return;
@@ -421,6 +445,29 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                     <Form.Item label="默认图片质量" className="mb-4">
                                         <Select value={normalizeImageQuality(config.quality)} options={imageQualityOptions} onChange={(value) => updateConfig("quality", value)} />
                                     </Form.Item>
+                                    <Form.Item label="重新生成方式" extra="原地覆盖会保留节点位置；新建节点更适合保留历史结果。" className="mb-4">
+                                        <Select value={config.nodeRegenerateBehavior} options={[{ value: "new-node", label: "新建节点" }, { value: "overwrite", label: "原地覆盖" }]} onChange={(value) => updateConfig("nodeRegenerateBehavior", value)} />
+                                    </Form.Item>
+                                    <Form.Item label="视频参考模式" extra="写入视频脚本和任务元数据，供应商能力仍由适配器校验。" className="mb-4">
+                                        <Select value={config.videoMode} options={[{ value: "frames", label: "首尾帧 / 关键帧" }, { value: "reference", label: "参考素材" }]} onChange={(value) => updateConfig("videoMode", value)} />
+                                    </Form.Item>
+                                    <Form.Item label="选中自动居中" className="mb-4">
+                                        <Switch checked={config.autoFocusOnSelect} onChange={(checked) => updateConfig("autoFocusOnSelect", checked)} />
+                                    </Form.Item>
+                                </div>
+                                <div className="mb-2 text-sm font-semibold">本地代理</div>
+                                <div className="grid gap-4 md:grid-cols-[auto_1fr]">
+                                    <Form.Item label="启用代理" extra="关闭时保持现有直连行为；健康检查失败不会静默改道。" className="mb-4">
+                                        <Switch checked={config.proxyEnabled} onChange={(checked) => updateConfig("proxyEnabled", checked)} />
+                                    </Form.Item>
+                                    <Form.Item label="代理地址" className="mb-4">
+                                        <Input value={config.proxyUrl} placeholder="http://127.0.0.1:23210" onChange={(event) => updateConfig("proxyUrl", event.target.value)} onBlur={(event) => updateConfig("proxyUrl", normalizeLocalProxyUrl(event.target.value) || "http://127.0.0.1:23210")} />
+                                    </Form.Item>
+                                </div>
+                                <div className="mb-4 rounded-lg bg-stone-100 px-3 py-2 text-xs text-stone-600 dark:bg-stone-900 dark:text-stone-300">
+                                    <div>代理进程命令：<code>npx @basketikun/canvas-proxy@latest{proxyPort && proxyPort !== "23210" ? ` --port ${proxyPort}` : ""}</code></div>
+                                    <div className="mt-1">请先在终端运行并保持进程运行，测试通过后再开启实际请求。</div>
+                                    <Button className="mt-2" size="small" icon={<Wifi className="size-3.5" />} loading={testingProxy} onClick={() => void testProxy()}>测试代理连接</Button>
                                 </div>
                                 <Form.Item label="默认音频指令" className="mb-4">
                                     <Input.TextArea rows={2} value={audioInstructionsDraft.value} placeholder="例如：自然、温暖、适合旁白。" onChange={audioInstructionsDraft.onChange} onBlur={() => updateConfig("audioInstructions", audioInstructionsDraft.value)} />
@@ -462,7 +509,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                                 <Cloud className="size-4" />
                                                 WebDAV 同步
                                             </div>
-                                            <div className="mt-1 text-xs text-stone-500">同步画布、我的资产、生成记录和本地媒体文件，不包含 AI API Key；浏览器会直接连接 WebDAV 服务。</div>
+                                            <div className="mt-1 text-xs text-stone-500">同步画布、我的资产、生成记录和本地媒体文件，不包含 AI API Key；启用本地代理后 WebDAV 请求也会统一经过代理。</div>
                                         </div>
                                         <div className="text-xs text-stone-500">{webdav.lastSyncedAt ? `上次同步 ${formatWebdavTime(webdav.lastSyncedAt)}` : "尚未同步"}</div>
                                     </div>

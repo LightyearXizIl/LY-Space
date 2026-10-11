@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 import { dataUrlToFile, readImageMeta } from "@/lib/image-utils";
 import type { ReferenceImage } from "@/types/image";
 import { trackWrite } from "@/services/desktop-storage";
+import { useConfigStore, withLocalProxy } from "@/stores/use-config-store";
 
 export type UploadedImage = {
     url: string;
@@ -33,8 +34,11 @@ export async function uploadImage(input: string | Blob): Promise<UploadedImage> 
 /** 获取图片 blob：浏览器 fetch 失败（如远程 URL 跨域被拦）时回退主进程下载，绕过 CORS 限制。 */
 export async function fetchImageBlob(input: string) {
     try {
-        return await (await fetch(input)).blob();
+        return await (await fetch(withLocalProxy(input))).blob();
     } catch (error) {
+        if (useConfigStore.getState().config.proxyEnabled && /^https?:\/\//i.test(input)) {
+            throw new Error("本地代理读取图片失败，请检查代理状态后重试");
+        }
         if (window.lySpaceDesktop) {
             const result = await window.lySpaceDesktop.fetchUrl(input);
             return new Blob([result.bytes], { type: result.mimeType || "image/png" });
@@ -68,7 +72,7 @@ export async function setImageBlob(storageKey: string, blob: Blob) {
 export async function imageToDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }) {
     const url = image.dataUrl || (await resolveImageUrl(image.storageKey, image.url || ""));
     if (!url || url.startsWith("data:")) return url;
-    return blobToDataUrl(await (await fetch(url)).blob());
+    return blobToDataUrl(await (await fetch(withLocalProxy(url))).blob());
 }
 
 export async function imageToFile(image: ReferenceImage) {

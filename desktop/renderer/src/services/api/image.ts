@@ -1,6 +1,6 @@
 import axios from "axios";
 
-import { buildApiUrl, AGNES_DEFAULT_MODELS, GRSAI_DEFAULT_MODELS, grsaiSupportedImageResolutions, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildApiUrl, withLocalProxy, AGNES_DEFAULT_MODELS, GRSAI_DEFAULT_MODELS, grsaiSupportedImageResolutions, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
@@ -10,6 +10,7 @@ import { fetchImageBlob, imageToDataUrl, imageToFile } from "@/services/image-st
 import { notifyStorageError, saveGeneratedBlob, saveGeneratedText } from "@/services/desktop-storage";
 import type { ReferenceImage } from "@/types/image";
 import { readRequestError, readUpstreamError } from "./error-message";
+import { IMAGE_REQUEST_TIMEOUT_MS, withRequestTimeout } from "./request";
 import { arkRequestJson, arkStreamText, buildArkImageRequest, buildArkResponsesRequest } from "./ark";
 
 export type AiTextMessage = {
@@ -201,9 +202,9 @@ function resolveGeminiImageConfig(config: AiConfig) {
     const dimensions = parseImageDimensions(value);
     const ratio = dimensions ? `${dimensions.width}:${dimensions.height}` : value;
     const aspectRatio = value && value.toLowerCase() !== "auto" ? closestGeminiAspectRatio(ratio) : undefined;
-    const imageSize = supportsGeminiImageSize(config.model) ? resolveGeminiImageSize(config.imageResolution, dimensions) : undefined;
+    const imageSize = resolveGeminiImageSize(config.imageResolution, dimensions);
     const image = { ...(aspectRatio ? { aspectRatio } : {}), ...(imageSize ? { imageSize } : {}) };
-    return Object.keys(image).length ? { responseFormat: { image } } : {};
+    return Object.keys(image).length ? { imageConfig: image } : {};
 }
 
 function closestGeminiAspectRatio(value: string) {
@@ -228,11 +229,6 @@ function resolveGeminiImageSize(resolution: string, dimensions: { width: number;
         return "4K";
     }
     return ({ "1k": "1K", "2k": "2K", "4k": "4K" } as Record<string, string>)[normalizedResolution];
-}
-
-function supportsGeminiImageSize(model: string) {
-    const value = model.toLowerCase();
-    return value.includes("gemini-3") || value.includes("3.1") || value.includes("3-pro");
 }
 
 function resolveImageDataUrl(item: Record<string, unknown>) {
@@ -426,7 +422,7 @@ function withSystemPrompt(config: AiConfig, prompt: string) {
 }
 
 function aiApiUrl(config: AiConfig, path: string) {
-    return buildApiUrl(config.baseUrl, path);
+    return withLocalProxy(buildApiUrl(config.baseUrl, path));
 }
 
 function aiHeaders(config: AiConfig, contentType?: string) {
@@ -448,8 +444,8 @@ function geminiModelName(model: string) {
 
 function geminiApiUrl(config: Pick<AiConfig, "baseUrl" | "model">, action?: "generateContent" | "streamGenerateContent") {
     const baseUrl = geminiBaseUrl(config);
-    if (!action) return `${baseUrl}/models`;
-    return `${baseUrl}/models/${encodeURIComponent(geminiModelName(config.model))}:${action}`;
+    if (!action) return withLocalProxy(`${baseUrl}/models`);
+    return withLocalProxy(`${baseUrl}/models/${encodeURIComponent(geminiModelName(config.model))}:${action}`);
 }
 
 function geminiHeaders(config: Pick<AiConfig, "apiKey">) {
@@ -1001,7 +997,10 @@ async function requestArkImages(config: AiConfig, prompt: string, references: Re
 }
 
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
+    const timeout = withRequestTimeout(options?.signal, IMAGE_REQUEST_TIMEOUT_MS);
+    options = { ...options, signal: timeout.signal };
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
+    if (!requestConfig.baseUrl.trim() || !requestConfig.apiKey.trim()) throw new Error("当前选择的模型或渠道已删除、禁用或未配置，已阻止请求");
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const script = resolveModelScript(config, config.model || config.imageModel);
     if (script) {
@@ -1063,7 +1062,10 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
 }
 
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, options?: RequestOptions) {
+    const timeout = withRequestTimeout(options?.signal, IMAGE_REQUEST_TIMEOUT_MS);
+    options = { ...options, signal: timeout.signal };
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
+    if (!requestConfig.baseUrl.trim() || !requestConfig.apiKey.trim()) throw new Error("当前选择的模型或渠道已删除、禁用或未配置，已阻止请求");
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
     const script = resolveModelScript(config, config.model || config.imageModel);
@@ -1143,6 +1145,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
+    if (!requestConfig.baseUrl.trim() || !requestConfig.apiKey.trim()) throw new Error("当前选择的模型或渠道已删除、禁用或未配置，已阻止请求");
     const script = resolveModelScript(config, config.model || config.textModel);
     if (script) {
         try {
@@ -1217,7 +1220,7 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
             const payload = await arkRequestJson<{ data?: Array<Record<string, unknown>>; error?: { message?: string } }>(config, "/models");
             return catalogModelsFromRecords(payload.data || []);
         }
-        const response = await axios.get<{ data?: Array<Record<string, unknown>>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
+        const response = await axios.get<{ data?: Array<Record<string, unknown>>; error?: { message?: string } }>(withLocalProxy(buildApiUrl(config.baseUrl, "/models")), {
             headers: {
                 Authorization: `Bearer ${config.apiKey}`,
             },

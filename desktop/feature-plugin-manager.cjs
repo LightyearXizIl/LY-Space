@@ -16,6 +16,7 @@ const MAX_SERVICE_FILES = 10000;
 const MAX_SERVICE_UNPACKED_BYTES = 256 * 1024 * 1024;
 const MAX_RENDERER_SOURCE_BYTES = 4 * 1024 * 1024;
 const CODEX_TIMEOUT_MS = 5000;
+const AGENT_PROTOCOL_VERSION = 6;
 
 function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () => {} }) {
     const pluginRoot = path.join(process.env.LOCALAPPDATA || path.dirname(app.getPath("userData")), "LY Space", "Plugins");
@@ -404,7 +405,7 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
     }
 
     async function startAgent() {
-        if (state.remoteAgent?.url) return decryptRemoteAgent();
+        if (state.remoteAgent?.url) return await verifyAgentConnection(decryptRemoteAgent());
         const record = state.plugins["agent-core"];
         if (!record?.enabled) throw new Error("请先安装并启用 Agent Core");
         if (!runtimeMatches(record.manifest.runtime)) throw new Error("需要可用的 Codex 运行时");
@@ -428,7 +429,7 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
         agentProcess = child;
         let connection;
         try {
-            connection = await new Promise((resolve, reject) => {
+            const rawConnection = await new Promise((resolve, reject) => {
                 const timer = setTimeout(() => reject(new Error("Agent 服务启动超时")), 10000);
                 const fail = (error) => {
                     clearTimeout(timer);
@@ -452,6 +453,7 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
                 child.once("exit", (code) => fail(new Error(`Agent 服务已退出（${code ?? "未知"}）`)));
                 child.once("error", fail);
             });
+            connection = await verifyAgentConnection(rawConnection);
         } catch (error) {
             if (!child.killed) child.kill();
             if (agentProcess === child) agentProcess = null;
@@ -465,6 +467,26 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
         });
         emit();
         return connection;
+    }
+
+    async function verifyAgentConnection(connection) {
+        const response = await fetch(`${connection.url}/config?token=${encodeURIComponent(connection.token)}`, {
+            headers: { "x-ly-space-agent-token": connection.token, accept: "application/json" },
+            signal: AbortSignal.timeout(5000),
+        });
+        const text = await response.text();
+        let data = null;
+        try {
+            data = text ? JSON.parse(text) : null;
+        } catch {
+            throw new Error("Agent 协议握手返回了无效 JSON");
+        }
+        const protocolVersion = Number(data?.protocolVersion);
+        if (!response.ok) throw new Error(`Agent 协议握手失败（HTTP ${response.status}）`);
+        if (!Number.isInteger(protocolVersion) || protocolVersion < AGENT_PROTOCOL_VERSION) {
+            throw new Error(`Agent 协议版本不兼容，需要 v${AGENT_PROTOCOL_VERSION} 或更高版本`);
+        }
+        return { ...connection, protocolVersion };
     }
 
     function stopAgent() {
@@ -481,7 +503,7 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
         if (!["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method)) throw new Error("Agent 请求方法无效");
         const body = payload?.body === undefined ? undefined : JSON.stringify(payload.body);
         if (body && Buffer.byteLength(body, "utf8") > 30 * 1024 * 1024) throw new Error("Agent 请求内容超过限制");
-        const connection = state.remoteAgent?.url ? decryptRemoteAgent() : await startAgent();
+        const connection = await startAgent();
         const separator = requestPath.includes("?") ? "&" : "?";
         const response = await fetch(`${connection.url}${requestPath}${separator}token=${encodeURIComponent(connection.token)}`, {
             method,
@@ -500,7 +522,7 @@ function createFeaturePluginManager({ app, safeStorage, getMainWindow, log = () 
         clientId = String(clientId || "").trim();
         if (!/^[A-Za-z0-9_-]{6,160}$/.test(clientId)) throw new Error("Agent 客户端标识无效");
         stopAgentEvents();
-        const connection = state.remoteAgent?.url ? decryptRemoteAgent() : await startAgent();
+        const connection = await startAgent();
         const controller = new AbortController();
         agentEventAbort = controller;
         const response = await fetch(`${connection.url}/events?token=${encodeURIComponent(connection.token)}&clientId=${encodeURIComponent(clientId)}`, {
@@ -586,8 +608,17 @@ async function consumeAgentEvents(body, clientId, getWindow, controller) {
     let data = [];
     const dispatch = () => {
         if (!data.length) return;
+        const payload = safeJson(data.join("\n"));
+        const sourceClientId = payload && typeof payload === "object" && !Array.isArray(payload)
+            ? payload.sourceClientId || payload.clientId
+            : undefined;
+        if (sourceClientId !== undefined && String(sourceClientId) !== clientId) {
+            event = "message";
+            data = [];
+            return;
+        }
         const window = getWindow();
-        if (window && !window.isDestroyed()) window.webContents.send("lyspace:agent-event", { clientId, event, data: safeJson(data.join("\n")) });
+        if (window && !window.isDestroyed()) window.webContents.send("lyspace:agent-event", { clientId, event, data: payload });
         event = "message";
         data = [];
     };

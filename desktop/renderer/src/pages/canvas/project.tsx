@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Group, Video } from "lucide-react";
+import { Camera, Group, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
-import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
+import { requestVideoGeneration, resumeVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { readUpstreamError } from "@/services/api/error-message";
-import { defaultConfig, normalizeImageQuality, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { defaultConfig, normalizeImageQuality, useConfigStore, useEffectiveConfig, withLocalProxy } from "@/stores/use-config-store";
 import { fetchImageBlob, getImageBlob, uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
@@ -309,6 +309,7 @@ function InfiniteCanvasPage() {
     const selectionFrameRef = useRef<number | null>(null);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
+    const resumedVideoTaskIdsRef = useRef(new Set<string>());
 
     const createHistoryEntry = useCallback(
         (): CanvasHistoryEntry => ({
@@ -535,6 +536,21 @@ function InfiniteCanvasPage() {
         connectionTargetNodeIdRef.current = connectionTargetNodeId;
         pendingConnectionCreateRef.current = pendingConnectionCreate;
     }, [nodes, connections, selectedNodeIds, viewport, connectingParams, connectionTargetNodeId, pendingConnectionCreate]);
+
+    useEffect(() => {
+        if (!projectLoaded) return;
+        const resumable = nodes.filter((node) => node.type === CanvasNodeType.Video && node.metadata?.videoTaskId && node.metadata.videoTaskResumable && !node.metadata.content);
+        for (const node of resumable) {
+            const taskId = node.metadata?.videoTaskId;
+            if (!taskId || resumedVideoTaskIdsRef.current.has(taskId)) continue;
+            resumedVideoTaskIdsRef.current.add(taskId);
+            const task: VideoGenerationTask = { id: taskId, provider: node.metadata?.videoTaskProvider || "openai", model: node.metadata?.videoTaskModel || node.metadata?.model || effectiveConfig.videoModel || effectiveConfig.model };
+            void resumeVideoGenerationTask(effectiveConfig, task)
+                .then((result) => storeGeneratedVideo(result))
+                .then((video) => setNodes((prev) => prev.map((item) => item.id === node.id ? { ...item, width: video.width || item.width, height: video.height || item.height, metadata: { ...item.metadata, ...videoMetadata(video), status: NODE_STATUS_SUCCESS, videoTaskResumable: false, videoTaskId: undefined, videoTaskProvider: undefined, videoTaskModel: undefined, videoTaskCreatedAt: undefined } } : item)))
+                .catch((error) => setNodes((prev) => prev.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, videoTaskResumable: false, errorDetails: nodeErrorDetails(error, "视频任务恢复失败") } } : item)));
+        }
+    }, [effectiveConfig, nodes, projectLoaded]);
 
     useLayoutEffect(() => {
         selectionBoxRef.current = selectionBox;
@@ -1138,6 +1154,32 @@ function InfiniteCanvasPage() {
         },
         [size.height, size.width],
     );
+
+    const focusSelected = useCallback(() => {
+        const selected = nodesRef.current.filter((node) => selectedNodeIds.has(node.id));
+        if (!selected.length) return;
+        if (selected.length === 1) {
+            focusNode(selected[0].id);
+            return;
+        }
+        const left = Math.min(...selected.map((node) => node.position.x));
+        const top = Math.min(...selected.map((node) => node.position.y));
+        const right = Math.max(...selected.map((node) => node.position.x + node.width));
+        const bottom = Math.max(...selected.map((node) => node.position.y + node.height));
+        const worldWidth = Math.max(1, right - left);
+        const worldHeight = Math.max(1, bottom - top);
+        const k = Math.min(Math.max(Math.min((size.width * 0.72) / worldWidth, (size.height * 0.62) / worldHeight), 0.05), 1.5);
+        setViewport({ x: size.width / 2 - (left + worldWidth / 2) * k, y: size.height / 2 - (top + worldHeight / 2) * k, k });
+    }, [focusNode, selectedNodeIds, size.height, size.width]);
+
+    const autoFocusedSelectionRef = useRef("");
+    useEffect(() => {
+        if (!config.autoFocusOnSelect || !selectedNodeIds.size) return;
+        const key = [...selectedNodeIds].sort().join(",");
+        if (autoFocusedSelectionRef.current === key) return;
+        autoFocusedSelectionRef.current = key;
+        focusSelected();
+    }, [config.autoFocusOnSelect, focusSelected, selectedNodeIds]);
 
     useEffect(() => () => void (focusAnimRef.current && cancelAnimationFrame(focusAnimRef.current)), []);
 
@@ -2675,6 +2717,7 @@ function InfiniteCanvasPage() {
                             videoSeed: generationConfig.videoSeed,
                             videoNegativePrompt: generationConfig.videoNegativePrompt,
                             videoNumInferenceSteps: generationConfig.videoNumInferenceSteps,
+                            videoMode: generationConfig.videoMode,
                             references: generationReferenceUrls(generationContext),
                         },
                     };
@@ -2689,7 +2732,10 @@ function InfiniteCanvasPage() {
                     const request = startGenerationRequest(videoId, nodeId, nodeId, new AbortController(), runController.runId);
                     try {
                         const video = await storeGeneratedVideo(
-                            await requestVideoGeneration(generationConfig, effectivePrompt, generationContext.referenceImages, generationContext.referenceVideos, generationContext.referenceAudios, { signal: request.controller.signal }),
+                            await requestVideoGeneration(generationConfig, effectivePrompt, generationContext.referenceImages, generationContext.referenceVideos, generationContext.referenceAudios, {
+                                signal: request.controller.signal,
+                                onTaskCreated: (task) => setNodes((prev) => prev.map((item) => item.id === videoId ? { ...item, metadata: { ...item.metadata, videoTaskId: task.id, videoTaskProvider: task.provider, videoTaskModel: task.model, videoTaskCreatedAt: Date.now(), videoTaskResumable: task.provider !== "plugin" } } : item)),
+                            }),
                         );
                         if (!isCanvasGenerationRequestActive(generationRequestsRef.current, request)) return;
                         const videoSize = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
@@ -2717,6 +2763,12 @@ function InfiniteCanvasPage() {
                                               videoSeed: generationConfig.videoSeed,
                                               videoNegativePrompt: generationConfig.videoNegativePrompt,
                                               videoNumInferenceSteps: generationConfig.videoNumInferenceSteps,
+                                              videoMode: generationConfig.videoMode,
+                                              videoTaskId: undefined,
+                                              videoTaskProvider: undefined,
+                                              videoTaskModel: undefined,
+                                              videoTaskCreatedAt: undefined,
+                                              videoTaskResumable: false,
                                               references: generationReferenceUrls(generationContext),
                                           },
                                       }
@@ -2921,7 +2973,10 @@ function InfiniteCanvasPage() {
                     return true;
                 }
                 if (node.type === CanvasNodeType.Video) {
-                    const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, prompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], { signal: request.controller.signal }));
+                    const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, prompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], {
+                        signal: request.controller.signal,
+                        onTaskCreated: (task) => setNodes((prev) => prev.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, videoTaskId: task.id, videoTaskProvider: task.provider, videoTaskModel: task.model, videoTaskCreatedAt: Date.now(), videoTaskResumable: task.provider !== "plugin" } } : item)),
+                    }));
                     if (!isCanvasGenerationRequestActive(generationRequestsRef.current, request)) return false;
                     const videoSize = fitNodeSize(video.width || node.width, video.height || node.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                     setNodes((prev) =>
@@ -2948,6 +3003,12 @@ function InfiniteCanvasPage() {
                                           videoSeed: generationConfig.videoSeed,
                                           videoNegativePrompt: generationConfig.videoNegativePrompt,
                                           videoNumInferenceSteps: generationConfig.videoNumInferenceSteps,
+                                          videoMode: generationConfig.videoMode,
+                                          videoTaskId: undefined,
+                                          videoTaskProvider: undefined,
+                                          videoTaskModel: undefined,
+                                          videoTaskCreatedAt: undefined,
+                                          videoTaskResumable: false,
                                       },
                                   }
                                 : item,
@@ -3192,9 +3253,22 @@ function InfiniteCanvasPage() {
     const handleNodeRetry = useCallback(
         (node: CanvasNodeData) => {
             if (node.metadata?.isBatchRoot) void handleRetryBatch(node);
-            else void handleRetryNode(node);
+            else if (config.nodeRegenerateBehavior === "new-node") {
+                const cloneId = nanoid();
+                const clone: CanvasNodeData = {
+                    ...node,
+                    id: cloneId,
+                    position: { x: node.position.x + node.width + 48, y: node.position.y + 24 },
+                    metadata: { ...node.metadata, content: undefined, storageKey: undefined, status: NODE_STATUS_IDLE, errorDetails: undefined, videoTaskId: undefined, videoTaskProvider: undefined, videoTaskModel: undefined, videoTaskCreatedAt: undefined, videoTaskResumable: undefined },
+                };
+                const copiedInputs = connectionsRef.current.filter((connection) => connection.toNodeId === node.id).map((connection) => ({ ...connection, id: nanoid(), toNodeId: cloneId }));
+                setNodes((prev) => [...prev, clone]);
+                setConnections((prev) => [...prev, ...copiedInputs]);
+                setSelectedNodeIds(new Set([cloneId]));
+                void handleRetryNode(clone);
+            } else void handleRetryNode(node);
         },
-        [handleRetryBatch, handleRetryNode],
+        [config.nodeRegenerateBehavior, handleRetryBatch, handleRetryNode],
     );
     const handleNodeContextMenu = useCallback((event: ReactMouseEvent, nodeId: string) => {
         // 右键节点 = 在点击处弹出节点工具栏（不再弹复制/删除右键菜单）
@@ -3278,7 +3352,81 @@ function InfiniteCanvasPage() {
     const handleAddNodeAudio = useCallback(() => createNode(CanvasNodeType.Audio), [createNode]);
     const handleAddNodeText = useCallback(() => createNode(CanvasNodeType.Text), [createNode]);
     const handleAddNodeConfig = useCallback(() => createNode(CanvasNodeType.Config), [createNode]);
-    const handleAddNodeGroup = useCallback(() => createNode(CanvasNodeType.Group), [createNode]);
+    const handleAddNodeGroup = useCallback(() => {
+        const selected = nodesRef.current.filter((node) => selectedNodeIdsRef.current.has(node.id) && node.type !== CanvasNodeType.Group);
+        if (!selected.length) {
+            createNode(CanvasNodeType.Group);
+            return;
+        }
+        const padding = 28;
+        const left = Math.min(...selected.map((node) => node.position.x)) - padding;
+        const top = Math.min(...selected.map((node) => node.position.y)) - padding;
+        const right = Math.max(...selected.map((node) => node.position.x + node.width)) + padding;
+        const bottom = Math.max(...selected.map((node) => node.position.y + node.height)) + padding;
+        const groupId = nanoid();
+        const group = { ...createCanvasNode(CanvasNodeType.Group, { x: left, y: top }), id: groupId, width: right - left, height: bottom - top, title: "分组" };
+        const selectedIds = new Set(selected.map((node) => node.id));
+        setNodes((prev) => [{ ...group, metadata: { ...group.metadata, status: "idle" } }, ...prev.map((node) => selectedIds.has(node.id) ? { ...node, metadata: { ...node.metadata, groupId } } : node)]);
+        setSelectedNodeIds(new Set([groupId]));
+        setSelectedConnectionId(null);
+    }, [createNode]);
+
+    const handleUngroupSelected = useCallback(() => {
+        const selectedGroups = new Set(nodesRef.current.filter((node) => selectedNodeIdsRef.current.has(node.id) && node.type === CanvasNodeType.Group).map((node) => node.id));
+        if (!selectedGroups.size) {
+            setNodes((prev) => prev.map((node) => selectedNodeIdsRef.current.has(node.id) ? { ...node, metadata: { ...node.metadata, groupId: undefined } } : node));
+            return;
+        }
+        setNodes((prev) => prev.filter((node) => !selectedGroups.has(node.id)).map((node) => selectedGroups.has(node.metadata?.groupId || "") ? { ...node, metadata: { ...node.metadata, groupId: undefined } } : node));
+        setSelectedNodeIds(new Set());
+    }, []);
+
+    const extractVideoFrame = useCallback(async (node: CanvasNodeData, position: "first" | "last" | "current") => {
+        const source = node.metadata?.content;
+        if (node.type !== CanvasNodeType.Video || !source) return;
+        const video = document.createElement("video");
+        video.crossOrigin = "anonymous";
+        video.muted = true;
+        video.src = withLocalProxy(source);
+        await new Promise<void>((resolve, reject) => {
+            video.addEventListener("loadedmetadata", () => resolve(), { once: true });
+            video.addEventListener("error", () => reject(new Error("无法读取视频帧")), { once: true });
+            video.load();
+        });
+        const liveVideo = position === "current"
+            ? Array.from(document.querySelectorAll<HTMLVideoElement>("video")).find((item) => item.closest("[data-node-id]")?.getAttribute("data-node-id") === node.id)
+            : undefined;
+        const targetTime = position === "first" ? 0 : position === "last" ? Math.max(0, video.duration - 0.05) : Math.max(0, Math.min(video.duration || 0, liveVideo?.currentTime || 0));
+        await new Promise<void>((resolve, reject) => {
+            let settled = false;
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                resolve();
+            };
+            video.addEventListener("seeked", finish, { once: true });
+            video.addEventListener("error", () => {
+                if (!settled) reject(new Error("无法定位视频帧"));
+            }, { once: true });
+            try {
+                video.currentTime = targetTime;
+                if (video.readyState >= 2 && Math.abs(video.currentTime - targetTime) < 0.01) finish();
+            } catch {
+                reject(new Error("无法定位视频帧"));
+            }
+        });
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth || node.width;
+        canvas.height = video.videoHeight || node.height;
+        canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const uploaded = await uploadImage(canvas.toDataURL("image/png"));
+        const id = nanoid();
+        const imageNode: CanvasNodeData = { id, type: CanvasNodeType.Image, title: `${node.title || "视频"}-${position === "first" ? "首帧" : position === "last" ? "尾帧" : "当前帧"}`, position: { x: node.position.x + node.width + 72, y: node.position.y }, width: Math.min(512, uploaded.width || 512), height: Math.min(512, uploaded.height || 512), metadata: { ...imageMetadata(uploaded), prompt: node.metadata?.prompt, status: NODE_STATUS_SUCCESS } };
+        setNodes((prev) => [...prev, imageNode]);
+        setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: id }]);
+        setSelectedNodeIds(new Set([id]));
+        video.src = "";
+    }, []);
 
     if (!projectLoaded) return <CanvasRefreshShell />;
 
@@ -3431,7 +3579,11 @@ function InfiniteCanvasPage() {
                     node={isNodeDragging || isNodeResizing || nodeImageSettingsOpen ? null : toolbarNode}
                     viewport={viewport}
                     position={toolbarPosition}
-                    extraTools={toolbarNode ? buildNodeToolbarItems(toolbarNode) : undefined}
+                    extraTools={toolbarNode ? [...buildNodeToolbarItems(toolbarNode), ...(toolbarNode.type === CanvasNodeType.Video && toolbarNode.metadata?.content ? [
+                        { id: "video-first-frame", title: "提取首帧", label: "首帧", icon: <Camera className="size-4" />, onClick: () => void extractVideoFrame(toolbarNode, "first") },
+                        { id: "video-current-frame", title: "提取当前帧", label: "当前帧", icon: <Camera className="size-4" />, onClick: () => void extractVideoFrame(toolbarNode, "current") },
+                        { id: "video-last-frame", title: "提取尾帧", label: "尾帧", icon: <Camera className="size-4" />, onClick: () => void extractVideoFrame(toolbarNode, "last") },
+                    ] : [])] : undefined}
                     onKeep={keepNodeToolbar}
                     onLeave={hideNodeToolbar}
                     onInfo={(node) => setInfoNodeId(node.id)}
@@ -3452,7 +3604,7 @@ function InfiniteCanvasPage() {
                     onAngle={(node) => setAngleNodeId(node.id)}
                     onViewImage={(node) => setPreviewNodeId(node.id)}
                     onReversePrompt={createImageReversePromptNodes}
-                    onRetry={(node) => void handleRetryNode(node)}
+                    onRetry={(node) => void handleNodeRetry(node)}
                     onCancelGenerate={(node) => stopGenerationByNodeId(node.id)}
                     canCancelGenerate={Boolean(toolbarNode && hasCanvasGenerationRequest(generationRequestsRef.current, toolbarNode.id))}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
@@ -3471,6 +3623,7 @@ function InfiniteCanvasPage() {
                     onAddText={handleAddNodeText}
                     onAddConfig={handleAddNodeConfig}
                     onAddGroup={handleAddNodeGroup}
+                    onUngroupSelected={handleUngroupSelected}
                     onAddExtensionNode={createNode}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
@@ -3478,6 +3631,7 @@ function InfiniteCanvasPage() {
                     onDelete={handleDeleteSelected}
                     onClear={handleClearCanvas}
                     onDeselect={deselectCanvas}
+                    onFocusSelected={focusSelected}
                     onBackgroundModeChange={setBackgroundMode}
                     onShowImageInfoChange={setShowImageInfo}
                 />

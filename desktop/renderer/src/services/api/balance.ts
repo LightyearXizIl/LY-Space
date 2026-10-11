@@ -1,6 +1,6 @@
 import axios from "axios";
 
-import { buildApiUrl, type ApiCallFormat, type ChannelBalanceQuery, type ModelChannel } from "@/stores/use-config-store";
+import { buildApiUrl, withLocalProxy, type ApiCallFormat, type ChannelBalanceQuery, type ModelChannel } from "@/stores/use-config-store";
 import { readUpstreamError } from "./error-message";
 
 export type ChannelBalance = {
@@ -113,8 +113,8 @@ export function formatBalance(balance: ChannelBalance) {
 /** 解析自定义路径为最终 URL：http(s) 绝对地址原样使用，其余交由 buildApiUrl 补 /v1。 */
 export function resolveBalanceUrl(baseUrl: string, path: string) {
     const trimmed = path.trim();
-    if (/^https?:\/\//i.test(trimmed)) return trimmed;
-    return buildApiUrl(baseUrl, trimmed.startsWith("/") ? trimmed : `/${trimmed}`);
+    if (/^https?:\/\//i.test(trimmed)) return withLocalProxy(trimmed);
+    return withLocalProxy(buildApiUrl(baseUrl, trimmed.startsWith("/") ? trimmed : `/${trimmed}`));
 }
 
 function probeUrl(channel: ModelChannel, probe: BalanceProbe) {

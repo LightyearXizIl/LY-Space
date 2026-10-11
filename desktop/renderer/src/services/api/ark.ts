@@ -1,8 +1,8 @@
-import { buildApiUrl, type AiConfig } from "@/stores/use-config-store";
+import { buildApiUrl, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 
 /** Shared Ark endpoint builder. buildApiUrl accepts both root URLs and pasted full Ark endpoints. */
 export function arkApiUrl(config: Pick<AiConfig, "baseUrl">, path: string) {
-    return buildApiUrl(config.baseUrl, path);
+    return withLocalProxy(buildApiUrl(config.baseUrl, path));
 }
 
 export function arkHeaders(config: Pick<AiConfig, "apiKey">, contentType?: string) {

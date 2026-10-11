@@ -56,6 +56,12 @@ export type CanvasNodeMetadata = {
     videoSeed?: string;
     videoNegativePrompt?: string;
     videoNumInferenceSteps?: string;
+    videoMode?: "frames" | "reference";
+    videoTaskId?: string;
+    videoTaskProvider?: "openai" | "seedance" | "agnes" | "grsai" | "plugin";
+    videoTaskModel?: string;
+    videoTaskCreatedAt?: number;
+    videoTaskResumable?: boolean;
     audioVoice?: string;
     audioFormat?: string;
     audioSpeed?: string;

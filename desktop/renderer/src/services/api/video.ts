@@ -8,7 +8,7 @@ import { imageToDataUrl, imageToFile } from "@/services/image-storage";
 import { isAgnesVideo25Family, isAgnesVideo25FlashModel, normalizeAgnesVideo25AspectRatio, normalizeAgnesVideo25Resolution, normalizeAgnesVideo25Seconds } from "@/lib/agnes-video";
 import { isGrsaiMinimaxH3Model, normalizeGrsaiVideoAspectRatio, normalizeGrsaiVideoDuration, normalizeGrsaiVideoResolution } from "@/lib/grsai-video";
 import { boolConfig, buildSeedancePromptText, isSeedance25Model, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceAudioReferenceError, seedanceReferenceCountError, seedanceReferenceLimits, seedanceVideoReferenceError } from "@/lib/seedance-video";
-import { buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
+import { buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, useConfigStore, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { logAppEvent } from "@/services/app-logger";
 import { arkRequestJson, arkRequestText, buildArkSeedanceTaskRequest } from "./ark";
 import { runModelPlugin } from "./model-plugin";
@@ -36,7 +36,7 @@ type GrsaiVideoTask = {
     results?: Array<{ url?: string }>;
 };
 type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: string; message?: string; error?: { message?: string } };
-type RequestOptions = { signal?: AbortSignal };
+type RequestOptions = { signal?: AbortSignal; onTaskCreated?: (task: VideoGenerationTask) => void };
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
 export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "agnes" | "grsai" | "plugin"; model: string; videoId?: string };
@@ -47,7 +47,7 @@ const pluginVideoResults = new Map<string, VideoGenerationResult>();
 const grsaiVideoResults = new Map<string, VideoGenerationResult>();
 
 function aiApiUrl(config: AiConfig, path: string) {
-    return buildApiUrl(config.baseUrl, path);
+    return withLocalProxy(buildApiUrl(config.baseUrl, path));
 }
 
 function aiHeaders(config: AiConfig, contentType?: string) {
@@ -59,6 +59,7 @@ function aiHeaders(config: AiConfig, contentType?: string) {
 
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationResult> {
     const task = await createVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
+    options?.onTaskCreated?.(task);
     try {
         const delayMs = task.provider === "seedance" || task.provider === "grsai" ? 5000 : task.provider === "agnes" ? 10000 : 2500;
         const maxAttempts = task.provider === "grsai" ? 180 : 120;
@@ -77,6 +78,21 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
         }
         throw error;
     }
+}
+
+/** Continue a task saved in canvas metadata after an application restart. */
+export async function resumeVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationResult> {
+    const delayMs = task.provider === "seedance" || task.provider === "grsai" ? 5000 : task.provider === "agnes" ? 10000 : 2500;
+    const maxAttempts = task.provider === "grsai" ? 180 : 120;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        const state = await pollVideoGenerationTask(config, task, options);
+        if (state.status === "completed") return state.result;
+        if (state.status === "failed") throw new Error(state.error);
+        if (attempt === maxAttempts - 1) throw new Error("视频任务恢复查询超时，请稍后手动重试");
+        await delay(delayMs, options?.signal);
+    }
+    throw new Error("视频任务恢复查询超时，请稍后手动重试");
 }
 
 // Agnes 参考素材需使用公网 HTTPS 地址；本地素材仅托管到用户已配置的签名 OSS。
@@ -125,8 +141,9 @@ async function ensurePublicAudioReferenceUrlsForRequest(refs: ReferenceAudio[], 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationTask> {
     const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
+    if (!requestConfig.baseUrl.trim() || !requestConfig.apiKey.trim()) throw new Error("当前选择的视频模型或渠道已删除、禁用或未配置，已阻止请求");
     const script = resolveModelScript(config, selectedModel);
-    if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
+    if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, videoReferences, audioReferences, options);
     assertVideoConfig(requestConfig, requestConfig.model);
     if (isSeedanceVideoConfig(requestConfig)) {
         return createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
@@ -159,6 +176,7 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
         return { status: "completed", result };
     }
     const requestConfig = resolveModelRequestConfig(config, task.model);
+    if (!requestConfig.baseUrl.trim() || !requestConfig.apiKey.trim()) throw new Error("当前选择的视频模型或渠道已删除、禁用或未配置，已阻止请求");
     assertVideoConfig(requestConfig, requestConfig.model);
     if (task.provider === "seedance") return pollSeedanceTask(requestConfig, task, options);
     if (task.provider === "agnes") return pollAgnesVideoTask(requestConfig, task, options);
@@ -299,7 +317,7 @@ async function pollAgnesVideoTask(config: AiConfig, task: VideoGenerationTask, o
     try {
         // 文档：结果查询为 GET /agnesapi（不带 /v1）；baseUrl 可能带 /v1 尾缀，先归一化
         const base = config.baseUrl.replace(/\/+$/, "").replace(/\/v1$/i, "");
-        const url = `${base}/agnesapi`;
+        const url = withLocalProxy(`${base}/agnesapi`);
         const query = `video_id=${encodeURIComponent(task.videoId || task.id)}&model_name=${encodeURIComponent(modelOptionName(task.model))}`;
         const payload = await agnesRequest<ApiEnvelope<VideoResponse>>(config, `${url}?${query}`, { method: "GET", headers: aiHeaders(config), signal: options?.signal });
         const state = unwrapEnvelope(payload, "Agnes 接口没有返回视频任务");
@@ -404,7 +422,7 @@ function grsaiVideoResultUrl(payload: GrsaiVideoTask) {
     return payload.results?.map((item) => item.url).find((url): url is string => typeof url === "string" && /^https?:\/\//i.test(url));
 }
 
-async function createPluginVideoTask(config: AiConfig, model: string, script: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTask> {
+async function createPluginVideoTask(config: AiConfig, model: string, script: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
     if (!config.baseUrl.trim()) throw new Error("请先配置 Base URL");
     if (!config.apiKey.trim()) throw new Error("请先配置 API Key");
     const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
@@ -420,6 +438,9 @@ async function createPluginVideoTask(config: AiConfig, model: string, script: st
                 size: normalizeVideoSize(config.size),
                 resolution: normalizeVideoResolution(config.vquality),
                 ratio: config.size,
+                mode: config.videoMode,
+                videos: videoReferences.map((item) => item.url),
+                audios: audioReferences.map((item) => item.url),
                 generateAudio: boolConfig(config.videoGenerateAudio, true),
                 watermark: boolConfig(config.videoWatermark, false),
             },
@@ -453,10 +474,12 @@ export async function storeGeneratedVideo(result: VideoGenerationResult): Promis
         try {
             let blob: Blob;
             try {
-                const response = await fetch(result.url);
+                const response = await fetch(withLocalProxy(result.url));
                 if (!response.ok) throw new Error(`视频下载失败：HTTP ${response.status}`);
                 blob = await response.blob();
             } catch {
+                const proxyEnabled = useConfigStore.getState().config.proxyEnabled;
+                if (proxyEnabled && /^https?:\/\//i.test(result.url)) throw new Error("本地代理下载视频失败，请检查代理状态后重试");
                 if (!window.lySpaceDesktop) throw new Error("视频跨域下载失败，且桌面下载服务不可用");
                 const fetched = await window.lySpaceDesktop.fetchUrl(result.url, "video");
                 blob = new Blob([fetched.bytes], { type: fetched.mimeType || result.mimeType || "video/mp4" });
@@ -616,7 +639,7 @@ async function resolveSeedanceAudioUrl(audio: ReferenceAudio) {
 
 async function videoResultFromUrl(url: string, options?: RequestOptions): Promise<VideoGenerationResult> {
     try {
-        const response = await axios.get<Blob>(url, { responseType: "blob", signal: options?.signal });
+        const response = await axios.get<Blob>(withLocalProxy(url), { responseType: "blob", signal: options?.signal });
         await assertVideoBlob(response.data);
         return { blob: response.data };
     } catch (error) {

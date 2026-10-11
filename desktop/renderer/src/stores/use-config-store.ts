@@ -13,6 +13,8 @@ export type ModelClassificationSource = "upstream" | "preset" | "inferred" | "ma
 export type ImageModelFeature = "image-edit" | "mask-edit" | "generative-upscale" | "dedicated-super-resolution";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 export type ImageQuality = "low" | "medium" | "high" | "xhigh" | "max";
+export type VideoMode = "frames" | "reference";
+export type NodeRegenerateBehavior = "new-node" | "overwrite";
 /** 火山方舟 Responses API 的思考开关；与 OpenAI reasoning.effort 不可混用。 */
 export type ArkThinkingMode = "auto" | "enabled" | "disabled";
 
@@ -99,6 +101,7 @@ export type AiConfig = {
     videoSeed: string;
     videoNegativePrompt: string;
     videoNumInferenceSteps: string;
+    videoMode: VideoMode;
     systemPrompt: string;
     reasoningEffort: ReasoningEffort;
     arkThinkingMode: ArkThinkingMode;
@@ -114,6 +117,10 @@ export type AiConfig = {
     imageWatermark: string;
     count: string;
     canvasImageCount: string;
+    nodeRegenerateBehavior: NodeRegenerateBehavior;
+    autoFocusOnSelect: boolean;
+    proxyEnabled: boolean;
+    proxyUrl: string;
 };
 
 export type WebdavSyncConfig = {
@@ -135,6 +142,7 @@ export const ARK_AGENT_PLAN_BASE_URL = "https://ark.cn-beijing.volces.com/api/pl
 export const GRSAI_DOMESTIC_BASE_URL = "https://grsai.dakka.com.cn";
 export const GRSAI_GLOBAL_BASE_URL = "https://grsaiapi.com";
 export const AGNES_BASE_URL = "https://apihub.agnes-ai.com";
+export const DEFAULT_LOCAL_PROXY_URL = "http://127.0.0.1:23210";
 let configPersistenceEnabled = false;
 let configHydrationContext: "first-run" | "existing" = "first-run";
 let lastPersistedConfigUsable = false;
@@ -261,6 +269,7 @@ export const defaultConfig: AiConfig = {
     videoSeed: "",
     videoNegativePrompt: "",
     videoNumInferenceSteps: "",
+    videoMode: "frames",
     systemPrompt: "",
     reasoningEffort: "auto",
     arkThinkingMode: "auto",
@@ -274,6 +283,10 @@ export const defaultConfig: AiConfig = {
     imageWatermark: "true",
     count: "1",
     canvasImageCount: "3",
+    nodeRegenerateBehavior: "new-node",
+    autoFocusOnSelect: false,
+    proxyEnabled: false,
+    proxyUrl: DEFAULT_LOCAL_PROXY_URL,
 };
 
 function emptyRecoveryConfig(): AiConfig {
@@ -391,8 +404,10 @@ export function selectableImageModelsByFeature(config: AiConfig, feature: ImageM
 }
 
 function isAiConfigReady(config: AiConfig, model: string) {
-    const channel = resolveModelChannel(config, model);
-    return Boolean(model.trim() && channel.baseUrl.trim() && channel.apiKey.trim());
+    const selected = model.trim();
+    const found = findChannelModel(config, selected);
+    if (!selected || !found || found.channel.enabled === false) return false;
+    return Boolean(found.channel.baseUrl.trim() && found.channel.apiKey.trim());
 }
 
 export const useConfigStore = create<ConfigStore>()(
@@ -523,7 +538,12 @@ export const useConfigStore = create<ConfigStore>()(
                         videoSeed: config.videoSeed || "",
                         videoNegativePrompt: config.videoNegativePrompt || "",
                         videoNumInferenceSteps: config.videoNumInferenceSteps || "",
+                        videoMode: config.videoMode === "reference" ? "reference" : "frames",
                         canvasImageCount: config.canvasImageCount || "3",
+                        nodeRegenerateBehavior: config.nodeRegenerateBehavior === "overwrite" ? "overwrite" : "new-node",
+                        autoFocusOnSelect: config.autoFocusOnSelect === true,
+                        proxyEnabled: config.proxyEnabled === true,
+                        proxyUrl: normalizeLocalProxyUrl(config.proxyUrl) || DEFAULT_LOCAL_PROXY_URL,
                         imageResolution: normalizeImageResolution(config.imageResolution, config.quality, config.size),
                         quality: normalizeImageQuality(config.quality),
                         imageWatermark: config.imageWatermark === "false" ? "false" : "true",
@@ -700,8 +720,9 @@ export function normalizeModelOptionValue(value: string | undefined, channels: M
     if (!model) return "";
     const decoded = decodeChannelModel(model);
     if (decoded) {
-        const channel = channels.find((item) => item.id === decoded.channelId);
-        return channel && channel.models.some((item) => item.name === decoded.model) ? model : "";
+        // Preserve removed/disabled selections so the request layer can block them
+        // explicitly instead of silently switching to a different channel.
+        return model;
     }
     const channel = channels.find((item) => item.models.some((entry) => entry.name === model)) || channels[0];
     return channel && channel.models.some((item) => item.name === model) ? encodeChannelModel(channel.id, model) : model;
@@ -716,13 +737,17 @@ export function resolveModelChannel(config: AiConfig, value: string) {
 }
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
-    const channel = resolveModelChannel(config, value);
+    const selected = value || config.model;
+    const decoded = decodeChannelModel(selected);
+    const found = findChannelModel(config, selected);
+    const invalidSelection = Boolean(selected.trim() && (!found || found.channel.enabled === false || (decoded && found.channel.id !== decoded.channelId)));
+    const channel = invalidSelection ? undefined : resolveModelChannel(config, selected);
     return {
         ...config,
-        model: modelOptionName(value || config.model),
-        baseUrl: channel.baseUrl,
-        apiKey: channel.apiKey,
-        apiFormat: channel.apiFormat,
+        model: modelOptionName(selected),
+        baseUrl: channel?.baseUrl || "",
+        apiKey: channel?.apiKey || "",
+        apiFormat: channel?.apiFormat || config.apiFormat,
     };
 }
 
@@ -773,6 +798,23 @@ export function buildApiUrl(baseUrl: string, path: string) {
     const lowerBaseUrl = normalizedBaseUrl.toLowerCase();
     const apiBaseUrl = lowerBaseUrl.endsWith("/v1") || lowerBaseUrl.endsWith("/api/v3") || lowerBaseUrl.endsWith("/api/plan/v3") ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`;
     return `${apiBaseUrl}${path}`;
+}
+
+export function normalizeLocalProxyUrl(value: unknown) {
+    const candidate = String(value || "").trim();
+    if (!candidate) return "";
+    const withScheme = /^https?:\/\//i.test(candidate) ? candidate : `http://${candidate}`;
+    if (/^https?:\/\/?$/i.test(withScheme)) return "";
+    return withScheme.replace(/\/+$/, "");
+}
+
+/** Route a request through the configured local proxy without adding credentials to the URL. */
+export function withLocalProxy(url: string) {
+    const config = useConfigStore.getState().config;
+    if (!config.proxyEnabled || !/^https?:\/\//i.test(url)) return url;
+    const base = normalizeLocalProxyUrl(config.proxyUrl) || DEFAULT_LOCAL_PROXY_URL;
+    if (url.startsWith(`${base}/`)) return url;
+    return `${base}/${url}`;
 }
 
 /** True only for the dedicated Agent Plan root, including a pasted full Plan endpoint. */

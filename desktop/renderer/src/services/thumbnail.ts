@@ -82,6 +82,9 @@ export function clearThumbnailCache(source: string) {
 
 async function createThumbnail(source: string, maxSide: number): Promise<string | null> {
     try {
+        const persistentKey = `thumbnail:webp:${thumbnailKey(source)}:${maxSide}`;
+        const persisted = await localforage.getItem<Blob>(persistentKey);
+        if (persisted instanceof Blob && persisted.size) return URL.createObjectURL(persisted);
         const blob = await (await fetch(source)).blob();
         const bitmap = await createImageBitmap(blob);
         try {
@@ -94,12 +97,27 @@ async function createThumbnail(source: string, maxSide: number): Promise<string 
             const ctx = canvas.getContext("2d");
             if (!ctx) return null;
             ctx.drawImage(bitmap, 0, 0, width, height);
-            const output = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.82));
-            return output ? URL.createObjectURL(output) : null;
+            const output = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.82));
+            if (!output) return null;
+            // Persist only the derived WebP blob in the thumbnail store. It is never
+            // attached to node metadata, canvas export, or WebDAV sync payloads.
+            void localforage.setItem(persistentKey, output).catch(() => undefined);
+            return URL.createObjectURL(output);
         } finally {
             bitmap.close();
         }
     } catch {
         return null;
     }
+}
+import localforage from "localforage";
+
+
+function thumbnailKey(source: string) {
+    let hash = 2166136261;
+    for (let index = 0; index < source.length; index += 1) {
+        hash ^= source.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16);
 }
